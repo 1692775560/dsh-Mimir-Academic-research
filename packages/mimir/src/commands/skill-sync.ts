@@ -86,7 +86,6 @@ export function registerSkillSyncCommand(ctx: Context): void {
   ctx.commands.register({
     name: 'skill-sync',
     description: 'copy the latest sxng skill into the dsh skills directory (for hosts booted without this plugin)',
-    input: { hint: '' },
     async handler(): Promise<CommandResult> {
       const source = await cachedSkillBody()
       if (source === undefined) {
