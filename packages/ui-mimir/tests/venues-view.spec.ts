@@ -43,9 +43,23 @@ function inDays(days: number): string {
 }
 
 describe('venueDaysLeft / venueCountdownState', () => {
-  it('rounds up whole days; today is 0, past is negative', () => {
+  /** Local noon, so the calendar-day arithmetic is not zone-dependent. */
+  const localNoon = (year: number, month: number, day: number, hour = 12): number =>
+    new Date(year, month, day, hour).getTime()
+
+  it('counts calendar days, matching the host daysUntil: a deadline later today is 0', () => {
+    const now = localNoon(2026, 8, 1)
+    // The case the old Math.ceil got wrong: a deadline one second or eleven
+    // hours away is still today, and the card must not claim "1 day left".
+    expect(venueDaysLeft(new Date(now + 1000).toISOString(), now)).toBe(0)
+    expect(venueDaysLeft(new Date(now + 5 * 60_000).toISOString(), now)).toBe(0)
+    expect(venueDaysLeft(new Date(localNoon(2026, 8, 1, 23)).toISOString(), now)).toBe(0)
+  })
+
+  it('counts tomorrow as 1 however few hours away it is; past is negative', () => {
+    const now = localNoon(2026, 8, 1, 23)
+    expect(venueDaysLeft(new Date(localNoon(2026, 8, 2, 0)).toISOString(), now)).toBe(1)
     expect(venueDaysLeft(inDays(10), NOW)).toBe(10)
-    expect(venueDaysLeft(new Date(NOW + 1000).toISOString(), NOW)).toBe(1)
     expect(venueDaysLeft(new Date(NOW - 86_400_000).toISOString(), NOW)).toBe(-1)
   })
 
