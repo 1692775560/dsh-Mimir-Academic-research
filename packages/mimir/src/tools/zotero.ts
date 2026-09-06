@@ -97,10 +97,21 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Milliseconds to wait before the retry, from the response's Retry-After header. */
 function retryDelayMs(response: Response): number {
-  const seconds = Number(response.headers.get('retry-after'))
+  const header = response.headers.get('retry-after')
+  // `Number(null)` is 0 and `Number('')` is 0, and both pass a `>= 0` check,
+  // so casting first made a 429 with no Retry-After retry immediately and
+  // skip the default backoff entirely. Absence has to be decided before the
+  // cast, not after it.
+  if (header === null || header.trim() === '') {
+    return ZOTERO_RETRY_DEFAULT_MS
+  }
+  const seconds = Number(header)
   if (Number.isFinite(seconds) && seconds >= 0) {
     return Math.min(seconds * 1000, ZOTERO_RETRY_MAX_MS)
   }
+  // A non-numeric value is malformed rather than absent -- RFC 9110 also
+  // allows an HTTP-date here, which this does not parse -- so it falls back
+  // to the default too rather than being treated as zero.
   return ZOTERO_RETRY_DEFAULT_MS
 }
 

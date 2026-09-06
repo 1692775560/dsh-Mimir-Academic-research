@@ -89,8 +89,24 @@ describe('parseCcfddlInstant', () => {
     expect(parseCcfddlInstant('2026-01-01 00:00:00', 'UTC')).toBe(Date.UTC(2026, 0, 1, 0, 0, 0))
   })
 
-  it('approximates PT as UTC-8', () => {
+  it('resolves PT through the IANA zone, so PST and PDT differ', () => {
+    // January is PST (UTC-8) -- unchanged from the old fixed offset.
     expect(parseCcfddlInstant('2026-01-01 00:00:00', 'PT')).toBe(Date.UTC(2026, 0, 1, 8, 0, 0))
+    // July is PDT (UTC-7). The fixed -8 put this an hour later than it is,
+    // which is the direction that costs a submission: the countdown showed
+    // an hour that had already gone.
+    expect(parseCcfddlInstant('2026-07-15 23:59:00', 'PT')).toBe(Date.UTC(2026, 6, 16, 6, 59, 0))
+  })
+
+  it('places a PT deadline on the correct side of a DST transition', () => {
+    // 2026-03-08 02:00 local is when PST becomes PDT.
+    expect(parseCcfddlInstant('2026-03-07 12:00:00', 'PT')).toBe(Date.UTC(2026, 2, 7, 20, 0, 0))
+    expect(parseCcfddlInstant('2026-03-09 12:00:00', 'PT')).toBe(Date.UTC(2026, 2, 9, 19, 0, 0))
+  })
+
+  it('leaves the other zones alone', () => {
+    expect(parseCcfddlInstant('2026-07-15 23:59:00', 'AoE')).toBe(Date.UTC(2026, 6, 16, 11, 59, 0))
+    expect(parseCcfddlInstant('2026-07-15 23:59:00', 'UTC+8')).toBe(Date.UTC(2026, 6, 15, 15, 59, 0))
   })
 
   it('accepts missing seconds and a T separator', () => {
@@ -105,11 +121,41 @@ describe('parseCcfddlInstant', () => {
 })
 
 describe('daysUntil', () => {
-  it('rounds up whole days; a deadline today is 0 and past is negative', () => {
-    expect(daysUntil(NOW, NOW)).toBe(0)
-    expect(daysUntil(NOW + 1, NOW)).toBe(1)
-    expect(daysUntil(NOW + 86_400_000, NOW)).toBe(1)
-    expect(daysUntil(NOW - 86_400_000, NOW)).toBe(-1)
+  /** Local midnight, so the calendar-day arithmetic is not zone-dependent. */
+  const localNoon = (year: number, month: number, day: number, hour = 12): number =>
+    new Date(year, month, day, hour).getTime()
+
+  it('counts calendar days: a deadline later today is 0', () => {
+    const now = localNoon(2026, 0, 1)
+    expect(daysUntil(now, now)).toBe(0)
+    // The case the old `Math.ceil` got wrong. A deadline a millisecond, five
+    // minutes or eleven hours away is still today, and `withinDays=0` has to
+    // match it -- that filter was excluding exactly the deadlines it most
+    // needed to show.
+    expect(daysUntil(now + 1, now)).toBe(0)
+    expect(daysUntil(now + 5 * 60_000, now)).toBe(0)
+    expect(daysUntil(localNoon(2026, 0, 1, 23), now)).toBe(0)
+  })
+
+  it('counts tomorrow as 1 however few hours away it is', () => {
+    const now = localNoon(2026, 0, 1, 23)
+    // One hour later, but the next calendar day.
+    expect(daysUntil(localNoon(2026, 0, 2, 0), now)).toBe(1)
+    expect(daysUntil(localNoon(2026, 0, 2, 23), now)).toBe(1)
+  })
+
+  it('counts whole days forward and negative days backward', () => {
+    const now = localNoon(2026, 0, 1)
+    expect(daysUntil(localNoon(2026, 0, 8), now)).toBe(7)
+    expect(daysUntil(localNoon(2025, 11, 31), now)).toBe(-1)
+    expect(daysUntil(localNoon(2025, 11, 25), now)).toBe(-7)
+  })
+
+  it('is not thrown off by a DST transition in between', () => {
+    // Truncating to a local date rather than dividing a millisecond gap: the
+    // 23-hour spring-forward day still counts as one day.
+    expect(daysUntil(localNoon(2026, 2, 9), localNoon(2026, 2, 8))).toBe(1)
+    expect(daysUntil(localNoon(2026, 10, 2), localNoon(2026, 10, 1))).toBe(1)
   })
 })
 
