@@ -184,6 +184,81 @@ describe('createZoteroClient', () => {
     expect(stubborn).toBe(2)
   })
 
+  it('waits the default backoff when a 429 carries no Retry-After', async () => {
+    // `Number(null)` is 0 and passes a `>= 0` check, so the header's absence
+    // used to compute a 0ms wait and retry immediately -- the opposite of
+    // backing off, against a server that just said it was rate limited.
+    vi.useFakeTimers()
+    try {
+      let attempts = 0
+      const client = createZoteroClient(CONFIG, async () => {
+        attempts += 1
+        return attempts === 1 ? new Response('slow down', { status: 429 }) : json([])
+      })
+
+      const pending = client.listCollections(SIGNAL)
+      await vi.advanceTimersByTimeAsync(999)
+      expect(attempts).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toEqual([])
+      expect(attempts).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('lets the Retry-After header win when it is present', async () => {
+    vi.useFakeTimers()
+    try {
+      let attempts = 0
+      const client = createZoteroClient(CONFIG, async () => {
+        attempts += 1
+        return attempts === 1
+          ? new Response('slow down', { status: 429, headers: { 'Retry-After': '2' } })
+          : json([])
+      })
+
+      const pending = client.listCollections(SIGNAL)
+      // Still waiting past the default, so the header is what is being honoured.
+      await vi.advanceTimersByTimeAsync(1999)
+      expect(attempts).toBe(1)
+
+      await vi.advanceTimersByTimeAsync(1)
+      await expect(pending).resolves.toEqual([])
+      expect(attempts).toBe(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('falls back to the default for an empty or unparseable Retry-After', async () => {
+    // `Number('')` is also 0, and an HTTP-date -- which RFC 9110 permits and
+    // this client does not parse -- is NaN. Neither is a reason to retry
+    // instantly, so both take the default.
+    for (const value of ['', '   ', 'Wed, 21 Oct 2026 07:28:00 GMT']) {
+      vi.useFakeTimers()
+      try {
+        let attempts = 0
+        const client = createZoteroClient(CONFIG, async () => {
+          attempts += 1
+          return attempts === 1
+            ? new Response('slow down', { status: 429, headers: { 'Retry-After': value } })
+            : json([])
+        })
+
+        const pending = client.listCollections(SIGNAL)
+        await vi.advanceTimersByTimeAsync(999)
+        expect(attempts, `Retry-After: ${JSON.stringify(value)} retried too early`).toBe(1)
+
+        await vi.advanceTimersByTimeAsync(1)
+        await expect(pending).resolves.toEqual([])
+      } finally {
+        vi.useRealTimers()
+      }
+    }
+  })
+
   it('rejects HTTP failures with status and URL, never the API key', async () => {
     const client = createZoteroClient(CONFIG, async () => new Response('forbidden', { status: 403 }))
     await expect(client.testConnection(SIGNAL)).rejects.toThrow('HTTP 403')
