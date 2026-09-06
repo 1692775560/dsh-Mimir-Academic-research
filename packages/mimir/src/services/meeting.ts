@@ -25,6 +25,7 @@ import type {
 import { resolvePaperDir } from '../paper-source.ts'
 import { listPaperFigures, type FigureFile } from '../artifacts.ts'
 import { isValidArxivId } from '../arxiv-id.ts'
+import { isValidProjectId } from '../project-id.ts'
 import { extractPaperFigures, resolvePaperPdf } from './paper-figures.ts'
 import { fetchPaperPdf } from './library.ts'
 import {
@@ -478,6 +479,12 @@ export async function generateMeetingDeck(
 ): Promise<ResearchGenerateMeetingResult> {
   const project = deps.domain.table('projects').get(request.projectId)
   if (project === undefined) return rejected({ code: 'project-not-found', projectId: request.projectId })
+  // Checked before any work: this is the site that *creates*
+  // `meetings/<projectId>/`, so an unsafe id here would mkdir outside the
+  // workspace rather than merely read outside it.
+  if (!isValidProjectId(project.id)) {
+    return rejected({ code: 'invalid-path', path: project.id })
+  }
   const include: MeetingInclude = { ...DEFAULT_INCLUDE, ...(request.include ?? {}) }
 
   const allPapers = [...deps.domain.table('papers').entries()].map(([, record]) => record)
@@ -606,6 +613,12 @@ export async function listMeetingDecks(
 ): Promise<ResearchMeetingDecksResult> {
   const project = deps.domain.table('projects').get(request.projectId)
   if (project === undefined) return rejected({ code: 'project-not-found', projectId: request.projectId })
+  // The stored id is unconstrained `z.string()`, so it is checked here rather
+  // than trusted: an imported snapshot predating the import guard could still
+  // hold `../../x`, and this joins it into a filesystem path.
+  if (!isValidProjectId(project.id)) {
+    return rejected({ code: 'invalid-path', path: project.id })
+  }
   const meetingsDir = join(deps.workspaceDir, MEETINGS_DIR_NAME, project.id)
   let names: string[]
   try {
@@ -636,6 +649,9 @@ export async function deleteMeetingDeck(
   if (file === '' || extname(file).toLowerCase() !== '.pptx') {
     return rejected({ code: 'invalid-input', message: 'file must name a .pptx deck' })
   }
+  if (!isValidProjectId(project.id)) {
+    return rejected({ code: 'invalid-path', path: project.id })
+  }
   try {
     await unlink(join(deps.workspaceDir, MEETINGS_DIR_NAME, project.id, file))
   } catch {
@@ -650,6 +666,9 @@ export function meetingDeckPath(
   projectId: string,
   file: string,
 ): string | undefined {
+  // `file` is already reduced to a basename below; `projectId` was not
+  // checked at all, and it is the other half of the same path.
+  if (!isValidProjectId(projectId)) return undefined
   const name = basename(file)
   if (name === '' || extname(name).toLowerCase() !== '.pptx') return undefined
   return join(workspaceDir, MEETINGS_DIR_NAME, projectId, name)
