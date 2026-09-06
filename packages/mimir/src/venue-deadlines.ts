@@ -58,11 +58,60 @@ export interface VenueNextDeadline {
   readonly atMs: number
 }
 
+/** The IANA zone the ccfddl `PT` label means. */
+const PACIFIC_ZONE = 'America/Los_Angeles'
+
+/**
+ * Pacific's UTC offset at one wall-clock date, in milliseconds.
+ *
+ * A fixed -8 is wrong for two thirds of the year, and wrong in the direction
+ * that costs a submission: during PDT it places the deadline an hour later
+ * than it is, so the countdown shows time that has already passed.
+ *
+ * Resolved by asking `Intl` what the zone's local time is for a UTC instant
+ * and taking the difference. The first pass uses a standard-time guess; the
+ * second re-resolves at that instant, which is what gets a date inside PDT
+ * right. `-7` is the fallback if `Intl` has no zone data, because erring
+ * toward the *earlier* instant is the safe half of the ambiguity.
+ */
+function pacificOffsetMs(wall: RegExpExecArray): number {
+  const asUtc = Date.UTC(
+    Number(wall[1]), Number(wall[2]) - 1, Number(wall[3]),
+    Number(wall[4]), Number(wall[5]), Number(wall[6] ?? '0'),
+  )
+  try {
+    const resolve = (instantMs: number): number => {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: PACIFIC_ZONE,
+        hourCycle: 'h23',
+        year: 'numeric', month: '2-digit', day: '2-digit',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }).formatToParts(new Date(instantMs))
+      const at = (type: string): number =>
+        Number(parts.find(part => part.type === type)?.value ?? '0')
+      const local = Date.UTC(
+        at('year'), at('month') - 1, at('day'), at('hour'), at('minute'), at('second'),
+      )
+      return local - instantMs
+    }
+    // Two passes: the first offset is measured at the wrong instant when the
+    // wall time is inside PDT, the second at the corrected one.
+    const first = resolve(asUtc)
+    return resolve(asUtc - first)
+  } catch {
+    return -7 * 3_600_000
+  }
+}
+
 /**
  * Parse one ccfddl instant: a `YYYY-MM-DD HH:mm:ss` wall time plus a zone
  * string. The upstream file uses `AoE` (= UTC-12, the common case), `UTC±H`,
- * plain `UTC`, and a handful of `PT` (approximated as UTC-8 — the deadline
- * hour is what matters, the DST wobble is within it).
+ * plain `UTC`, and a handful of `PT`.
+ *
+ * `PT` is resolved through the IANA zone rather than a fixed UTC-8. During
+ * PDT the fixed offset put the instant an hour later than it really is, which
+ * is the dangerous direction: the countdown said there was an hour left that
+ * had already gone.
  * @param value - the wall-time string.
  * @param timezone - the zone string.
  * @returns epoch milliseconds, or null for an unparseable pair.
@@ -73,7 +122,7 @@ export function parseCcfddlInstant(value: string, timezone: string): number | nu
   const zoneRaw = timezone.trim()
   let offsetMs: number
   if (/^aoe$/i.test(zoneRaw)) offsetMs = -12 * 3_600_000
-  else if (/^pt$/i.test(zoneRaw)) offsetMs = -8 * 3_600_000
+  else if (/^pt$/i.test(zoneRaw)) offsetMs = pacificOffsetMs(wall)
   else if (/^utc$/i.test(zoneRaw)) offsetMs = 0
   else {
     const zone = /^UTC([+-])(\d{1,2})(?::(\d{2}))?$/i.exec(zoneRaw)
@@ -87,9 +136,22 @@ export function parseCcfddlInstant(value: string, timezone: string): number | nu
   return utcMs - offsetMs
 }
 
-/** Whole days from `nowMs` to `atMs`, rounded up (a deadline today is 0). */
+/**
+ * Calendar days from `nowMs` to `atMs` in the host's local zone, so a
+ * deadline today is 0.
+ *
+ * `Math.ceil` on the millisecond gap does not answer that question: a
+ * deadline five minutes away is 0.003 days, which rounds up to "1 day left",
+ * and `withinDays=0` then matched nothing at all -- it excluded exactly the
+ * deadlines it most needed to show. Truncating both ends to a local date
+ * counts the boundaries a person actually reads.
+ */
 export function daysUntil(atMs: number, nowMs: number): number {
-  return Math.ceil((atMs - nowMs) / 86_400_000)
+  const startOfLocalDay = (ms: number): number => {
+    const date = new Date(ms)
+    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+  }
+  return Math.round((startOfLocalDay(atMs) - startOfLocalDay(nowMs)) / 86_400_000)
 }
 
 /* eslint-disable @typescript-eslint/no-unnecessary-condition -- the YAML is
