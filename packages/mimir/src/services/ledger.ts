@@ -118,7 +118,17 @@ function resolveWindow(
   spanDays: number,
 ): { readonly since: string; readonly until: string } {
   const untilIso = until ?? new Date().toISOString()
-  if (since !== undefined) return { since, until: untilIso }
+  if (since !== undefined) {
+    // An inverted window is not an empty window. Passed through, every read
+    // below returns nothing and the view reports that as "no activity" --
+    // indistinguishable from a genuinely quiet period, which is the one
+    // reading these organs must never get wrong. Swapping the bounds is the
+    // interpretation the caller can only have meant.
+    if (Date.parse(since) > Date.parse(untilIso)) {
+      return { since: untilIso, until: since }
+    }
+    return { since, until: untilIso }
+  }
   const parsed = Date.parse(untilIso)
   const anchor = Number.isNaN(parsed) ? Date.now() : parsed
   return { since: new Date(anchor - spanDays * MS_PER_DAY).toISOString(), until: untilIso }
@@ -1163,6 +1173,12 @@ export async function getMomentIndexRemote(
       since: prefixSince,
       until: window.until,
     }, 'moment index lookback')
+    // The lookback is what dormancy and lane-opening are judged against, and
+    // `loadLedgerWindow` keeps the NEWEST events when it caps. So a truncated
+    // prefix drops exactly the oldest history those judgements need, and a
+    // line that was dormant reads as one that was never seen. That has to be
+    // declared: a silence derived from a short prefix is a guess.
+    const lookbackTruncated = prefixFolded.truncated
     // Merge window + prefix (dedupe by id) — the fold sorts canonically.
     const seen = new Set(folded.events.map(event => event.id))
     const merged = [...folded.events, ...prefixFolded.events.filter(event => !seen.has(event.id))]
@@ -1198,10 +1214,15 @@ export async function getMomentIndexRemote(
       retrieval: Object.freeze({
         eventsHit: folded.events.length,
         eventsTotal: folded.total,
-        truncated: folded.truncated,
-        silences: Object.freeze(folded.truncated
-          ? [`events truncated: window matched ${folded.total}, fold cap ${LIST_EVENTS_MAX_LIMIT}, folded newest ${folded.events.length}`]
-          : []),
+        truncated: folded.truncated || lookbackTruncated,
+        silences: Object.freeze([
+          ...(folded.truncated
+            ? [`events truncated: window matched ${folded.total}, fold cap ${LIST_EVENTS_MAX_LIMIT}, folded newest ${folded.events.length}`]
+            : []),
+          ...(lookbackTruncated
+            ? [`lookback truncated: prefix matched ${prefixFolded.total}, fold cap ${LIST_EVENTS_MAX_LIMIT}, folded newest ${prefixFolded.events.length} — dormancy and lane-opening judgements may be missing older history`]
+            : []),
+        ]),
       }),
       speaks,
       moments: Object.freeze(moments),
