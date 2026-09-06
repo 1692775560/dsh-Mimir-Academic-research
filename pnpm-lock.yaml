@@ -101,8 +101,8 @@ importers:
         version: 4.0.9
     optionalDependencies:
       sxng-cli:
-        specifier: ^1.2.9
-        version: 1.2.9(debug@4.4.3)(graphology-types@0.24.8)
+        specifier: latest
+        version: 1.3.1(debug@4.4.3)(graphology-types@0.24.8)
 
   packages/typert-protocol:
     devDependencies:
@@ -1726,8 +1726,8 @@ packages:
   string_decoder@1.1.1:
     resolution: {integrity: sha512-n/ShnvDi6FHbbVfviro+WojiFzv+s8MPMHBczVePfUpDJLwoLT0ht1l4YwBCbi8pJAveEEdnkHyPyTP/mzRfwg==}
 
-  sxng-cli@1.2.9:
-    resolution: {integrity: sha512-EWSr41em8XQRQ7iLfnq2rGlhkuc+NuQM9um0mjWmX6BNkIDI7YnBCZAj/qezEJMi/6IiYSnTEbbPoL7X217BRg==}
+  sxng-cli@1.3.1:
+    resolution: {integrity: sha512-aXT+Wz+0ky4lCp0rmQFfm2nTUijJu6RIJTX6Ifx0S54XO2omi7uV7y/OK1vaB4YUUcmvX4VFSz4vOMepIvLJSA==}
     engines: {node: '>=18.0.0'}
     hasBin: true
 
@@ -3397,7 +3397,7 @@ snapshots:
     dependencies:
       safe-buffer: 5.1.2
 
-  sxng-cli@1.2.9(debug@4.4.3)(graphology-types@0.24.8):
+  sxng-cli@1.3.1(debug@4.4.3)(graphology-types@0.24.8):
     dependencies:
       '@orama/orama': 3.1.18
       '@orama/plugin-data-persistence': 3.1.18

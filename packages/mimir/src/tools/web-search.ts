@@ -11,10 +11,13 @@ import { execFile } from 'node:child_process'
 import type { ExecFileException } from 'node:child_process'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { installCommandFor, detectPackageManager } from '../pm-detect.ts'
 
-/** Install hint carried in every missing-CLI error. */
-const INSTALL_GUIDANCE =
-  'Install the sxng CLI (npm install -g sxng-cli) and point it at a self-hosted SearXNG instance (`sxng init`), or set search.command to the binary path.'
+/** Install hint carried in every missing-CLI error, tuned to the detected PM. */
+function installGuidance(): string {
+  const command = installCommandFor(detectPackageManager())
+  return ['Install the sxng CLI with ', command, ' and point it at a self-hosted SearXNG instance (`sxng init`), or set search.command to the binary path.'].join('')
+}
 
 /** Whether one command resolves to a runnable executable. Injectable so tests never touch the real PATH. */
 export type WebSearchRunner = (
@@ -64,7 +67,7 @@ const runOnPath: WebSearchRunner = (command, args, timeoutMs, signal) => new Pro
     { timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8', ...(signal === undefined ? {} : { signal }) },
     (error: ExecFileException | null, stdout: string) => {
       if (error !== null && error.code === 'ENOENT') {
-        reject(new Error(`Web search command '${command}' was not found on PATH. ${INSTALL_GUIDANCE}`, { cause: error }))
+        reject(new Error(`Web search command '${command}' was not found on PATH. ${installGuidance()}`, { cause: error }))
         return
       }
       if (error !== null && signal !== undefined && signal.aborted) {
