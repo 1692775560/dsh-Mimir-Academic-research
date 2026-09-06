@@ -7,7 +7,7 @@
  * workspace.
  */
 
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -122,6 +122,24 @@ describe('saveArxivSubscription / deleteArxivSubscription', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'subscription-not-found', id } })
     const listed = await listArxivSubscriptions(deps)
     expect(listed.ok && listed.value.subscriptions.length).toBe(0)
+  })
+
+  it('recovers an orphaned stale lock before a CRUD write', async () => {
+    const dir = await workspace()
+    const lockPath = join(dir, `${ARXIV_SUBSCRIPTIONS_FILE}.lock`)
+    await writeFile(lockPath, 'orphaned\n')
+    const staleAt = new Date(Date.now() - 5 * 60_000 - 1)
+    await utimes(lockPath, staleAt, staleAt)
+
+    const result = await saveArxivSubscription(
+      { workspaceDir: dir },
+      { query: 'mesh reconstruction' },
+    )
+
+    expect(result).toMatchObject({ ok: true })
+    await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 })
 

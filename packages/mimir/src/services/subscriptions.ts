@@ -8,14 +8,12 @@
  */
 
 import { randomUUID } from 'node:crypto'
-import { join } from 'node:path'
-import { withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import {
   ARXIV_SUBSCRIPTION_QUERY_MAX,
-  ARXIV_SUBSCRIPTIONS_FILE,
   loadArxivSubscriptions,
   runArxivSubscriptionCheck,
   saveArxivSubscriptions,
+  withArxivSubscriptionsFileLock,
 } from '../arxiv-subscriptions.ts'
 import type {
   ArxivSubscriptionRecord,
@@ -81,7 +79,7 @@ export async function saveArxivSubscription(
   // The same file lock the check's save path holds: a check settling between
   // our read and write would otherwise be overwritten whole. The duplicate
   // probe and the append both re-read inside the lock.
-  return await withFileLock(join(deps.workspaceDir, ARXIV_SUBSCRIPTIONS_FILE), async () => {
+  return await withArxivSubscriptionsFileLock(deps.workspaceDir, async () => {
     const subscriptions = await loadArxivSubscriptions(deps.workspaceDir)
     if (subscriptions.some(record => record.query.toLowerCase() === query.toLowerCase())) {
       return rejected({ code: 'invalid-input', message: `already subscribed: ${query}` })
@@ -113,7 +111,7 @@ export async function deleteArxivSubscription(
   // Same lock as the check's save path: re-read inside, then filter, so a
   // concurrently settling check can neither resurrect the deleted record nor
   // be lost itself.
-  return await withFileLock(join(deps.workspaceDir, ARXIV_SUBSCRIPTIONS_FILE), async () => {
+  return await withArxivSubscriptionsFileLock(deps.workspaceDir, async () => {
     const subscriptions = await loadArxivSubscriptions(deps.workspaceDir)
     if (!subscriptions.some(record => record.id === request.id)) {
       return rejected({ code: 'subscription-not-found', id: request.id })
