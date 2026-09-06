@@ -9,6 +9,7 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { isValidArxivId } from '../arxiv-id.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type { ArxivEntry, PaperRecord, ProjectRecord } from '../types.ts'
 
@@ -192,6 +193,11 @@ export async function rememberFetchedPaper(
   entry: ArxivEntry,
   options: { readonly projectId?: string; readonly notes?: string; readonly tags?: readonly string[] } = {},
 ): Promise<PaperRecord> {
+  // The durable schema no longer hard-refines the id (a legacy bad row must
+  // not abort the domain open), so every write path validates explicitly.
+  if (!isValidArxivId(entry.id)) {
+    throw new Error(`paper_fetch: unsafe arXiv id '${entry.id}'`)
+  }
   const explicitProject = options.projectId === undefined ? undefined : domain.table('projects').get(options.projectId)
   if (options.projectId !== undefined && explicitProject === undefined) {
     throw new Error(`paper_fetch: no project with id '${options.projectId}'`)

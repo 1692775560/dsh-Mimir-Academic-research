@@ -7,6 +7,7 @@
  */
 
 import { readdir } from 'node:fs/promises'
+import { isValidArxivId } from '../arxiv-id.ts'
 import { isBackupFileName } from '../backup.ts'
 import {
   buildWikiSnapshot,
@@ -162,6 +163,14 @@ export async function importWiki(
     for (const row of snapshot.tables[name]) {
       const key = (row as unknown as Record<string, unknown>)[keyField] as string
       if (request.mode === 'merge' && table.get(key) !== undefined) {
+        skipped[name] += 1
+        continue
+      }
+      // The durable paper schema no longer hard-refines the id (a legacy bad
+      // row must not abort the domain open), so the import validates
+      // explicitly: a snapshot paper with a path-unsafe id is skipped, not
+      // written.
+      if (name === 'papers' && !isValidArxivId(key)) {
         skipped[name] += 1
         continue
       }

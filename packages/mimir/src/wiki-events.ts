@@ -72,12 +72,20 @@ export function createWikiEventsHandler(
     const unsubscribe = hub.subscribe((event) => {
       res.write(`data: ${JSON.stringify(event)}\n\n`)
     })
-    const heartbeat = setInterval(() => {
-      res.write(': ping\n\n')
-    }, HEARTBEAT_MS)
-    req.on('close', () => {
+    const cleanup = (): void => {
       clearInterval(heartbeat)
       unsubscribe()
-    })
+    }
+    const heartbeat = setInterval(() => {
+      // A zombie connection (client gone, close not yet fired) must not take
+      // the route down: a throwing write drops this stream's subscription.
+      try {
+        res.write(': ping\n\n')
+      } catch {
+        cleanup()
+      }
+    }, HEARTBEAT_MS)
+    res.on('error', cleanup)
+    req.on('close', cleanup)
   }
 }

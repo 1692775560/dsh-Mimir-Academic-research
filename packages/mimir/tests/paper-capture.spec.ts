@@ -82,4 +82,12 @@ describe('automatic paper capture', () => {
     const domain = await domainHarness()
     await expect(rememberFetchedPaper(domain, ENTRY, { projectId: 'missing' })).rejects.toThrow("no project with id 'missing'")
   })
+
+  it('rejects a path-unsafe arXiv id at the write boundary', async () => {
+    const domain = await domainHarness()
+    // The durable schema is permissive on purpose (a legacy bad row must not
+    // abort the domain open), so the write path validates explicitly.
+    await expect(rememberFetchedPaper(domain, { ...ENTRY, id: '../escape' })).rejects.toThrow("unsafe arXiv id '../escape'")
+    expect(domain.table('papers').size).toBe(0)
+  })
 })

@@ -51,35 +51,50 @@ export interface WikiChangeAggregator {
 
 /**
  * Build the trailing-debounce aggregator behind the panel's live refresh.
- * Every push re-arms the timer, so a burst settles into ONE flush carrying
- * the union of the dirtied slices.
- * @param flush - receives the dirtied-slice union once per quiet window.
+ * A push that dirties a NEW slice re-arms the trailing timer, so a burst
+ * settles into ONE flush carrying the union; a push adding nothing (an
+ * unmappable event, or a table already pending) leaves the timer alone, so a
+ * sustained same-table stream cannot postpone the flush forever. The
+ * optional max-wait deadline caps the worst case for a stream of DISTINCT
+ * slices arriving faster than the quiet window: the flush fires when the
+ * deadline hits, carrying whatever is pending.
+ * @param flush - receives the dirtied-slice union once per settled batch.
  * @param waitMs - the quiet window length.
+ * @param maxWaitMs - optional hard cap from the first push of a batch.
  */
 export function createWikiChangeAggregator(
   flush: (slices: ReadonlySet<LiveSlice>) => void,
   waitMs: number,
+  maxWaitMs?: number,
 ): WikiChangeAggregator {
   let slices = new Set<LiveSlice>()
   let timer: ReturnType<typeof setTimeout> | null = null
+  let deadline: ReturnType<typeof setTimeout> | null = null
   const fire = (): void => {
     if (timer !== null) clearTimeout(timer)
+    if (deadline !== null) clearTimeout(deadline)
     timer = null
+    deadline = null
     const settled = slices
     slices = new Set()
     if (settled.size > 0) flush(settled)
   }
   return {
     push(event) {
+      const before = slices.size
       for (const slice of slicesForWikiChange(event)) slices.add(slice)
       if (slices.size === 0) return
+      if (deadline === null && maxWaitMs !== undefined) deadline = setTimeout(fire, maxWaitMs)
+      if (slices.size === before) return
       if (timer !== null) clearTimeout(timer)
       timer = setTimeout(fire, waitMs)
     },
     flushNow: fire,
     cancel() {
       if (timer !== null) clearTimeout(timer)
+      if (deadline !== null) clearTimeout(deadline)
       timer = null
+      deadline = null
       slices = new Set()
     },
     pending: () => slices.size > 0,
