@@ -16,7 +16,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 // Type-only: pulls the ctx.webServer Context merge for the PDF route below.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { researchWikiDomainSpec } from './store.ts'
+import { quarantineUnsafePaperIds, researchWikiDomainSpec } from './store.ts'
 import { createArxivSearchTool, createPaperFetchTool } from './tools/arxiv.ts'
 import { createWebSearchTool } from './tools/web-search.ts'
 import { createWikiNoteTool } from './tools/wiki.ts'
@@ -1091,6 +1091,11 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const resolved = resolveConfig(config)
   const domain = await ctx.storageDomain.open(researchWikiDomainSpec)
   ctx.effect(() => () => domain.close(), 'mimir.domainClose')
+  // Stored paper records with path-unsafe ids predate the whitelist (or were
+  // hand-edited); quarantine them before any surface can join them into a
+  // filesystem path. The schema stays permissive so their presence can never
+  // abort the open itself.
+  await quarantineUnsafePaperIds(domain, message => ctx.logger.warn(message))
   await recoverInterruptedJobs({ workspaceDir: resolve(process.cwd(), resolved.workspaceDir), domain })
 
   const deps: ResearchCommandDeps = {

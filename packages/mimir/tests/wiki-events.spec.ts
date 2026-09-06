@@ -24,10 +24,12 @@ function fakeReq(method = 'GET'): IncomingMessage {
 function fakeRes(): ServerResponse & { readonly status: () => number | undefined; readonly body: () => string } {
   let status: number | undefined
   let body = ''
+  const emitter = new EventEmitter()
   const res = {
     writeHead(code: number) { status = code; return res },
     write(chunk: string) { body += chunk; return true },
     end() { return res },
+    on: emitter.on.bind(emitter),
     status: () => status,
     body: () => body,
   }
@@ -90,6 +92,27 @@ describe('createWikiEventsHandler', () => {
       hub.publish(CHANGE)
       const frames = res.body().match(/data: /g)
       expect(frames).toHaveLength(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('drops the subscription when a heartbeat write throws (zombie connection)', () => {
+    vi.useFakeTimers()
+    try {
+      const hub = createWikiChangeHub()
+      const handler = createWikiEventsHandler(hub)
+      const res = fakeRes()
+      handler(fakeReq(), res)
+      expect(hub.size()).toBe(1)
+      // The socket dies silently: the next heartbeat write throws, and the
+      // route must drop the stream instead of leaking the subscription.
+      vi.spyOn(res, 'write').mockImplementation(() => { throw new Error('socket destroyed') })
+      vi.advanceTimersByTime(31_000)
+      expect(hub.size()).toBe(0)
+      // The interval is disarmed too: advancing further changes nothing.
+      vi.advanceTimersByTime(60_000)
+      expect(hub.size()).toBe(0)
     } finally {
       vi.useRealTimers()
     }

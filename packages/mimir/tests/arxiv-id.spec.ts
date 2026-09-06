@@ -1,7 +1,7 @@
 /**
  * Behavior tests for the shared arXiv-id path-safety predicate and its
  * enforcement points: the wiki write tool, the literature import/fetch
- * services, the durable zod schema, and the filesystem reads (cached PDF,
+ * services, the load-time quarantine, and the filesystem reads (cached PDF,
  * figure crops). Traversal, absolute paths, and backslashes are rejected
  * everywhere; a real old-style id with a slash passes.
  */
@@ -42,12 +42,15 @@ describe('isValidArxivId', () => {
 })
 
 describe('paperRecord schema', () => {
-  it('rejects an unsafe arxivId and accepts a slashed one', () => {
+  it('parses any id string at load time (quarantine, not the schema, removes unsafe rows)', () => {
+    // Load-time tolerance: a library carrying a legacy unsafe id must still
+    // open; quarantineUnsafePaperIds (store.spec.ts) deletes the row on boot,
+    // and the write tools/services reject unsafe ids before they land.
     const base = {
       title: 't', authors: [], summary: 's', url: 'u', notes: '', addedAt: '2026-08-20T00:00:00.000Z',
     }
     expect(paperRecord.safeParse({ ...base, arxivId: 'hep-th/9901001' }).success).toBe(true)
-    expect(paperRecord.safeParse({ ...base, arxivId: '../../etc' }).success).toBe(false)
+    expect(paperRecord.safeParse({ ...base, arxivId: '../../etc' }).success).toBe(true)
   })
 })
 
