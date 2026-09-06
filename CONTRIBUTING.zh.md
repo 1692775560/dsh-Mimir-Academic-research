@@ -3,6 +3,7 @@
 [English](CONTRIBUTING.md) | 中文
 
 感谢一起共创 Mimir！本文档说明协作流程、每个改动必须过的检查、以及之前踩过的坑。
+代码层面的约定在 [CODE_STYLE.zh.md](CODE_STYLE.zh.md)——提第一个 PR 前请先读它。
 
 ## 环境搭建
 

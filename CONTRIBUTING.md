@@ -3,7 +3,8 @@
 English | [中文](CONTRIBUTING.zh.md)
 
 Thanks for helping build Mimir! This guide covers the workflow, the checks every
-change must pass, and the pitfalls that have bitten us before.
+change must pass, and the pitfalls that have bitten us before. Code-level
+conventions live in [CODE_STYLE.md](CODE_STYLE.md) — read it before your first PR.
 
 ## Setup
 
