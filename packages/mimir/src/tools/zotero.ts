@@ -97,7 +97,11 @@ function sleep(ms: number, signal: AbortSignal): Promise<void> {
 
 /** Milliseconds to wait before the retry, from the response's Retry-After header. */
 function retryDelayMs(response: Response): number {
-  const seconds = Number(response.headers.get('retry-after'))
+  const header = response.headers.get('retry-after')
+  if (header === null) {
+    return ZOTERO_RETRY_DEFAULT_MS
+  }
+  const seconds = Number(header)
   if (Number.isFinite(seconds) && seconds >= 0) {
     return Math.min(seconds * 1000, ZOTERO_RETRY_MAX_MS)
   }

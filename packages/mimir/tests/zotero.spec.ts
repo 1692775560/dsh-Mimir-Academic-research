@@ -184,6 +184,27 @@ describe('createZoteroClient', () => {
     expect(stubborn).toBe(2)
   })
 
+  it('retries a 429 without Retry-After after the default wait, not immediately', async () => {
+    vi.useFakeTimers()
+    let attempts = 0
+    const waits: number[] = []
+    const client = createZoteroClient(CONFIG, async () => {
+      attempts += 1
+      return new Response('slow down', { status: 429 })
+    })
+    const pending = client.listCollections(SIGNAL)
+    pending.catch(() => {})
+    for (let i = 0; i < 20 && attempts < 2; i++) {
+      await vi.advanceTimersByTimeAsync(100)
+      void waits
+      if (attempts === 2) break
+    }
+    await vi.runAllTimersAsync()
+    await expect(pending).rejects.toThrow('HTTP 429')
+    expect(attempts).toBe(2)
+    vi.useRealTimers()
+  })
+
   it('rejects HTTP failures with status and URL, never the API key', async () => {
     const client = createZoteroClient(CONFIG, async () => new Response('forbidden', { status: 403 }))
     await expect(client.testConnection(SIGNAL)).rejects.toThrow('HTTP 403')
