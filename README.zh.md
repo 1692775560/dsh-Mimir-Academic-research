@@ -83,6 +83,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 
 ## 更新日志
 
+- **0.18.1**——订阅文件陈旧锁自愈（写进程崩溃不再卡死后续每次检查）+ 会议缓存并发刷新按工作区合并去重，[@mikemikimike](https://github.com/mikemikimike) 贡献（[#144](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/144)，修复 [#141](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/141)）· sxng 集成，[@hkwuks](https://github.com/hkwuks) 贡献（[#137](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/137)）：可选依赖 `sxng-cli` 跟踪 latest、缺 CLI 的报错按你实际用的包管理器给安装命令、新 `/skill-sync` 命令把上游 sxng 技能同步进 dsh 技能目录 · devDependencies 跟踪 dsh 0.1.2-rc.1（已对 0.1.3-alpha.1 验证；peer 下限不变）
 - **0.18.0**——功能：**会议**（第九视图）：CCF 会议截稿倒计时（ccfddl 目录）、按项目关注列表、CCF-A 期刊目录、`venue_search` agent 工具 · **SSE 实时推送**：wiki 写入经 `/research/events` 推到打开的面板，所有已打开视图跟随 agent/同伴编辑免刷新 · 侧栏可折叠、大纲栏收窄、按钮紧凑化 · 已核实的架构文档：[docs/architecture.zh.md](docs/architecture.zh.md)（[EN](docs/architecture.md)）。修复：两轮排查共 23 项——路径穿越 / SSH 注入等安全项、文献库脏 id 加载期隔离清洗、SSE 心跳写保护 + 断线重连补偿、切项目时的自动保存/保存通道竞态、订阅检查纳入文件锁、live-refresh 饿死与迟到旧读守卫；controller 生命周期隔离由 [@hkwuks](https://github.com/hkwuks) 贡献（[#129](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/129)）
 
 - **0.17.1**——UI 紧凑化：全部按钮统一降一档（28px / 12px，所有视图共用同一套基础样式）；论文页三栏加最小宽度（源码栏 ≥ 360px），宽度不够时横向滚动，不再压扁源码栏
