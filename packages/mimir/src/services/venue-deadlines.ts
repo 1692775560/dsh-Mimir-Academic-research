@@ -45,6 +45,9 @@ interface VenueCache {
   readonly venues: readonly VenueSeries[]
 }
 
+/** In-flight cache refreshes keyed by workspace, so timer and manual calls share one fetch. */
+const activeVenueRefreshes = new Map<string, Promise<VenueCache>>()
+
 /** Deps of the venue-deadline handlers: workspace root plus the wiki domain. */
 export type VenueDeadlineDeps = WikiAdminDeps & { readonly workspaceDir: string }
 
@@ -79,13 +82,26 @@ export async function loadVenueCache(workspaceDir: string): Promise<VenueCache |
  * @param fetchImpl - fetch seam (the real network outside tests).
  * @returns the fresh cache.
  */
-export async function refreshVenueCache(workspaceDir: string, fetchImpl: VenueFetch = defaultFetch): Promise<VenueCache> {
+async function refreshVenueCacheUnlocked(workspaceDir: string, fetchImpl: VenueFetch): Promise<VenueCache> {
   const text = await fetchImpl(CCFDDL_ALLCONF_URL, AbortSignal.timeout(VENUE_FETCH_TIMEOUT_MS))
   const venues = parseAllconfYaml(text)
   if (venues.length === 0) throw new Error('ccfddl payload parsed to an empty catalog')
   const cache: VenueCache = { fetchedAt: new Date().toISOString(), venues: Object.freeze(venues) }
   await writeFileAtomic(join(workspaceDir, VENUE_CACHE_FILE), JSON.stringify(cache), { mode: 0o666 })
   return cache
+}
+
+export async function refreshVenueCache(workspaceDir: string, fetchImpl: VenueFetch = defaultFetch): Promise<VenueCache> {
+  const active = activeVenueRefreshes.get(workspaceDir)
+  if (active !== undefined) return active
+
+  const refresh = refreshVenueCacheUnlocked(workspaceDir, fetchImpl)
+  activeVenueRefreshes.set(workspaceDir, refresh)
+  try {
+    return await refresh
+  } finally {
+    if (activeVenueRefreshes.get(workspaceDir) === refresh) activeVenueRefreshes.delete(workspaceDir)
+  }
 }
 
 /** Options for {@link startVenueDeadlineLoop}. */

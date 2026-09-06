@@ -12,7 +12,7 @@
  * @module dsh-mimir/src/arxiv-subscriptions
  */
 
-import { readFile } from 'node:fs/promises'
+import { lstat, readFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { isNotFound } from './paper-source.ts'
@@ -35,6 +35,42 @@ export const ARXIV_SUBSCRIPTION_FETCH_TIMEOUT_MS = 15_000
 export const ARXIV_SUBSCRIPTION_GAP_MS = 3_000
 /** How long after plugin start the FIRST scheduled check runs. */
 export const ARXIV_SUBSCRIPTION_FIRST_DELAY_MS = 120_000
+/** Age after which a lock left by a crashed writer may be quarantined. */
+export const ARXIV_SUBSCRIPTION_LOCK_STALE_MS = 5 * 60_000
+
+/** Remove one stale lock without deleting a lock a later writer may own. */
+async function recoverStaleArxivSubscriptionLock(filename: string): Promise<void> {
+  const lockPath = `${filename}.lock`
+  let stats
+  try {
+    stats = await lstat(lockPath)
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw error
+  }
+  if (Date.now() - stats.mtimeMs < ARXIV_SUBSCRIPTION_LOCK_STALE_MS) return
+
+  // Rename first so a lock created after the rename remains visible at the
+  // canonical path; only the quarantined orphan is removed below.
+  const quarantinePath = `${lockPath}.stale-${process.pid}-${Date.now()}`
+  try {
+    await rename(lockPath, quarantinePath)
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw error
+  }
+  await rm(quarantinePath, { force: true })
+}
+
+/** Run one subscription-file mutation behind stale-lock recovery. */
+export async function withArxivSubscriptionsFileLock<T>(
+  workspaceDir: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const filename = join(workspaceDir, ARXIV_SUBSCRIPTIONS_FILE)
+  await recoverStaleArxivSubscriptionLock(filename)
+  return withFileLock(filename, operation)
+}
 
 /**
  * One persisted arXiv subscription. `seenIds` is the diff memory (newest
@@ -257,7 +293,7 @@ async function runArxivSubscriptionCheckUnlocked(
     }
   }
   if (outcomes.some(outcome => outcome.error === null)) {
-    await withFileLock(join(workspaceDir, ARXIV_SUBSCRIPTIONS_FILE), async () => {
+    await withArxivSubscriptionsFileLock(workspaceDir, async () => {
       const updates = new Map(outcomes
         .filter((outcome): outcome is ArxivSubscriptionCheckOutcome & { readonly error: null } => outcome.error === null)
         .map(outcome => [outcome.record.id, outcome.record]))

@@ -223,6 +223,33 @@ describe('venue cache shell', () => {
     expect(loaded?.venues.length).toBe(3)
   })
 
+  it('coalesces concurrent refreshes for the same workspace', async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'mimir-venue-cache-'))
+    const body = await readFile(FIXTURE, 'utf8')
+    let calls = 0
+    let resolveFetch!: (value: string) => void
+    const pendingFetch = new Promise<string>((resolve) => {
+      resolveFetch = resolve
+    })
+    const fetchImpl = async () => {
+      calls += 1
+      return pendingFetch
+    }
+
+    const first = refreshVenueCache(workspaceDir, fetchImpl)
+    await Promise.resolve()
+    const second = refreshVenueCache(workspaceDir, async () => {
+      calls += 1
+      return body
+    })
+
+    resolveFetch(body)
+    const [left, right] = await Promise.all([first, second])
+
+    expect(calls).toBe(1)
+    expect(left).toBe(right)
+  })
+
   it('rejects a payload that parses to an empty catalog', async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), 'mimir-venue-cache-'))
     await expect(refreshVenueCache(workspaceDir, async () => 'foo: bar')).rejects.toThrow('empty catalog')
