@@ -200,19 +200,24 @@ export interface ArxivSubscriptionCheckOptions {
  */
 const activeChecks = new Map<string, Promise<readonly ArxivSubscriptionCheckOutcome[] | undefined>>()
 
-/** Serialize in-process checks for one workspace while the file lock covers other processes. */
+/** Serialize same-target in-process checks while the file lock covers other processes. */
 export async function runArxivSubscriptionCheck(
   workspaceDir: string,
   options: ArxivSubscriptionCheckOptions = {},
 ): Promise<readonly ArxivSubscriptionCheckOutcome[] | undefined> {
-  const existing = activeChecks.get(workspaceDir)
+  // Merge only SAME-target calls: a full run and a single-subscription run
+  // differ in what they return (and in what the panel shows), so folding one
+  // into the other would hand back the wrong shape. The file lock inside the
+  // save path still serializes their persistence.
+  const key = `${workspaceDir}${options.id ?? ''}`
+  const existing = activeChecks.get(key)
   if (existing !== undefined) return existing
   const run = runArxivSubscriptionCheckUnlocked(workspaceDir, options)
-  activeChecks.set(workspaceDir, run)
+  activeChecks.set(key, run)
   try {
     return await run
   } finally {
-    if (activeChecks.get(workspaceDir) === run) activeChecks.delete(workspaceDir)
+    if (activeChecks.get(key) === run) activeChecks.delete(key)
   }
 }
 

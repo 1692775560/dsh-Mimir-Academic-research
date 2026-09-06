@@ -13,9 +13,13 @@ import type { ClaimRecord, EventRecord, ExperimentRecord, FigureRecord, IdeaReco
 
 /** Durable shape of one remembered paper. */
 export const paperRecord = z.object({
-  // The id joins filesystem paths downstream; the refine keeps traversal
-  // sequences out of the durable store (see arxiv-id.ts).
-  arxivId: z.string().refine(isValidArxivId, { message: 'unsafe arXiv id' }),
+  // The id joins filesystem paths downstream. The schema deliberately does
+  // NOT hard-refine it: a stored record predating the whitelist (or a
+  // hand-edited one) must not abort the whole domain open — the load-time
+  // quarantine below removes it instead. Every WRITE path validates
+  // explicitly (tools/wiki.ts, tools/arxiv.ts, services/library.ts,
+  // services/wiki-admin.ts; see arxiv-id.ts).
+  arxivId: z.string(),
   title: z.string(),
   authors: z.array(z.string()),
   summary: z.string(),
@@ -220,3 +224,27 @@ export const researchWikiDomainSpec = defineDomain({
 
 /** Opened research-wiki domain handle, typed by {@link researchWikiDomainSpec}. */
 export type ResearchWikiDomain = Domain<typeof researchWikiDomainSpec>
+
+/**
+ * Load-time quarantine for the durable papers table: drop every stored record
+ * whose arXiv id fails the path-safety whitelist, warning once per record.
+ * Runs right after domain open — such rows predate validation or come from
+ * hand-edited stores, and left in place they join filesystem paths
+ * downstream. The durable delete keeps memory and disk consistent.
+ * @param domain - the freshly opened wiki domain.
+ * @param warn - warning sink (the plugin logger).
+ * @returns the removed record keys.
+ */
+export async function quarantineUnsafePaperIds(
+  domain: ResearchWikiDomain,
+  warn: (message: string) => void,
+): Promise<readonly string[]> {
+  const removed: string[] = []
+  for (const [key, record] of [...domain.table('papers').entries()]) {
+    if (isValidArxivId(record.arxivId)) continue
+    warn(`research_wiki: dropping paper '${key}' — unsafe arXiv id '${record.arxivId}' (predates validation or hand-edited)`)
+    await domain.table('papers').delete(key)
+    removed.push(key)
+  }
+  return Object.freeze(removed)
+}

@@ -9,7 +9,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
-import { researchWikiDomainSpec } from '../src/store.ts'
+import { quarantineUnsafePaperIds, researchWikiDomainSpec } from '../src/store.ts'
 import type { ExperimentRecord, IdeaRecord, PaperRecord, ServerRecord } from '../src/types.ts'
 
 /** Boot a context with the storage hub, one memory backend, and a domain facility over it. */
@@ -213,5 +213,44 @@ describe('researchWikiDomainSpec', () => {
     expect(stored?.status).toBe('failed')
     expect(stored?.failureReason).toBe('Hypothesis contradicted by experiment 2.')
     expect([...domain.table('ideas').keys()]).toEqual([idea.id])
+  })
+})
+
+describe('quarantineUnsafePaperIds', () => {
+  it('opens a store holding a path-unsafe paper id, then drops it with a warn', async () => {
+    const pool = new MemoryMediaPool()
+    {
+      // Write the dirty record with the schema now permissive: this simulates
+      // a store written before the whitelist existed (or hand-edited).
+      const { facility } = await harness(pool)
+      const domain = await facility.open(researchWikiDomainSpec)
+      await domain.table('papers').put('../evil', { ...paper, arxivId: '../evil' })
+      await domain.table('papers').put(paper.arxivId, paper)
+    }
+    // The load itself must NOT fail — the whole point of moving the check
+    // off the schema.
+    const { facility } = await harness(pool)
+    const reopened = await facility.open(researchWikiDomainSpec)
+    expect(reopened.table('papers').size).toBe(2)
+
+    const warnings: string[] = []
+    const removed = await quarantineUnsafePaperIds(reopened, message => warnings.push(message))
+
+    expect(removed).toEqual(['../evil'])
+    expect(warnings).toHaveLength(1)
+    expect(warnings[0]).toContain('../evil')
+    expect(reopened.table('papers').get('../evil')).toBeUndefined()
+    expect(reopened.table('papers').get(paper.arxivId)).toEqual(paper)
+  })
+
+  it('leaves a clean store untouched and silent', async () => {
+    const { facility } = await harness()
+    const domain = await facility.open(researchWikiDomainSpec)
+    await domain.table('papers').put(paper.arxivId, paper)
+    const warnings: string[] = []
+    const removed = await quarantineUnsafePaperIds(domain, message => warnings.push(message))
+    expect(removed).toEqual([])
+    expect(warnings).toEqual([])
+    expect(domain.table('papers').size).toBe(1)
   })
 })

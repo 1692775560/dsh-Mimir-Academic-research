@@ -258,6 +258,29 @@ describe('runArxivSubscriptionCheck', () => {
     expect(persisted?.newEntryIds).toEqual(expect.arrayContaining(['left']))
   })
 
+  it('does NOT fold a single-subscription check into a full run in flight', async () => {
+    const dir = await workspace()
+    await saveArxivSubscriptions(dir, [record('s1', 'mesh', ['base']), record('s2', 'splatting', ['x'])])
+    const slow = deferred<ArxivEntry[]>()
+    const fetchSearch = async (query: string): Promise<ArxivEntry[]> =>
+      query === 'mesh' ? slow.promise : [entry('y'), entry('x')]
+    // The full run parks on s1's fetch; a single-target check for s2 must run
+    // on its own and return only s2's outcome.
+    const full = runArxivSubscriptionCheck(dir, { gapMs: 0, fetchSearch, now: new Date('2026-08-23T00:00:00.000Z') })
+    await Promise.resolve()
+    const single = await runArxivSubscriptionCheck(dir, { gapMs: 0, id: 's2', fetchSearch, now: new Date('2026-08-23T00:00:00.000Z') })
+    expect(single).toHaveLength(1)
+    expect(single?.[0]?.record.id).toBe('s2')
+    expect(single?.[0]?.record.newEntryIds).toEqual(['y'])
+    slow.resolve([entry('b'), entry('base')])
+    const outcomes = await full
+    expect(outcomes).toHaveLength(2)
+    // Both checks' updates survived: s1 from the full run, s2 from the single.
+    const persisted = await loadArxivSubscriptions(dir)
+    expect(persisted.find(item => item.id === 's1')?.newEntryIds).toEqual(['b'])
+    expect(persisted.find(item => item.id === 's2')?.newEntryIds).toEqual(['y'])
+  })
+
   it('returns undefined for an unknown id and skips the fetch entirely', async () => {
     const dir = await workspace()
     await saveArxivSubscriptions(dir, [record('s1', 'mesh')])
@@ -278,6 +301,32 @@ describe('runArxivSubscriptionCheck', () => {
     })
     expect(outcomes).toEqual([])
     expect(fetches).toBe(0)
+  })
+
+  it('service CRUD inside the check window neither loses the check update nor resurrects a deletion', async () => {
+    const dir = await workspace()
+    await saveArxivSubscriptions(dir, [record('s1', 'mesh', ['base']), record('s2', 'splatting', ['x'])])
+    const slow = deferred<ArxivEntry[]>()
+    const check = runArxivSubscriptionCheck(dir, {
+      gapMs: 0,
+      now: new Date('2026-08-23T00:00:00.000Z'),
+      fetchSearch: async (query) => query === 'mesh' ? slow.promise : [entry('x')],
+    })
+    await Promise.resolve()
+    // The panel's add/delete go through the SAME file lock as the check's
+    // save: they land after the check's persistence, and the check's earlier
+    // in-window state can never overwrite them.
+    const added = await saveArxivSubscription({ workspaceDir: dir }, { query: 'diffusion' })
+    expect(added.ok).toBe(true)
+    const deleted = await deleteArxivSubscription({ workspaceDir: dir }, { id: 's2' })
+    expect(deleted.ok).toBe(true)
+    slow.resolve([entry('b'), entry('base')])
+    await check
+    const persisted = await loadArxivSubscriptions(dir)
+    expect(persisted.map(item => item.id)).toHaveLength(2)
+    expect(persisted.some(item => item.id === 's2')).toBe(false) // not resurrected
+    expect(persisted.some(item => item.query === 'diffusion')).toBe(true) // not lost
+    expect(persisted.find(item => item.id === 's1')?.newEntryIds).toEqual(['b']) // check update kept
   })
 })
 
