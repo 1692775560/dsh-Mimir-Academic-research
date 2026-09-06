@@ -27,9 +27,19 @@ export interface VenueFilter {
 /** The blank filter (everything passes). */
 export const EMPTY_VENUE_FILTER: VenueFilter = Object.freeze({ query: '', rank: null, sub: null, withinDays: null })
 
-/** Whole days from `nowMs` to one ISO instant, rounded up (today is 0). */
+/**
+ * Calendar days from `nowMs` to one ISO instant, in the host's local zone,
+ * so a deadline later today is 0 — the same rule the host's `daysUntil`
+ * applies to `withinDays`, so the card countdown and the server filter never
+ * disagree. (`Math.ceil` on the raw gap said "1 day left" for a deadline
+ * five minutes away.)
+ */
 export function venueDaysLeft(iso: string, nowMs: number): number {
-  return Math.ceil((new Date(iso).getTime() - nowMs) / 86_400_000)
+  const startOfLocalDay = (ms: number): number => {
+    const date = new Date(ms)
+    return Date.UTC(date.getFullYear(), date.getMonth(), date.getDate())
+  }
+  return Math.round((startOfLocalDay(new Date(iso).getTime()) - startOfLocalDay(nowMs)) / 86_400_000)
 }
 
 /**
