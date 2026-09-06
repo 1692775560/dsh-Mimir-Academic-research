@@ -28,6 +28,7 @@ import { registerIdeaCommand } from './commands/idea.ts'
 import { registerPlanCommand } from './commands/plan.ts'
 import { registerReviewCommand } from './commands/review.ts'
 import { registerPaperCommands } from './commands/paper.ts'
+import { registerSkillSyncCommand } from './commands/skill-sync.ts'
 import type { ResearchCommandDeps } from './commands/common.ts'
 import { resolvePaperDir } from './paper-source.ts'
 import { isSameOriginWrite, projectPaperDir } from './http-write-boundary.ts'
@@ -1159,6 +1160,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   registerPlanCommand(ctx, deps)
   registerReviewCommand(ctx, deps)
   registerPaperCommands(ctx, deps)
+  registerSkillSyncCommand(ctx)
 
   // Bundled research skills: runtime contributions to the composition's
   // skill registry when one is mounted (ctx.inject makes the dependency

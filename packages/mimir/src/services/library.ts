@@ -11,6 +11,7 @@ import { join } from 'node:path'
 import { fetchArxivPdf, fetchArxivSearch, paperPdfFileName } from '../tools/arxiv.ts'
 import { fetchWebSearch } from '../tools/web-search.ts'
 import type { WebSearchRunner } from '../tools/web-search.ts'
+import { detectPackageManager, installCommandFor } from '../pm-detect.ts'
 import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type {
@@ -129,9 +130,10 @@ export async function searchWeb(
 ): Promise<ResearchSearchWebResult> {
   const search = deps.search
   if (search === undefined) {
+    const command = installCommandFor(detectPackageManager())
     return rejected({
       code: 'operation-failed',
-      message: 'Web search is not configured: set the plugin\'s search.command to the sxng CLI (npm install -g sxng-cli; sxng init against a self-hosted SearXNG).',
+      message: `Web search is not configured: install the sxng CLI with ${command}, then set the plugin's search.command to 'sxng' (or leave it 'auto') and run sxng init against a self-hosted SearXNG.`,
     })
   }
   const query = request.query.trim()
