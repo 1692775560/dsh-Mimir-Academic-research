@@ -23,7 +23,7 @@ literature · experiments &amp; remote GPUs · figures · LaTeX writing → comp
 Mimir is a single npm package (`dsh-mimir`) that plugs into dsh and gives you:
 
 - **Nine-view web workbench** (sidebar toggle → overlay, dark/light, 中/EN):
-  **Overview** pipeline & stats · **Paper** Overleaf-style LaTeX studio (edit → compile → PDF preview, one-click AI fix) · **Library** arXiv + web search, AI relevance scoring, fullscreen PDF reader · **Experiments** metric charts, one-click paper figures · **Figures** upload/organize/insert into the paper · **Meetings** one-click group-meeting PPT (real paper figures + optional AI illustrations) · **Servers** GPU fleet probes + remote jobs · **Ledger** humanized research journal — idea evolution auto-captured into a worktree, six-perspective digest capsules, one-click progress report · **Venues** CCF conference-deadline countdown (ccfddl catalog, per-project watchlist) + CCF-A journal directory
+  **Overview** pipeline & stats · **Paper** Overleaf-style LaTeX studio (edit → compile → PDF preview, one-click AI fix) · **Library** arXiv + web search, AI relevance scoring, fullscreen PDF reader · **Experiments** metric charts, one-click paper figures · **Figures** upload/organize/insert into the paper · **Meetings** one-click group-meeting PPT (real paper figures + optional AI illustrations) · **Servers** GPU fleet probes + remote jobs · **Ledger** humanized research journal — idea evolution auto-captured into a worktree, six-perspective digest capsules, one-click progress report · **Venues** CCF conference-deadline countdown (ccfddl catalog, per-project watchlist) + CCF-A journal directory — every view live-refreshes over SSE as the agent writes, no manual reload
 - **Agent tools & slash commands**: `/research-idea` `/research-plan` `/research-review` `/paper-write` `/paper-compile`, plus `arxiv_search`, `web_search`, `wiki_note`, `figure_save`, `latex_compile`, `meeting_deck`, `venue_search`, and the remote-compute quartet `server_list` / `server_check` / `server_submit_job` / `server_list_jobs` (same remembered servers and jobs as the Servers tab)
 - **Eleven bundled research skills** (literature review, novelty check, experiment planning, citation audit, bilingual de-AI polish, rebuttal…) that teach the agent the workflow — no setup needed
 
@@ -48,7 +48,7 @@ dsh web                                          # then open http://127.0.0.1:30
 
 Got an old version (e.g. 0.11.x/0.12.x)? dsh's plugin store uses pnpm, which holds back freshly published releases by default. Pin the exact version instead: `dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.14.1`
 
-Version compatibility: **0.17.x requires dsh ≥ 0.1.2-alpha.4** (upstream breaking changes). On an older dsh, pin the previous release: `dsh plugin --profile web add dsh-mimir@0.16.0`.
+Version compatibility: **0.18.x requires dsh ≥ 0.1.2-alpha.4** (upstream breaking changes). On an older dsh, pin the previous release: `dsh plugin --profile web add dsh-mimir@0.16.0`.
 
 Click **Mimir** in the sidebar footer. The wiki persists at `~/.dsh/storages/research_wiki.json`; artifacts land under `./.research`.
 
@@ -83,6 +83,8 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 
 ## Changelog
 
+- **0.18.0** — Features: **Venues** (ninth view): CCF conference-deadline countdown on the ccfddl catalog, per-project watchlist, CCF-A journal directory, `venue_search` agent tool · **SSE live refresh**: wiki writes push to the open panel over `/research/events`, every warm view follows agent/teammate edits without a reload · collapsible sidebar, narrower outline rail, compact buttons · verified architecture docs: [docs/architecture.md](docs/architecture.md) ([中文](docs/architecture.zh.md)). Fixes: two hardening rounds, 23 items — path-traversal / SSH-injection safety, load-time quarantine for unsafe library ids, SSE heartbeat write-guard + reconnect resync, autosave/save-lane races on project switch, subscription checks under the file lock, live-refresh starvation and stale-read guards; controller lifecycle isolation by [@hkwuks](https://github.com/hkwuks) ([#129](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/129))
+
 - **0.17.1** — compact UI pass: all buttons one notch smaller (28px / 12px, one shared base style across every view); paper view panes keep usable min-widths (editor ≥ 360px) with a horizontal-scroll fallback instead of crushing the source column
 - **0.17.0** — adapts to **dsh 0.1.2-alpha.4** (upstream removed `dsh-client-runtime`; injection now goes through `dsh-api-session-controller` + `dsh-client-ui-renderer`; breaking API alignment — fixes client type pollution and panel load failures on the new dsh). **Requires dsh ≥ 0.1.2-alpha.4; on older dsh stay on 0.16.0.** Also ships the moment timeline & eureka view by [@EriXPsy](https://github.com/EriXPsy) ([#127](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/127)): five-source moment candidates (burst / return-after-dormancy / cross-line convergence / long-sitting / milestone), canonical-candidate-declined timeline, read-only remotes
 - **0.16.0** — Humanized ledger by [@EriXPsy](https://github.com/EriXPsy) ([#125](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/125)): CBE cognitive map, brief view, idea-evolution worktree with ambient auto-capture, six-perspective digest capsules; `research-paper-deai` bilingual de-AI polish skill by [@hkwuks](https://github.com/hkwuks) ([#126](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/126), synthesized from MIT-licensed aigc-humanizer-zh + blader/humanizer, LaTeX-safe with compile re-check)
@@ -100,7 +102,7 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 
 ## Contributing
 
-Branch off `main` (`feature/<name>` / `fix/<name>`), keep `pnpm run build && pnpm test && pnpm run typecheck` green, and open a PR — see [CONTRIBUTING.md](CONTRIBUTING.md). Please merge PRs with a **merge commit** (not squash) so contributor authorship shows up on the contributors graph.
+Branch off `main` (`feature/<name>` / `fix/<name>`), keep `pnpm run build && pnpm test && pnpm run typecheck` green, and open a PR — see [CONTRIBUTING.md](CONTRIBUTING.md). Please merge PRs with a **merge commit** (not squash) so contributor authorship shows up on the contributors graph. For the big picture, start with the verified architecture overview: [docs/architecture.md](docs/architecture.md) ([中文](docs/architecture.zh.md)).
 
 Contributors so far: [@EriXPsy](https://github.com/EriXPsy) (Ledger view, humanized journal) · [@hkwuks](https://github.com/hkwuks) (SearXNG web search, [sxng CLI](https://github.com/hkwuks/sxng-cli), de-AI skill) · [@hxhy](https://github.com/huixiaheyu) (web_search cancellation fix)
 
