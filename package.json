@@ -9,6 +9,7 @@
   "scripts": {
     "build": "tsc -b packages/mimir && pnpm --filter dsh-mimir run bundle && tsc -b packages/ui-mimir && pnpm --filter dsh-client-ui-mimir run bundle && pnpm --filter dsh-mimir run bundle:client",
     "typecheck": "tsc -b packages/mimir packages/ui-mimir",
+    "check-style": "node scripts/check-style.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "bundle": "pnpm -r run bundle"
