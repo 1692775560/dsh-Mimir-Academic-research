@@ -3,8 +3,10 @@
  * the hkwuks/sxng-cli repository) through the registry without vendoring a
  * copy. The provider clones the repo shallowly into the dsh home cache
  * (`<dshHome>/cache/skills/sxng-cli`) on first `list()`, then reads the
- * `skills/sxng/SKILL.md` body from the cached checkout — so upstream edits
- * show up on the next boot, and a missing cache is self-healing.
+ * `skills/sxng/SKILL.md` body from the cached checkout. A cached checkout is
+ * pulled to upstream HEAD once it is older than {@link REFRESH_STALE_MS}, so
+ * the body tracks upstream edits without a vendored copy, and a missing cache
+ * is self-healing.
  *
  * The plugin cannot npm-install or npx-bootstrap a skill into dsh's skill
  * directory: the filesystem provider reads `~/.dsh/skills`, but a plugin has
@@ -15,7 +17,7 @@
 
 import { execFile } from 'node:child_process'
 import { existsSync } from 'node:fs'
-import { mkdir, readFile } from 'node:fs/promises'
+import { mkdir, readFile, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
@@ -62,6 +64,12 @@ export const SKILL_REPO_URL = SXNG_REPO_URL
 /** Skill body relative path (exported for tests). */
 export const SKILL_SKILL_REL = SXNG_SKILL_REL
 
+/** How old the cache checkout may be before `list()` refreshes it upstream. */
+const REFRESH_STALE_MS = 24 * 60 * 60 * 1000
+
+/** Refresh window override for tests. */
+const REFRESH_INTERVAL_ENV = 'MIMIR_SXNG_SKILL_REFRESH_MS'
+
 /**
  * Run one `git` command; resolves with the child's stdout and rejects when git
  * is missing or the command exits non-zero.
@@ -80,14 +88,37 @@ function runGit(args: readonly string[], cwd: string, signal?: AbortSignal): Pro
 }
 
 /**
+ * Refresh the shallow checkout to upstream HEAD when it is older than
+ * {@link REFRESH_STALE_MS}. The clone is `--depth 1` with no local commits, so
+ * a fast-forward `pull --ff-only` keeps the SKILL.md body at upstream latest.
+ * Network failures stay silent: a stale body is better than a missing skill.
+ * @param signal - registration abort signal; cancels the refresh when it fires.
+ */
+async function refreshCheckout(signal?: AbortSignal): Promise<void> {
+  const staleMs = Number(process.env[REFRESH_INTERVAL_ENV] ?? REFRESH_STALE_MS)
+  if (!Number.isFinite(staleMs) || staleMs <= 0) return
+  try {
+    const marker = await stat(join(cacheDir(), '.git'))
+    if (Date.now() - marker.mtimeMs < staleMs) return
+    await runGit(['pull', '--ff-only'], cacheDir(), signal)
+  } catch {
+    /* offline or transient git failure — keep the cached body */
+  }
+}
+
+/**
  * Ensure a shallow upstream checkout exists in the cache; when one does not,
  * clone it (sparse-checkout is NOT used — the repo is small, and a plain
- * shallow clone keeps future git operations simple).
+ * shallow clone keeps future git operations simple). An existing checkout is
+ * then refreshed when stale (see {@link refreshCheckout}).
  * @param signal - registration abort signal; cancels the clone when it fires.
  * @returns whether the checkout now exists.
  */
 async function ensureCheckout(signal?: AbortSignal): Promise<boolean> {
-  if (existsSync(join(cacheDir(), '.git'))) return true
+  if (existsSync(join(cacheDir(), '.git'))) {
+    await refreshCheckout(signal)
+    return true
+  }
   await mkdir(cacheDir(), { recursive: true })
   try {
     await runGit(['clone', '--depth', '1', SXNG_REPO_URL, '.'], cacheDir(), signal)
@@ -176,6 +207,10 @@ export function createSxngSkillProvider(): SkillProvider {
  * Mirrors `registerResearchSkills`: the `skills` service is deliberately not
  * in the plugin's `inject`, so registrations only happen when a registry is
  * present, and `ctx.inject` scopes them to the child context's effect stack.
+ *
+ * `list()` clones the upstream repo on first use and pulls it when the cache
+ * is older than {@link REFRESH_STALE_MS}, so the skill body always tracks the
+ * upstream `sxng-cli` repo's latest SKILL.md without any vendored copy.
  * @param ctx - the plugin's context.
  */
 export function registerSxngSkill(ctx: Context): void {
@@ -183,7 +218,3 @@ export function registerSxngSkill(ctx: Context): void {
     skillsCtx.skills.registerProvider(() => createSxngSkillProvider())
   })
 }
-
-// ponytail: clone-on-first-list keeps boot offline-friendly; a cron/manual
-// `git -C <cache> pull` refreshes upstream. If refresh needs to be automatic,
-// add an explicit `sxng-skill refresh` command that pulls and invalidates.
