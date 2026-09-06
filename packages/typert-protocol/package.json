@@ -1,7 +1,7 @@
 {
   "name": "@deepseek-ai/dsh-typert-protocol",
-  "description": "Vendored source of @deepseek-ai/dsh-typert-protocol 0.1.2-alpha.4 — the Typert generator only recognizes Remote metadata declared inside a workspace-registered package, so the protocol is compiled in-repo. Never publish; consumers resolve the npm release at runtime.",
-  "version": "0.1.2-alpha.4",
+  "description": "Vendored source of @deepseek-ai/dsh-typert-protocol 0.1.2-rc.1 — the Typert generator only recognizes Remote metadata declared inside a workspace-registered package, so the protocol is compiled in-repo. Never publish; consumers resolve the npm release at runtime.",
+  "version": "0.1.2-rc.1",
   "private": true,
   "type": "module",
   "main": "lib/index.js",
