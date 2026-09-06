@@ -665,7 +665,13 @@ function createPdfHandler(
       res.writeHead(404).end('expected /research/pdf/<project id>')
       return
     }
-    const projectId = decodeURIComponent(pathname.slice(prefix.length))
+    let projectId: string
+    try {
+      projectId = decodeURIComponent(pathname.slice(prefix.length))
+    } catch {
+      res.writeHead(400).end('invalid encoded project id')
+      return
+    }
     const record = deps.domain.table('projects').get(projectId)
     if (record === undefined) {
       res.writeHead(404).end('unknown research project')
@@ -689,6 +695,11 @@ function createPdfHandler(
       // The panel cache-busts with ?v=<pdfUpdatedAt>; a stale cached preview
       // would otherwise survive a recompile under the same URL.
       'Cache-Control': 'no-cache',
+      // Defense-in-depth: the served bytes are not our app; never let the
+      // browser guess a type or let a crafted PDF inherit our origin's
+      // privileges, even though the file is workspace-local.
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
     })
     if (req.method === 'HEAD') {
       res.end()
@@ -836,7 +847,13 @@ function createFigureHandler(
       res.writeHead(404).end('expected /research/figure/<project id>')
       return
     }
-    const projectId = decodeURIComponent(url.pathname.slice(prefix.length))
+    let projectId: string
+    try {
+      projectId = decodeURIComponent(url.pathname.slice(prefix.length))
+    } catch {
+      res.writeHead(400).end('invalid encoded project id')
+      return
+    }
     const record = deps.domain.table('projects').get(projectId)
     if (record === undefined) {
       res.writeHead(404).end('unknown research project')
