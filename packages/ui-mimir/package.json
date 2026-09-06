@@ -1,7 +1,7 @@
 {
   "name": "dsh-client-ui-mimir",
   "description": "Mimir research workbench for the web surface: a sidebar-footer toggle plus a frame-level overlay listing wiki projects, the paper outline, and the latexmk/tectonic compile/PDF preview, backed by the research Host Remote",
-  "version": "0.18.0",
+  "version": "0.18.1",
   "publishConfig": {
     "access": "public"
   },
