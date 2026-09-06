@@ -411,6 +411,8 @@ export const AUTOSAVE_DEBOUNCE_MS = 800
 export const COMPILE_DEBOUNCE_MS = 1500
 /** Quiet window that collapses an agent's burst of wiki writes into one refresh. */
 export const LIVE_REFRESH_DEBOUNCE_MS = 400
+/** Hard cap on the burst window: a sustained write stream never postpones the flush past this. */
+export const LIVE_REFRESH_MAX_WAIT_MS = 2_000
 
 /** One open `/research/events` stream handle (EventSource or a test double). */
 export interface WikiEventStream {
@@ -421,17 +423,28 @@ export interface WikiEventStream {
  * Opener for the wiki events stream; the default uses the page's EventSource.
  * @param url - the events route.
  * @param onEvent - parsed change-frame consumer.
+ * @param onReconnect - fired on every open AFTER the first: the stream gave
+ *   no replay guarantee, so writes landed during the outage are unknown and
+ *   the consumer must re-read from scratch.
  * @returns the stream handle, or null where EventSource is unavailable.
  */
 export type WikiEventStreamFactory = (
   url: string,
   onEvent: (event: ResearchWikiChangeEvent) => void,
+  onReconnect?: () => void,
 ) => WikiEventStream | null
 
 /** The browser default: one EventSource with silent auto-reconnect. */
-const defaultWikiEventStream: WikiEventStreamFactory = (url, onEvent) => {
+const defaultWikiEventStream: WikiEventStreamFactory = (url, onEvent, onReconnect) => {
   if (typeof globalThis.EventSource !== 'function') return null
   const source = new EventSource(url)
+  let opened = false
+  source.onopen = () => {
+    // The first open needs no compensation (every slice loads on demand); a
+    // RE-open means frames may have been lost while the stream was down.
+    if (opened) onReconnect?.()
+    opened = true
+  }
   source.onmessage = (message) => {
     try {
       onEvent(JSON.parse(String(message.data)) as ResearchWikiChangeEvent)
@@ -945,12 +958,23 @@ export class ResearchController implements HostObservable<ResearchView> {
   private compileTimer: ReturnType<typeof setTimeout> | null = null
   private saveInFlight = false
   private saveAgain = false
+  /** Identifies the save currently holding {@link saveInFlight}; a stale save's finally must not clear it. */
+  private saveSeq = 0
+  /**
+   * The last dirty draft of a project the user navigated away from while its
+   * save was still in flight; persisted by a trailing save chained off the
+   * in-flight save's settle.
+   */
+  private pendingTrailingSave: { readonly projectId: string; readonly content: string; readonly mtimeMs: number } | null = null
+  /** Live-refresh: supersedes an older overlapping source re-read; a late reply loses. */
+  private liveSourceReadSeq = 0
   /** Live-refresh: the open `/research/events` stream, or null. */
   private eventStream: WikiEventStream | null = null
   /** Live-refresh: the trailing-debounce aggregator behind pushed changes. */
   private readonly liveAggregator: WikiChangeAggregator = createWikiChangeAggregator(
     slices => this.applyLiveSlices(slices),
     LIVE_REFRESH_DEBOUNCE_MS,
+    LIVE_REFRESH_MAX_WAIT_MS,
   )
   /** The filter of the last ledger load, replayed by the live refresh. */
   private ledgerFilter: ResearchEventFilter | null = null
@@ -3774,10 +3798,25 @@ export class ResearchController implements HostObservable<ResearchView> {
   select(projectId: string): void {
     // Flush a dirty draft of the project being left BEFORE the sweep below:
     // the generation bump stale-marks any later save reply and clearTimers()
-    // kills the debounce, so a draft not flushed now is lost for good. The
-    // flush's synchronous prefix captures the draft and starts the request
-    // before the loading slice replaces the view.
-    if (this.view.source?.saveState === 'dirty') void this.flushSave()
+    // kills the debounce, so a draft not flushed now is lost for good.
+    const leaving = this.view.source
+    if (leaving !== null && leaving.saveState === 'dirty' && leaving.status === 'ready' && leaving.mtimeMs !== null) {
+      if (this.saveInFlight) {
+        // A save already flies with an OLDER snapshot of this draft. The
+        // flags must stay untouched (clearing them orphaned the in-flight
+        // save and let its finally clobber the next save's lane); the draft
+        // tail is snapshotted instead and chained off the in-flight settle,
+        // so the keystrokes after its snapshot are not lost either.
+        this.pendingTrailingSave = {
+          projectId: leaving.projectId, content: leaving.content, mtimeMs: leaving.mtimeMs,
+        }
+        this.saveAgain = false
+      } else {
+        // The flush's synchronous prefix captures the draft and starts the
+        // request before the loading slice replaces the view.
+        void this.flushSave()
+      }
+    }
     this.outlineGeneration += 1
     const outlineGeneration = this.outlineGeneration
     this.sourceGeneration += 1
@@ -3791,8 +3830,6 @@ export class ResearchController implements HostObservable<ResearchView> {
     // selected project's compile lane when the in-flight run settles.
     this.compileQueued.clear()
     this.clearTimers()
-    this.saveInFlight = false
-    this.saveAgain = false
     this.publish({
       outline: Object.freeze({ projectId, status: 'loading', nodes: Object.freeze([]), failure: null }),
       source: Object.freeze({
@@ -3839,8 +3876,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       clearTimeout(this.saveTimer)
       this.saveTimer = null
     }
-    this.saveInFlight = false
-    this.saveAgain = false
+    // saveInFlight/saveAgain stay untouched: the in-flight save's reply is
+    // stale-marked by the generation bump above, and its finally clears the
+    // lane only if no newer save took it over (the saveSeq contract).
     this.publish({
       source: Object.freeze({ ...source, status: 'loading', saveState: 'clean', failure: null }),
     })
@@ -3922,7 +3960,26 @@ export class ResearchController implements HostObservable<ResearchView> {
    */
   connectWikiEvents(factory: WikiEventStreamFactory = defaultWikiEventStream): void {
     if (this.disposed || this.eventStream !== null) return
-    this.eventStream = factory('/research/events', event => this.enqueueWikiChange(event))
+    this.eventStream = factory(
+      '/research/events',
+      event => this.enqueueWikiChange(event),
+      () => { this.resyncLiveSlices() },
+    )
+  }
+
+  /**
+   * Reconnect compensation: the events stream gives no replay, so writes that
+   * landed while it was down are unknown. Re-read every warm slice at once —
+   * one pseudo change per mappable table rides the normal aggregation path,
+   * and the cold-slice gates in {@link applyLiveSlices} keep untouched views
+   * untouched.
+   */
+  private resyncLiveSlices(): void {
+    if (this.disposed) return
+    for (const table of ['projects', 'papers', 'experiments', 'figures', 'servers', 'jobs', 'venue_watches', 'events', 'paper-source', 'bibliography']) {
+      this.liveAggregator.push({ table, key: '', operation: 'put' })
+    }
+    this.liveAggregator.flushNow()
   }
 
   /** Close the events stream and drop any pending live refresh. */
@@ -3974,9 +4031,11 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (slices.has('ledger') && this.view.ledger.status !== 'cold' && this.ledgerFilter !== null) {
       this.loadLedger(this.ledgerFilter)
     }
-    if (slices.has('bibliography') && this.view.bib !== null && this.view.bib.saveState === 'clean') {
+    if (slices.has('bibliography') && this.view.bib !== null
+      && (this.view.bib.saveState === 'clean' || this.view.bib.saveState === 'saved')) {
       // A dirty bib edit is the user's draft: skip the reload, the next save
-      // takes the conflict path if the file moved meanwhile.
+      // takes the conflict path if the file moved meanwhile. 'saved' is just
+      // a settled clean state — it must not freeze the live refresh.
       this.reloadBibliography()
     }
     const source = this.view.source
@@ -3997,8 +4056,11 @@ export class ResearchController implements HostObservable<ResearchView> {
    * never overwritten.
    */
   private async reloadSourceIfChanged(projectId: string): Promise<void> {
+    const seq = ++this.liveSourceReadSeq
     try {
       const carried = await this.remote.getPaperSource({ projectId, dir: this.dirOf(projectId) })
+      // A newer re-read started while this one flew: discard the stale reply.
+      if (seq !== this.liveSourceReadSeq) return
       if (this.disposed || !carried.ok || !carried.value.ok) return
       const current = this.view.source
       if (current === null || current.projectId !== projectId || current.status !== 'ready') return
@@ -4215,12 +4277,18 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (source.saveState !== 'dirty') return
     const { projectId, content, mtimeMs } = source
     const generation = this.sourceGeneration
+    const mine = ++this.saveSeq
     this.saveInFlight = true
     this.publish({ source: Object.freeze({ ...source, saveState: 'saving' }) })
+    // The mtime this save landed under, for a trailing draft save chained off
+    // it (saving the tail with the pre-save base would conflict against this
+    // very save's own write).
+    let settledMtimeMs: number | null = null
     try {
       const carried = await this.remote.savePaperSource({
         projectId, content, baseMtimeMs: mtimeMs, dir: this.dirOf(projectId),
       })
+      if (carried.ok && carried.value.ok) settledMtimeMs = carried.value.value.mtimeMs
       // A reselection or reload superseded this draft; its reply is stale.
       if (this.disposed || generation !== this.sourceGeneration) return
       const current = this.view.source
@@ -4261,11 +4329,45 @@ export class ResearchController implements HostObservable<ResearchView> {
         source: Object.freeze({ ...current, saveState: 'save-error', failure: transportFailure(error) }),
       })
     } finally {
-      this.saveInFlight = false
+      // Clear the lane only if no newer save took it over: a stale save
+      // settling after a reselection must not clobber the new project's
+      // in-flight flag (that produced phantom same-base writes and conflicts).
+      if (mine === this.saveSeq) this.saveInFlight = false
+      const trailing = this.pendingTrailingSave
+      if (trailing !== null && trailing.projectId === projectId) {
+        // The user navigated away mid-save: persist the draft tail snapshotted
+        // by select(), chained off this settle so it builds on this save's
+        // mtime instead of conflicting with it.
+        this.pendingTrailingSave = null
+        void this.saveTrailingDraft(trailing, settledMtimeMs ?? trailing.mtimeMs)
+      }
       if (this.saveAgain) {
         this.saveAgain = false
         void this.flushSave()
       }
+    }
+  }
+
+  /**
+   * Persist the draft tail of a project the user navigated away from mid-save.
+   * Deliberately outside the view state machine — the loading slice of the new
+   * selection already replaced the view, so only the file side effect matters.
+   * A conflict is fine and silent (a concurrent agent/host write won; selecting
+   * the project back re-reads the file).
+   * @param draft - the snapshot select() took of the dirty view.
+   * @param baseMtimeMs - the mtime to build on: the in-flight save's landed
+   *   mtime when it succeeded, else the snapshot's original base.
+   */
+  private async saveTrailingDraft(
+    draft: { readonly projectId: string; readonly content: string; readonly mtimeMs: number },
+    baseMtimeMs: number,
+  ): Promise<void> {
+    try {
+      await this.remote.savePaperSource({
+        projectId: draft.projectId, content: draft.content, baseMtimeMs, dir: this.dirOf(draft.projectId),
+      })
+    } catch {
+      // Best-effort: the user is elsewhere; the next select() re-reads.
     }
   }
 

@@ -525,6 +525,75 @@ describe('ResearchController source editing', () => {
     await vi.advanceTimersByTimeAsync(0)
     expect(controller.getSnapshot().source?.projectId).toBe('p2')
   })
+
+  it('saves the draft tail of the project left behind while its save was in flight', async () => {
+    const saved: Array<{ projectId: string; content: string; baseMtimeMs: number }> = []
+    const firstSave = deferred<RemoteResult<ResearchSavePaperSourceResult>>()
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: ({ projectId }: { projectId: string }) =>
+        Promise.resolve(carried(sourceOk(`${projectId} v1`, 1000))),
+      savePaperSource: (request) => {
+        saved.push(request)
+        if (saved.length === 1) return firstSave.promise
+        return Promise.resolve(carried<ResearchSavePaperSourceResult>({ ok: true, value: { mtimeMs: 3000 } }))
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    controller.edit('p1 draft')
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS)
+    // The autosave of 'p1 draft' is in flight; more keystrokes land after it.
+    expect(saved).toEqual([{ projectId: 'p1', content: 'p1 draft', baseMtimeMs: 1000 }])
+    controller.edit('p1 draft + tail')
+    // Switch away before the trailing debounce fires and before the in-flight
+    // save settles: the tail must still reach the file.
+    controller.select('p2')
+    firstSave.resolve(carried<ResearchSavePaperSourceResult>({ ok: true, value: { mtimeMs: 2000 } }))
+    await vi.advanceTimersByTimeAsync(0)
+    // The tail save chains off the first save's landed mtime (2000), not the
+    // stale base (1000) it would conflict against.
+    expect(saved[1]).toEqual({ projectId: 'p1', content: 'p1 draft + tail', baseMtimeMs: 2000 })
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS + COMPILE_DEBOUNCE_MS)
+    expect(saved).toHaveLength(2)
+  })
+
+  it('keeps the new project’s save lane intact when the old save settles late', async () => {
+    const saved: Array<{ projectId: string; content: string; baseMtimeMs: number }> = []
+    const firstSave = deferred<RemoteResult<ResearchSavePaperSourceResult>>()
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: ({ projectId }: { projectId: string }) =>
+        Promise.resolve(carried(sourceOk(`${projectId} v1`, 1000))),
+      savePaperSource: (request) => {
+        saved.push(request)
+        if (saved.length === 1) return firstSave.promise
+        return Promise.resolve(carried<ResearchSavePaperSourceResult>({
+          ok: true, value: { mtimeMs: request.baseMtimeMs + 1000 },
+        }))
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    controller.edit('p1 draft')
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS)
+    expect(saved).toHaveLength(1)
+    // p1's save flies; the user switches over with a settled (saving) draft.
+    controller.select('p2')
+    await vi.advanceTimersByTimeAsync(0)
+    controller.edit('p2 draft')
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS)
+    // p2's debounce fired but the lane is still p1's: no overlapping write.
+    expect(saved).toHaveLength(1)
+    // p1's late settle frees the lane and the queued p2 save follows — the
+    // old finally must not clobber the flag mid-flight nor mark a conflict.
+    firstSave.resolve(carried<ResearchSavePaperSourceResult>({ ok: true, value: { mtimeMs: 2000 } }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(saved[1]).toEqual({ projectId: 'p2', content: 'p2 draft', baseMtimeMs: 1000 })
+    expect(controller.getSnapshot().source).toMatchObject({
+      projectId: 'p2', content: 'p2 draft', saveState: 'saved', mtimeMs: 2000,
+    })
+  })
 })
 
 describe('ResearchController workbench views', () => {
@@ -2499,5 +2568,100 @@ describe('ResearchController live refresh', () => {
     await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
     expect(eventLists).toBe(2)
     expect(venueLists).toBe(2)
+  })
+
+  it('re-reads every warm slice when the events stream reconnects', async () => {
+    let paperLists = 0
+    let figureLists = 0
+    const controller = new ResearchController(stubRemote({
+      listPapers: () => {
+        paperLists += 1
+        return Promise.resolve(carried<ResearchPapersResult>({ ok: true, value: { papers: [] } }))
+      },
+      listFigures: () => {
+        figureLists += 1
+        return Promise.resolve(carried<ResearchFiguresResult>({ ok: true, value: { figures: [] } }))
+      },
+    }))
+    let reconnect: (() => void) | undefined
+    controller.connectWikiEvents((_url, _onEvent, onReconnect) => {
+      reconnect = onReconnect
+      return { close: () => {} }
+    })
+    // Warm the papers slice only; figures stays cold.
+    controller.ensurePapers()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(paperLists).toBe(1)
+    expect(reconnect).toBeTypeOf('function')
+    // The stream reopened after an outage: unknown writes landed meanwhile,
+    // so warm slices re-read without waiting for the debounce window...
+    reconnect!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(paperLists).toBe(2)
+    // ...and cold slices are still left alone.
+    expect(figureLists).toBe(0)
+    // A repeated reconnect (flapping network) re-reads again, still once.
+    reconnect!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(paperLists).toBe(3)
+    controller.dispose()
+  })
+
+  it('discards a late source re-read reply when a newer one already landed', async () => {
+    const reads: Array<{ promise: Promise<RemoteResult<ResearchPaperSourceResult>>; resolve: (value: RemoteResult<ResearchPaperSourceResult>) => void }> = []
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: () => {
+        calls += 1
+        if (calls === 1) {
+          return Promise.resolve(carried(sourceOk('v1', 1000)))
+        }
+        const pending = deferred<RemoteResult<ResearchPaperSourceResult>>()
+        reads.push(pending)
+        return pending.promise
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(controller.getSnapshot().source).toMatchObject({ content: 'v1', saveState: 'clean' })
+    // Two agent edits land close together: two re-reads overlap in flight.
+    controller.enqueueWikiChange({ table: 'paper-source', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(reads).toHaveLength(1)
+    controller.enqueueWikiChange({ table: 'paper-source', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(reads).toHaveLength(2)
+    // The NEWER read settles first and publishes v2.
+    reads[1]!.resolve(carried(sourceOk('v2', 2000)))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(controller.getSnapshot().source).toMatchObject({ content: 'v2', mtimeMs: 2000 })
+    // The OLDER read settles late with an older snapshot: it must not rewind.
+    reads[0]!.resolve(carried(sourceOk('v1-late', 1500)))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(controller.getSnapshot().source).toMatchObject({ content: 'v2', mtimeMs: 2000 })
+  })
+
+  it('keeps following live bibliography changes after a settled save', async () => {
+    let reads = 0
+    const controller = new ResearchController(stubRemote({
+      getBibliography: () => {
+        reads += 1
+        return Promise.resolve(carried(BIB))
+      },
+      saveBibliography: () => Promise.resolve(carried<ResearchSaveBibliographyResult>({ ok: true, value: { mtimeMs: 2000 } })),
+    }))
+    controller.ensureBibliography('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reads).toBe(1)
+    // A settled save leaves the panel in 'saved', not 'clean'...
+    const failure = await controller.deleteBibEntry('alpha2024')
+    expect(failure).toBeNull()
+    expect(controller.getSnapshot().bib?.saveState).toBe('saved')
+    // ...which must still follow a teammate's/agent's bib change.
+    controller.enqueueWikiChange({ table: 'bibliography', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(reads).toBe(2)
+    expect(controller.getSnapshot().bib?.saveState).toBe('clean')
   })
 })
