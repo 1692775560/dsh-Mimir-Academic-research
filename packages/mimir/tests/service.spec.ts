@@ -229,6 +229,28 @@ describe('ResearchService server CRUD', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'server-not-found', id: 'srv-missing' } })
   })
 
+  it('rejects hosts and usernames that could inject ssh options', async () => {
+    const { service } = await harness()
+    for (const server of [
+      { ...SERVER_INPUT, host: '-oProxyCommand=evil' },
+      { ...SERVER_INPUT, host: 'gpu 01' },
+      { ...SERVER_INPUT, host: 'gpu01;rm' },
+      { ...SERVER_INPUT, host: '../escape' },
+      { ...SERVER_INPUT, username: '-oProxyCommand=evil' },
+      { ...SERVER_INPUT, username: 'root; whoami' },
+      { ...SERVER_INPUT, username: '--' },
+    ]) {
+      await expect(service.saveServer({ server })).resolves.toMatchObject({
+        ok: false,
+        error: { code: 'invalid-input' },
+      })
+    }
+    // Legitimate forms still pass: an ipv6 host, a dotted username.
+    await expect(service.saveServer({
+      server: { ...SERVER_INPUT, host: 'fe80::1', username: 'ops.deploy' },
+    })).resolves.toMatchObject({ ok: true })
+  })
+
   it('deletes a server and reports server-not-found on a repeat', async () => {
     const { service } = await harness()
     const created = await service.saveServer({ server: SERVER_INPUT })
@@ -582,6 +604,14 @@ describe('ResearchService.importPaper / removePaper', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
   })
 
+  it('rejects an entry whose id could escape the pdf cache directory', async () => {
+    const { service } = await harness()
+    for (const id of ['../escape', '/abs/path', 'a b', '..', 'id;rm']) {
+      await expect(service.importPaper({ entry: { ...ARXIV_ENTRY, id } }))
+        .resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    }
+  })
+
   it('removes a remembered paper and reports paper-not-found on a repeat', async () => {
     const { service } = await harness()
     await service.importPaper({ entry: ARXIV_ENTRY })
@@ -628,6 +658,20 @@ describe('ResearchService.fetchPaperPdf', () => {
     expect(fetches).toBe(0)
   })
 
+  it('rejects a traversal id as invalid-input before the lookup and any fetch', async () => {
+    let fetches = 0
+    vi.stubGlobal('fetch', async () => {
+      fetches += 1
+      return new Response(PDF_BYTES, { status: 200 })
+    })
+    const { service } = await harness()
+    // encodeURIComponent does not encode '.', so '..' would slip past the
+    // filename mapping — the id itself must be validated first.
+    await expect(service.fetchPaperPdf({ arxivId: '../../etc/passwd' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    expect(fetches).toBe(0)
+  })
+
   it('settles HTTP and transport failures as operation-failed without touching the record', async () => {
     const { domain, service } = await harness()
     await service.importPaper({ entry: ARXIV_ENTRY })
@@ -655,7 +699,7 @@ describe('ResearchService.fetchPaperPdf', () => {
     expect(domain.table('papers').get(ARXIV_ENTRY.id)?.pdfPath).toBeUndefined()
   })
 
-  it('rejects an unconvertible arXiv id before any request', async () => {
+  it('rejects an unsafe arXiv id before any request', async () => {
     let fetches = 0
     vi.stubGlobal('fetch', async () => {
       fetches += 1
@@ -673,8 +717,9 @@ describe('ResearchService.fetchPaperPdf', () => {
       projectIds: [],
       addedAt: '2026-08-20T00:00:00.000Z',
     })
+    // A space-bearing id fails the safety check before any URL conversion.
     await expect(service.fetchPaperPdf({ arxivId: 'bad id' }))
-      .resolves.toMatchObject({ ok: false, error: { code: 'operation-failed', message: expect.stringContaining('invalid arXiv id') } })
+      .resolves.toMatchObject({ ok: false, error: { code: 'invalid-input', message: expect.stringContaining('unsafe arXiv id') } })
     expect(fetches).toBe(0)
   })
 })

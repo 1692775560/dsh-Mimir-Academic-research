@@ -20,6 +20,8 @@ export interface ServiceState {
   readonly compileStatus: Map<string, ResearchCompileStatusView>
   /** Monotonic suffix for jobs submitted within the same millisecond; only submitJob increments it. */
   jobSeq: number
+  /** Abort handles for active SSH sessions owned by this service instance. */
+  readonly jobAborts: Map<string, AbortController>
 }
 
 /** Build a frozen success branch. */

@@ -1,0 +1,170 @@
+- title: AAAI
+  description: AAAI Conference on Artificial Intelligence
+  sub: AI
+  rank:
+    ccf: A
+    core: A*
+    thcpl: A
+  dblp: aaai
+  confs:
+  - year: 2022
+    id: aaai22
+    link: https://aaai.org/Conferences/AAAI-22/
+    timeline:
+    - abstract_deadline: '2021-08-30 23:59:59'
+      deadline: '2021-09-08 23:59:59'
+    timezone: UTC-12
+    date: February 22 - March 1, 2022
+    place: Vancouver, British Columbia, Canada
+  - year: 2023
+    id: aaai23
+    link: https://www.aaai.org/Conferences/AAAI-23/
+    timeline:
+    - abstract_deadline: '2022-08-08 23:59:59'
+      deadline: '2022-08-15 23:59:59'
+    timezone: UTC-12
+    date: February 7 - February 14, 2023
+    place: Washington, DC, USA
+  - year: 2024
+    id: aaai24
+    link: https://www.aaai.org/aaai-conference/
+    timeline:
+    - abstract_deadline: '2023-08-08 23:59:59'
+      deadline: '2023-08-15 23:59:59'
+    timezone: UTC-12
+    date: February 20 - February 27, 2024
+    place: Vancouver, British Columbia, Canada
+  - year: 2025
+    id: aaai25
+    link: https://aaai.org/conference/aaai/aaai-25/
+    timeline:
+    - abstract_deadline: '2024-08-07 23:59:59'
+      deadline: '2024-08-15 23:59:59'
+    timezone: UTC-12
+    date: February 25 - March 4, 2025
+    place: PHILADELPHIA, PENNSYLVANIA, USA
+  - year: 2026
+    id: aaai26
+    link: https://aaai.org/conference/aaai/aaai-26/
+    timeline:
+    - abstract_deadline: '2025-07-25 23:59:59'
+      deadline: '2025-08-01 23:59:59'
+    timezone: UTC-12
+    date: January 20 - 27, 2026
+    place: Singapore EXPO
+  - year: 2027
+    id: aaai27
+    link: https://aaai.org/conference/aaai/aaai-27/
+    timeline:
+    - abstract_deadline: '2026-07-21 23:59:59'
+      deadline: '2026-07-28 23:59:59'
+    timezone: UTC-12
+    date: February 16-23, 2027
+    place: Montréal, Québec, Canada
+- title: CVPR
+  description: IEEE/CVF Conference on Computer Vision and Pattern Recognition
+  sub: AI
+  rank:
+    ccf: A
+    core: A*
+    thcpl: A
+  dblp: cvpr
+  confs:
+  - year: 2022
+    id: cvpr22
+    link: http://cvpr2022.thecvf.com/
+    timeline:
+    - abstract_deadline: '2021-11-09 23:59:00'
+      deadline: '2021-11-16 23:59:00'
+    timezone: UTC-8
+    date: June 19 - June 24, 2022
+    place: New Orleans, Louisiana
+  - year: 2023
+    id: cvpr23
+    link: http://cvpr2023.thecvf.com/
+    timeline:
+    - deadline: '2022-11-11 23:59:59'
+    timezone: UTC-8
+    date: June 17-23, 2023
+    place: Vancouver, Canada
+  - year: 2024
+    id: cvpr24
+    link: https://cvpr.thecvf.com/Conferences/2024
+    timeline:
+    - deadline: '2023-11-17 23:59:59'
+    timezone: UTC-8
+    date: June 17-21, 2024
+    place: Seattle, USA
+  - year: 2025
+    id: cvpr25
+    link: https://cvpr.thecvf.com/Conferences/2025/CallForPapers
+    timeline:
+    - abstract_deadline: '2024-11-07 23:59:00'
+      deadline: '2024-11-14 23:59:00'
+    timezone: UTC-8
+    date: June 10-17, 2025
+    place: Nashville, Tennessee, USA
+  - year: 2026
+    id: cvpr26
+    link: https://cvpr.thecvf.com/Conferences/2026
+    timeline:
+    - abstract_deadline: '2025-11-06 23:59:00'
+      deadline: '2025-11-13 23:59:00'
+    timezone: UTC-12
+    date: June 3-7, 2026
+    place: Denver, Colorado, United States
+- title: SOSP
+  description: ACM Symposium on Operating Systems Principles
+  sub: SE
+  rank:
+    ccf: A
+    core: A*
+    thcpl: A
+  dblp: sosp
+  confs:
+  - year: 2021
+    id: sosp21
+    link: https://sosp2021.mpi-sws.org/
+    timeline:
+    - deadline: '2021-05-07 14:59:59'
+    timezone: UTC-8
+    date: October 25-28, 2021
+    place: Virtual
+  - year: 2023
+    id: sosp23
+    link: https://sosp2023.mpi-sws.org/
+    timeline:
+    - deadline: '2023-04-10 23:59:59'
+      comment: Deadline to Register Abstracts
+    - deadline: '2023-04-17 23:59:59'
+      comment: Submission Deadline (no extensions)
+    timezone: UTC-4
+    date: October 23 - 26, 2023
+    place: Koblenz, Germany
+  - year: 2024
+    id: sosp24
+    link: https://sigops.org/s/conferences/sosp/2024/index.html
+    timeline:
+    - abstract_deadline: '2024-04-12 23:59:59'
+      deadline: '2024-04-19 23:59:59'
+    timezone: UTC-8
+    date: November 4 - 6, 2024
+    place: Hilton Austin, Texas, USA
+  - year: 2025
+    id: sosp25
+    link: https://sigops.org/s/conferences/sosp/2025/index.html
+    timeline:
+    - abstract_deadline: '2025-04-10 23:59:59'
+      deadline: '2025-04-17 23:59:59'
+    timezone: UTC-7
+    date: October 13 - 16, 2025
+    place: Lotte Hotel World, Seoul, Republic of Korea
+  - year: 2026
+    id: sosp26
+    link: https://sigops.org/s/conferences/sosp/2026/index.html
+    timeline:
+    - abstract_deadline: '2026-03-26 23:59:59'
+      deadline: '2026-04-01 23:59:59'
+    timezone: AoE
+    date: September 29 - October 2, 2026
+    place: Clarion Congress Hotel Prague, Prague, Czechia

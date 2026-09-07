@@ -16,6 +16,7 @@ const REAL_SURFACES = [
   'arxiv_search', 'paper_fetch', 'wiki_note', 'figure_save', 'latex_compile', 'meeting_deck',
   'research-idea', 'research-plan', 'research-review', 'paper-write', 'paper-compile',
   'IDEA_REPORT.md', 'EXPERIMENT_PLAN.md', 'EXPERIMENT_LOG.md', 'NARRATIVE_REPORT.md',
+  'main.tex', 'references.bib',
 ]
 
 describe('bundled research skills', () => {
@@ -23,7 +24,7 @@ describe('bundled research skills', () => {
     const names = BUNDLED_SKILLS.map(skill => skill.name)
     expect(new Set(names).size).toBe(names.length)
     expect(names).toContain('research-pipeline')
-    expect(names.length).toBe(10)
+    expect(names.length).toBe(11)
     for (const skill of BUNDLED_SKILLS) {
       expect(skill.name).toMatch(/^research-[a-z-]+$/)
       expect(skill.description.length).toBeGreaterThan(40)

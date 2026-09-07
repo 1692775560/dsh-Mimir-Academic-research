@@ -9,8 +9,8 @@
 
 import type { ResearchTab } from './store.ts'
 
-/** The eight view tabs in rail order — also the `1`–`8` shortcut order. */
-export const TABS: readonly ResearchTab[] = ['overview', 'paper', 'papers', 'experiments', 'figures', 'meetings', 'servers', 'ledger']
+/** The nine view tabs in rail order — also the `1`–`9` shortcut order. */
+export const TABS: readonly ResearchTab[] = ['overview', 'paper', 'papers', 'experiments', 'figures', 'meetings', 'servers', 'ledger', 'venues']
 
 /** The panel header's chrome snapshot: resolved color scheme + active locale. */
 export interface WorkbenchChrome {
@@ -43,7 +43,7 @@ export type ShortcutAction =
  * Map one keydown to a workbench action. The caller gates on the panel being
  * open; the mapping itself refuses every combo while a text-entry surface
  * holds focus, so the editor's own keystrokes (and the browser's alt-menu
- * accelerators) pass through untouched. `1`–`8` pick the rail tab in
+ * accelerators) pass through untouched. `1`–`9` pick the rail tab in
  * {@link TABS} order, `Escape` exits a fullscreened pane first and closes the
  * panel only when nothing is fullscreened, ⌘/Ctrl+Enter asks for a compile
  * (the caller gates on the paper view and a selected project).

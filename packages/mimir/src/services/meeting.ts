@@ -24,6 +24,8 @@ import type {
 } from '../types.ts'
 import { resolvePaperDir } from '../paper-source.ts'
 import { listPaperFigures, type FigureFile } from '../artifacts.ts'
+import { isValidArxivId } from '../arxiv-id.ts'
+import { isValidProjectId } from '../project-id.ts'
 import { extractPaperFigures, resolvePaperPdf } from './paper-figures.ts'
 import { fetchPaperPdf } from './library.ts'
 import {
@@ -108,6 +110,16 @@ export type DeckSlide =
 /** Format an ISO date (or raw string) as YYYY-MM-DD for the deck. */
 function dateOnly(iso: string): string {
   return iso.slice(0, 10)
+}
+
+/**
+ * Today as YYYY-MM-DD in the host's LOCAL timezone — the deck's default date
+ * line. `new Date().toISOString()` would report the UTC date, which is
+ * already tomorrow for evening hosts east of Greenwich.
+ */
+export function localToday(now: Date): string {
+  const pad = (value: number): string => String(value).padStart(2, '0')
+  return `${String(now.getFullYear())}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`
 }
 
 /** One-line metric summary of an experiment record. */
@@ -417,6 +429,8 @@ export async function loadPaperFigures(
   workspaceDir: string,
   arxivId: string,
 ): Promise<readonly PaperFigureAsset[]> {
+  // An unsafe id never reaches a path join; the read fails open.
+  if (!isValidArxivId(arxivId)) return []
   const dir = join(workspaceDir, MEETINGS_DIR_NAME, PAPER_FIGURES_DIR_NAME, arxivId)
   let raw: string
   try {
@@ -465,6 +479,12 @@ export async function generateMeetingDeck(
 ): Promise<ResearchGenerateMeetingResult> {
   const project = deps.domain.table('projects').get(request.projectId)
   if (project === undefined) return rejected({ code: 'project-not-found', projectId: request.projectId })
+  // Checked before any work: this is the site that *creates*
+  // `meetings/<projectId>/`, so an unsafe id here would mkdir outside the
+  // workspace rather than merely read outside it.
+  if (!isValidProjectId(project.id)) {
+    return rejected({ code: 'invalid-path', path: project.id })
+  }
   const include: MeetingInclude = { ...DEFAULT_INCLUDE, ...(request.include ?? {}) }
 
   const allPapers = [...deps.domain.table('papers').entries()].map(([, record]) => record)
@@ -520,7 +540,7 @@ export async function generateMeetingDeck(
     }
   }
 
-  const date = request.date?.trim() || dateOnly(new Date().toISOString())
+  const date = request.date?.trim() || localToday(new Date())
   const title = request.title?.trim() || `${project.title} · 组会汇报`
 
   // 逐图 assets of the selected papers: reuse an existing manifest, else
@@ -593,6 +613,12 @@ export async function listMeetingDecks(
 ): Promise<ResearchMeetingDecksResult> {
   const project = deps.domain.table('projects').get(request.projectId)
   if (project === undefined) return rejected({ code: 'project-not-found', projectId: request.projectId })
+  // The stored id is unconstrained `z.string()`, so it is checked here rather
+  // than trusted: an imported snapshot predating the import guard could still
+  // hold `../../x`, and this joins it into a filesystem path.
+  if (!isValidProjectId(project.id)) {
+    return rejected({ code: 'invalid-path', path: project.id })
+  }
   const meetingsDir = join(deps.workspaceDir, MEETINGS_DIR_NAME, project.id)
   let names: string[]
   try {
@@ -623,6 +649,9 @@ export async function deleteMeetingDeck(
   if (file === '' || extname(file).toLowerCase() !== '.pptx') {
     return rejected({ code: 'invalid-input', message: 'file must name a .pptx deck' })
   }
+  if (!isValidProjectId(project.id)) {
+    return rejected({ code: 'invalid-path', path: project.id })
+  }
   try {
     await unlink(join(deps.workspaceDir, MEETINGS_DIR_NAME, project.id, file))
   } catch {
@@ -637,6 +666,9 @@ export function meetingDeckPath(
   projectId: string,
   file: string,
 ): string | undefined {
+  // `file` is already reduced to a basename below; `projectId` was not
+  // checked at all, and it is the other half of the same path.
+  if (!isValidProjectId(projectId)) return undefined
   const name = basename(file)
   if (name === '' || extname(name).toLowerCase() !== '.pptx') return undefined
   return join(workspaceDir, MEETINGS_DIR_NAME, projectId, name)

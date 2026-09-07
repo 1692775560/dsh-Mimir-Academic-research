@@ -8,9 +8,10 @@
 import { randomUUID } from 'node:crypto'
 import { mkdir, rename, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { fetchArxivPdf, fetchArxivSearch, paperPdfFileName } from '../tools/arxiv.ts'
+import { fetchArxivPdf, fetchArxivSearch, isValidArxivId, paperPdfFileName } from '../tools/arxiv.ts'
 import { fetchWebSearch } from '../tools/web-search.ts'
 import type { WebSearchRunner } from '../tools/web-search.ts'
+import { detectPackageManager, installCommandFor } from '../pm-detect.ts'
 import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type {
@@ -129,9 +130,10 @@ export async function searchWeb(
 ): Promise<ResearchSearchWebResult> {
   const search = deps.search
   if (search === undefined) {
+    const command = installCommandFor(detectPackageManager())
     return rejected({
       code: 'operation-failed',
-      message: 'Web search is not configured: set the plugin\'s search.command to the sxng CLI (npm install -g sxng-cli; sxng init against a self-hosted SearXNG).',
+      message: `Web search is not configured: install the sxng CLI with ${command}, then set the plugin's search.command to 'sxng' (or leave it 'auto') and run sxng init against a self-hosted SearXNG.`,
     })
   }
   const query = request.query.trim()
@@ -178,6 +180,11 @@ export async function importPaper(
   const arxivId = entry.id.trim()
   if (arxivId === '' || entry.title.trim() === '') {
     return rejected({ code: 'invalid-input', message: 'entry id and title must be non-empty' })
+  }
+  // The id joins filesystem paths (cached PDF, figure crops) downstream —
+  // reject anything that could escape a directory join.
+  if (!isValidArxivId(arxivId)) {
+    return rejected({ code: 'invalid-input', message: `unsafe arXiv id: ${arxivId}` })
   }
   if (request.projectId !== undefined
     && deps.domain.table('projects').get(request.projectId) === undefined) {
@@ -324,6 +331,11 @@ export async function fetchPaperPdf(
   request: { arxivId: string },
 ): Promise<ResearchFetchPaperPdfResult> {
   const table = deps.domain.table('papers')
+  // encodeURIComponent leaves dots untouched, so `..` would escape papers/ —
+  // the id must pass the path-safety predicate before any join (or lookup).
+  if (!isValidArxivId(request.arxivId)) {
+    return rejected({ code: 'invalid-input', message: `unsafe arXiv id: ${request.arxivId}` })
+  }
   const existing = table.get(request.arxivId)
   if (existing === undefined) return rejected({ code: 'paper-not-found' })
   let bytes: Uint8Array

@@ -1,11 +1,12 @@
 /**
- * The research workbench: a wide fixed overlay with a left rail (the eight
+ * The research workbench: a wide fixed overlay with a left rail (the nine
  * view tabs plus the project picker at the bottom) and a content area that
  * renders the active view — the project overview card, the Overleaf-style
  * paper editor, the literature library, the experiment records with the
  * experiment log, the paper-figure grid, the group-meeting deck builder,
- * the compute-server board, and the ledger (the transparent growth record:
- * timeline + progress report). All
+ * the compute-server board, the ledger (the transparent growth record:
+ * timeline + progress report), and the venues view (the ccfddl conference
+ * catalog with its per-project watch list plus the CCF-A journal directory). All
  * data arrives through the four props shares — the shared store carries
  * open/selection/active-tab, the `useResearch` hook carries the remote view,
  * and the inject face carries the verbs. The component owns no subscription
@@ -17,7 +18,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ResearchTab } from './store.ts'
 import type { ResearchKey } from './locales.ts'
 import { arrowTab, trapFocusIndex } from './focus.ts'
+import { readSidebarFolded, SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue } from './sidebar-fold.ts'
 import { shortcutFor, TABS } from './shortcuts.ts'
+import { countUpcomingDeadlines } from './venues-view.ts'
 import type { ResearchPanelProps } from './slots.ts'
 import { OverviewView } from './OverviewView.tsx'
 import { PaperView } from './PaperView.tsx'
@@ -27,6 +30,7 @@ import { FiguresView } from './FiguresView.tsx'
 import { MeetingsView } from './MeetingsView.tsx'
 import { ServersView } from './ServersView.tsx'
 import { LedgerView } from './LedgerView.tsx'
+import { VenuesView } from './VenuesView.tsx'
 import { ToastHost } from './ToastHost.tsx'
 import { ImportProjectDialog } from './ImportProjectDialog.tsx'
 import css from './ResearchPanel.module.css'
@@ -41,6 +45,7 @@ const TAB_KEYS: Record<ResearchTab, ResearchKey> = {
   meetings: 'tab.meetings',
   servers: 'tab.servers',
   ledger: 'tab.ledger',
+  venues: 'tab.venues',
 }
 
 /** One 16×16 stroke icon per tab, painted in the nav item's currentColor. */
@@ -99,6 +104,13 @@ const TAB_ICONS: Record<ResearchTab, ReactNode> = {
       <path d="M5.5 5h5M5.5 8h5M5.5 11h3" />
     </svg>
   ),
+  venues: (
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="1.5" y="2.5" width="13" height="12" rx="1.5" />
+      <path d="M1.5 6h13M5 1.5v2M11 1.5v2" />
+      <path d="M4.5 9h3M4.5 11.5h5" />
+    </svg>
+  ),
 }
 
 /** The artifact shown by the experiments view's log section. */
@@ -111,6 +123,14 @@ const PROJECTS_COLLAPSED_STORAGE_KEY = 'mimir.sideProjects.collapsed'
 const CHEVRON_ICON = (
   <svg viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
     <path d="M2.5 3.5 5 6l2.5-2.5" />
+  </svg>
+)
+
+/** 16×16 double chevron pointing at the rail fold direction (rotated while folded). */
+const FOLD_ICON = (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9.5 3.5 6 8l3.5 4.5" />
+    <path d="M12.5 3.5 9 8l3.5 4.5" />
   </svg>
 )
 
@@ -160,6 +180,7 @@ export function ResearchPanel({
   ensureBibliography, reloadBibliography, deleteBibEntry, updateBibEntry, importPapersToBib, reorderPaperSections, reorderPaperSubsections,
   loadSnapshots, loadSnapshotDetail, closeSnapshotDetail, revertSnapshot,
   ensureVenueTemplates, applyVenueTemplate, clearVenueTemplate, uploadTemplateFiles, requestVenueFormat,
+  ensureVenues, refreshVenues, refreshVenueCatalog, toggleVenueWatch,
   loadMeetings, generateMeetingDeck, deleteMeetingDeck, getImageGenConfig, saveImageGenConfig,
   loadLedger, generateReport, generateBrief, addJournal,
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
@@ -199,6 +220,7 @@ export function ResearchPanel({
   const bib = useResearch(view => view.bib)
   const snapshots = useResearch(view => view.snapshots)
   const venueTemplates = useResearch(view => view.venueTemplates)
+  const venues = useResearch(view => view.venues)
   const snapshotDetail = useResearch(view => view.snapshotDetail)
   const ledger = useResearch(view => view.ledger)
   const report = useResearch(view => view.report)
@@ -227,6 +249,19 @@ export function ResearchPanel({
     }
   }, [projectsCollapsed])
 
+  // The rail fold (narrow icons-only rail); persists across panel opens. The
+  // fold control hides in top-bar mode (≤700px) — see sidebar-fold.ts.
+  const [sidebarFolded, setSidebarFolded] = useState(
+    () => readSidebarFolded(key => localStorage.getItem(key)),
+  )
+  useEffect(() => {
+    try {
+      localStorage.setItem(SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue(sidebarFolded))
+    } catch {
+      // A full/blocked localStorage drops persistence; the fold still works.
+    }
+  }, [sidebarFolded])
+
   // Every read is deferred to the first open rather than fired on mount: the
   // toggle mounts with the sidebar whether or not the panel is ever used.
   useEffect(() => {
@@ -252,9 +287,13 @@ export function ResearchPanel({
     if (open && activeTab === 'overview') {
       ensurePapers()
       ensureJobs()
+      ensureVenues(selectedProjectId)
       if (selectedProjectId !== null) loadFigures(selectedProjectId)
     }
-  }, [open, activeTab, selectedProjectId, ensurePapers, ensureJobs, loadFigures])
+  }, [open, activeTab, selectedProjectId, ensurePapers, ensureJobs, ensureVenues, loadFigures])
+  useEffect(() => {
+    if (open && activeTab === 'venues') ensureVenues(selectedProjectId)
+  }, [open, activeTab, selectedProjectId, ensureVenues])
   useEffect(() => {
     if (open && activeTab === 'experiments' && selectedProjectId !== null) {
       loadArtifact(selectedProjectId, EXPERIMENT_LOG_ARTIFACT)
@@ -344,6 +383,7 @@ export function ResearchPanel({
       ? figures.list.length
       : null,
     servers: servers.status === 'ready' ? servers.list.length : null,
+    venues: venues.status === 'ready' ? countUpcomingDeadlines(venues.list, 30, Date.now()) : null,
   }
   const navCounts: Partial<Record<ResearchTab, number | null>> = {
     papers: overviewStats.papers,
@@ -357,7 +397,7 @@ export function ResearchPanel({
       {/* Fixed full-viewport dimmer; painted behind the window's own content
           (negative z-index inside the workbench stacking context). */}
       <div className={css.backdrop} aria-hidden />
-      <aside className={css.side}>
+      <aside className={css.side} data-folded={sidebarFolded || undefined}>
         <div className={css.sideHead}>
           <div className={css.brand}>
             <span className={css.brandMark} aria-hidden>M</span>
@@ -391,7 +431,7 @@ export function ResearchPanel({
             </button>
           </div>
         </div>
-        {/* The seven views as a tablist: 1–7 and ArrowUp/Down/Left/Right all
+        {/* The nine views as a tablist: 1–9 and ArrowUp/Down/Left/Right all
             switch, aria-selected carries the active tab to AT. */}
         <nav
           className={css.nav}
@@ -414,6 +454,7 @@ export function ResearchPanel({
               className={css.navItem}
               data-active={tab === activeTab || undefined}
               aria-selected={tab === activeTab}
+              title={t(TAB_KEYS[tab])}
               onClick={() => { actions.setTab(tab) }}
             >
               <span className={css.navIcon} aria-hidden>{TAB_ICONS[tab]}</span>
@@ -426,6 +467,18 @@ export function ResearchPanel({
             </button>
           ))}
         </nav>
+        {/* The rail fold toggle (narrow icons-only rail); hides in top-bar
+            mode via CSS. The 1–9 shortcuts work in both states. */}
+        <button
+          type="button"
+          className={css.sideFold}
+          aria-expanded={!sidebarFolded}
+          aria-label={t(sidebarFolded ? 'sidebar.expand' : 'sidebar.fold')}
+          title={t(sidebarFolded ? 'sidebar.expand' : 'sidebar.fold')}
+          onClick={() => { setSidebarFolded(prev => !prev) }}
+        >
+          {FOLD_ICON}
+        </button>
         <div className={css.sideProjects} data-collapsed={projectsCollapsed || undefined}>
           <button
             type="button"
@@ -629,6 +682,16 @@ export function ResearchPanel({
             refreshJobs={refreshJobs}
             submitJob={submitJob}
             deleteJob={deleteJob}
+            t={t}
+          />
+        )}
+        {activeTab === 'venues' && (
+          <VenuesView
+            venues={venues}
+            hasProject={selectedProjectId !== null}
+            refreshVenues={() => { refreshVenues(selectedProjectId) }}
+            refreshVenueCatalog={() => refreshVenueCatalog(selectedProjectId)}
+            toggleVenueWatch={toggleVenueWatch}
             t={t}
           />
         )}

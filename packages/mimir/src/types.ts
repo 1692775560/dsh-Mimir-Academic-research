@@ -7,8 +7,6 @@
 
 import type { LatexIssue } from './latex-log.ts'
 import type { OutlineNode } from './outline.ts'
-import type { LatexEngineKind } from './tools/latex.ts'
-import type { ArxivEntry } from './tools/arxiv.ts'
 import type { CbeDigestReport, CbeDigestTier } from './report-tier.ts'
 import type { CbeCapsulePerspective, CbeExperienceCapsule } from './report-capsules.ts'
 import type { CbeMomentKind } from './moment-index.ts'
@@ -20,9 +18,26 @@ export type { CbeMomentSource, CbeMomentStats, CbeClosenessVotes } from './momen
 export type { CbeEurekaContextView } from './eureka.ts'
 export type { CbeWindowFeatures } from './window-features.ts'
 export type { OutlineNode, SectionMove, SectionOutlineTitles, SubsectionMove } from './outline.ts'
-export type { ArxivEntry } from './tools/arxiv.ts'
 export type { BibEntry } from './bibtex.ts'
 import type { BibEntry } from './bibtex.ts'
+
+/**
+ * One parsed arXiv entry, shared by both arXiv tools' output. Defined here
+ * rather than in `./tools/arxiv.ts` so this types-only module never imports a
+ * tool implementation: such edges drag host-side service declarations
+ * (`@deepseek-ai/dsh-tools` → agent/session) into client type programs.
+ */
+export interface ArxivEntry {
+  readonly id: string
+  readonly title: string
+  readonly authors: string[]
+  readonly summary: string
+  readonly published: string
+  readonly url: string
+}
+
+/** A TeX engine the compile tool knows how to drive. */
+export type LatexEngineKind = 'latexmk' | 'tectonic'
 
 /** One independent-review verdict. */
 export type Verdict = 'PASS' | 'WARN' | 'FAIL'
@@ -129,7 +144,7 @@ export type ExperimentStatus = 'running' | 'success' | 'failed'
 export interface ExperimentJobOutcome {
   /** The settled job record's id. */
   readonly jobId: string
-  readonly status: 'succeeded' | 'failed'
+  readonly status: 'succeeded' | 'failed' | 'cancelled'
   /** Remote exit code; null when the ssh session itself failed. */
   readonly exitCode: number | null
   /** Wall-clock run time in ms; null when the job never reached `running`. */
@@ -163,7 +178,7 @@ export interface ExperimentRecord {
 }
 
 /** Lifecycle of one remote job submitted over ssh. */
-export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed'
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
 
 /** One remote command submitted to a remembered server over ssh. */
 export interface JobRecord {
@@ -347,6 +362,81 @@ export type ResearchApplyVenueResult = ResearchResult<{ readonly venue: VenueVie
 
 /** `clearVenueTemplate` result: the project whose venue was cleared. */
 export type ResearchClearVenueResult = ResearchResult<{ readonly projectId: string }>
+
+/* ── venue deadlines (会议/CCF DDL 追踪) ─────────────────────────────── */
+
+/** Durable shape of one venue-watch row (the `venue_watches` wiki table). */
+export interface VenueWatchRecord {
+  /** Composite key: `<projectId>:<seriesKey>`. */
+  readonly id: string
+  readonly projectId: string
+  /** ccfddl series key (lowercased title). */
+  readonly series: string
+  readonly createdAt: string
+}
+
+/** One submission round of one conference edition, deadlines as ISO instants. */
+export interface VenueTimelineView {
+  readonly abstractDeadline: string | null
+  readonly deadline: string | null
+  readonly comment: string | null
+}
+
+/** One conference edition as the panel shows it. */
+export interface VenueConfView {
+  readonly year: number
+  readonly id: string
+  readonly link: string
+  /** Human date range from the source (`June 10-17, 2026`). */
+  readonly date: string
+  readonly place: string
+  readonly timeline: readonly VenueTimelineView[]
+}
+
+/** One conference series with its current edition resolved. */
+export interface VenueDeadlineView {
+  /** ccfddl series key (lowercased title, e.g. `cvpr`). */
+  readonly key: string
+  readonly title: string
+  readonly description: string
+  /** ccfddl field code (`AI`, `DB`, …). */
+  readonly sub: string
+  readonly ccfRank: 'A' | 'B' | 'C' | 'N'
+  readonly dblp: string | null
+  readonly conf: VenueConfView
+  /** ISO instant of the next pending deadline, or null when fully past. */
+  readonly nextDeadlineAt: string | null
+  readonly nextDeadlineKind: 'abstract' | 'paper' | null
+}
+
+/** One static CCF-A journal directory entry (no deadlines — reference only). */
+export interface VenueJournalView {
+  readonly title: string
+  readonly fullName: string
+  readonly sub: string
+  readonly publisher: string
+}
+
+/** `listVenueDeadlines` result: the cached catalog plus the project's watch list. */
+export type ResearchVenueDeadlinesResult = ResearchResult<{
+  readonly venues: readonly VenueDeadlineView[]
+  readonly journals: readonly VenueJournalView[]
+  /** Series keys the addressed project watches. */
+  readonly watched: readonly string[]
+  /** When the cache was last refreshed; null when no fetch has ever succeeded. */
+  readonly fetchedAt: string | null
+}>
+
+/** `setVenueWatch` result: the settled watch state. */
+export type ResearchSetVenueWatchResult = ResearchResult<{
+  readonly projectId: string
+  readonly series: string
+  readonly watched: boolean
+}>
+
+/** `refreshVenueDeadlines` result: the fresh fetch timestamp. */
+export type ResearchRefreshVenueDeadlinesResult = ResearchResult<{ readonly fetchedAt: string }>
+
 
 /** `getPaperOutline` result: the section tree of `<workspace>/paper/main.tex`. */
 export type ResearchOutlineResult = ResearchResult<{
@@ -1405,3 +1495,19 @@ export interface ResearchEurekaView {
   readonly profile: CbeEurekaProfile
 }
 
+
+/**
+ * One wiki change notification pushed to open panels over the
+ * `/research/events` SSE stream: the domain table and record key that
+ * changed, or a file-side pseudo-table (`paper-source`, `bibliography`)
+ * keyed by project id. The payload stays location-only — a panel re-reads
+ * the slices it actually shows, so the frame never carries record bodies.
+ */
+export interface ResearchWikiChangeEvent {
+  /** Domain table name, or a pseudo-table for file-side writes. */
+  readonly table: string
+  /** Record key; the project id for the file-side pseudo-tables. */
+  readonly key: string
+  /** Write discriminant; file-side writes always report `put`. */
+  readonly operation: 'put' | 'deleted'
+}

@@ -18,6 +18,12 @@
  * The content lives as template literals for the same reason templates.ts
  * cites: published packages ship `lib/` only, so runtime assets must ride the
  * bundle.
+ *
+ * The prose-editing skill `research-paper-deai` synthesizes two MIT-licensed
+ * upstreams — aigc-humanizer-zh (16 Chinese academic modes + 7 hard
+ * constraints) and blader/humanizer (35 English patterns from Wikipedia's
+ * "Signs of AI writing") — into a single bilingual LaTeX-safe pass; both
+ * upstreams are credited in the skill body itself.
  * @module dsh-mimir/src/skills
  */
 
@@ -213,9 +219,10 @@ to move one claim out of \`pending\`; a run that maps to no claim is cut.
    then ablations ordered by claim coverage per GPU-hour, then robustness
    (seeds, datasets). Baselines run before or alongside, never after.
 3. **Budget**: state the compute each run needs and where it runs — check
-   the 服务器 / Servers tab for registered machines and their GPU probe
-   results before promising a schedule. Jobs can be dispatched and tracked
-   from that tab; their ids belong in the experiment records.
+   \`server_list\` for registered machines and \`server_check\` for their GPU
+   probe results before promising a schedule (the 服务器 / Servers tab is the
+   same state). Jobs can be dispatched with \`server_submit_job\` and tracked
+   with \`server_list_jobs\`; their ids belong in the experiment records.
 4. **Register** every planned run:
    \`wiki_note { action: 'add_experiment', project_id, name, metrics }\`
    with the hypothesis in the name and the target metrics explicit.
@@ -302,6 +309,14 @@ For each section, in paper order (abstract LAST, but keep a stub):
    experiments section: these two carry the story and the evidence, and a
    wrong direction there wastes the rest.
 
+## De-AI pass
+
+When the draft sections read complete, run the \`research-paper-deai\`
+skill over the finished prose before checkpointing, then compile again:
+it removes AI-writing tells from the Chinese and English text alike while
+leaving every number, formula, and \\cite{} byte-identical — the paper that
+compiles and the paper that reads well are both your responsibility.
+
 ## Standards
 
 - Claims discipline: assert only \`supported\` claims; \`pending\` evidence
@@ -310,6 +325,215 @@ For each section, in paper order (abstract LAST, but keep a stub):
   files that exist in the paper directory's \`figures/\`.
 - The workbench compiles and snapshots on success, so the user can diff and
   revert — do not hand-edit around history; compile through the tool.
+` + SHARED_RULES
+
+export const RESEARCH_PAPER_DEAI = String.raw`
+# Paper De-AI — 去 AI 味润色（中英双语）
+
+Final prose pass over the paper draft: remove AI-writing tells so the text
+reads like a careful human researcher wrote it — without changing a fact,
+number, equation, formula, or citation. This is an editing pass on the
+paper's prose, not a content pass. Use when the user says 去AI味 / 去 AI /
+de-AI / humanize / 润色, or after \`research-paper-drafting\` and before
+submission.
+
+## Procedure (per section)
+
+For each section of \`main.tex\` (title → abstract → intro → method →
+experiments → discussion → related work):
+
+1. **Mask LaTeX first** — protect whatever must never change before touching
+   a paragraph. Replace each formula/ref/citation with a placeholder:
+   \`$...$\`, \`$$...$$\`, and math environments (\`\\begin{align}...\\end{align}\`
+   and kin) become \`[MATH_1]\`; \`\\cite{...}\`, \`\\ref{...}\`, \`\\label{...}\`,
+   \`\\eqref{...}\`, and any \\command{...} that carries a number or key become
+   \`[CITE_7]\`-style markers. Treat whole non-prose environments as single
+   blocks: \`\\begin{table}...\\end{table}\`, \`\\begin{figure}...\\end{figure}\`,
+   \`\\begin{algorithm}...\\end{algorithm}\` each become one \`[TABLE_1]\` /
+   \`[FIGURE_1]\` / \`[ALGO_1]\` placeholder — inner tabular, tikzpicture, and
+   pseudocode are never rewritten, only the \`\\caption{...}\` inside may be
+   polished. Keep every placeholder byte-identical during rewriting.
+2. **Detect the language** per paragraph (zh vs en by dominant script). Apply
+   the matching pattern set below — the zh set mainly hits Chinese prose, the
+   en set covers English sentences whatever the paper's primary language.
+3. **Audit** — scan the paragraph for patterns in the active set. Quote each
+   hit before rewriting. Statistical patterns (P13–P16, en §14/§15/§16) need
+   counting over the paragraph or whole-document scope.
+4. **Rewrite** — apply the fix order below, preserving facts, numbers,
+   citations, equations, and term definitions exactly. Merge and split
+   sentences freely; never soften a supported claim nor strengthen an
+   unsupported one.
+5. **Verify** — re-read the whole section and ask:
+   - What still sounds like AI?
+   - Did this pass add or remove any fact, number, citation, equation, or claim?
+   Then restore the placeholders byte-for-byte (\`[MATH_1]\` → the exact
+   original formula) and compile with \`latex_compile\` — an unbalanced \$\$
+   or a broken \\cite is caught by the compile, not by eye. Check the
+   compiled PDF preview for how it *reads*, not just that it builds.
+
+## Fix order (SOP)
+
+Priority, most impact first:
+
+1. **Keyword/pattern replacement** — P8/P10/P11 (zh), en §1–§3/§5/§7.
+2. **Sentence restructure** — move theory out of the opening sentence; merge
+   repeated openings; break parallel triads (P3/P6/P13/P14, en §9–§11).
+3. **Cut the tail** — delete sentence-end recap and generic positive endings
+   (P2/P7, en §6/§25/§27/§28/§29).
+4. **Sharpen attribution** — name a real source or convert to the paper's own
+   analysis; never fabricate a citation (P8, en §5).
+5. **Rebalance rhythm** — vary sentence length; drop in one 5–10-char
+   (6–12-word) sentence per paragraph; rebuild a caption only if meaning
+   requires.
+6. **Add a human note** — researcher judgment / surprise / limits (see below).
+
+## 中文学术模式（主体取自 aigc-humanizer-zh 16 模式）
+
+- **P1 理论起笔** — 依据 / 基于……理论 / 根据……框架 / 按照……观点 在段首。把理论
+  移到段落中部，让观察先行：现象描述在前，理论在需要解释时才引入。
+- **P2 段末套路结尾** — 此案例印证了 / 此案例揭示了 / 这提示我们 / 从中可以看出
+  收尾。删除「总结+引申+点题」句式；如需收束，用一句具体判断或转折提问。
+- **P3 整齐编号逻辑** — 首先/其次/再次、第一/第二、其一/其二，各项等长对称。
+  改成非等长结构（「最根本的是…此外…至于…」），重要的理由多写。
+- **P4 被动分析套话** — 该处理体现了 / 该设计基于 / 这一做法展现了。改为研究者的
+  真实决策过程：「初期定量分析解释不了几个异常值，才引入深度访谈」。
+- **P5 模板化问题陈述** — 面临的核心问题是 / 核心挑战在于。换为具体的矛盾情境
+  或反诘疑问句，把张力演示出来。
+- **P6 三元并列对称** — 理论上/实践上/方法上、制度/组织/个体三层面。打破等长
+  三元，最重要的维度多说，次要的合并或一句带过。
+- **P7 段末冗余总结** — 综上所述 / 由此可见 / 难不难发现。删除；确实需要收尾时
+  用一句具体判断替代泛化总结。
+- **P8 模糊归因** — 专家认为 / 学者认为 / 研究表明（无出处）。有来源则引用；无
+  来源改写为本文自身分析。注意：本研究表明、Boulianne(2015)研究表明 不是此模式。
+- **P9 填充短语与过度限定** — 值得注意的是 / 需要指出的是 / 总体而言 直接删；
+  一句只保留一个不确定性限定词，去掉「可能在一定程度上潜在地」堆叠。
+- **P10 泛化结论与意义声明** — 具有重要意义 / 前景广阔 / 未来可期 / 提供了新思路。
+  替换为可检验的推论或具体后续方向，而非空洞乐观。
+- **P11 AI 高频词** — 深刻揭示→说明/表明；具有重要意义→直说意义；不可或缺→离不开；
+  综合运用→结合；深入探讨→分析/考察；系统梳理→梳理；提供了理论支撑→解释了。
+- **P12 回避系动词「是」** — 作为……的重要载体 / 扮演着……的角色 / 发挥着……的
+  作用 → 直接用「是」。
+- **P13 过度对仗排比** ⚡ — 四字短语连续出现 4 次以上。打破工整排比，集中写最有
+  价值的贡献点。
+- **P14 结构性三步走** ⚡ — 从经济维度看 / 从社会维度看 / 从文化维度看 的等重
+  三段式。去掉等重框架，最强的维度先说、多说，意外发现单独提出。
+- **P15 破折号密度** ⚡ — 一段内 ——/— 超过 4 次，或连续冒号 3 次以上。部分改
+  为句子切分或逗号。
+- **P16 正文加粗滥用** ⚡ — 全文 **…** 超过 5 处。解除加粗，用句式变化替代强调。
+
+## English patterns（主体取自 blader/humanizer 35 模式，学术向）
+
+- **§1 Inflated importance/legacy** — pivotal/significant/crucial/key role,
+  marking/shaping/highlights its significance, symbolic of a broader trend →
+  plain statement ("…was established in 1989, part of a wider decentralization").
+- **§2 Name-dropping** — a list of outlets or follower counts meant to prove
+  importance → keep only citations the text actually uses.
+- **§3 Shallow -ing framing** — highlighting/underscoring/ensuring at the end
+  of an assertion → flat assertion.
+- **§4 Sales language** — boasts/vibrant/groundbreaking/rich in → neutral register.
+- **§5 Vague sources** — industry reports / experts argue / several sources →
+  name the real source or cut.
+- **§6 Formulaic challenges/outlook** — stock "Despite…faces several
+  challenges…continues to thrive" → concrete facts; dates only when sourced.
+- **§7 Overused AI words** — delve/underscore/tapestry/interplay/intricate/
+  leverage/fostering/highlight (verb)/pivotal — in *groups*; a single word in
+  a precise technical sense is not a tell.
+- **§8 Avoiding is/are** — serves as / stands as / represents [a] → is/has.
+- **§9 "Not X but Y" and clipped negatives** — "It's not just X, it's Y" →
+  the direct claim; "no guessing" → "without forcing the user to guess".
+- **§10 Forced groups of three** → two or one, as the content justifies.
+- **§11 Synonym cycling / repeated openings** — renaming the same subject
+  twice+, or several sentences opening with the same subject → one name,
+  merge or re-open on the action.
+- **§12 False from-X-to-Y ranges** — "from the Big Bang to the cosmic web" →
+  the actual coverage.
+- **§13 Passive voice + missing subjects** — "No configuration file needed.
+  Results are preserved automatically." → active with named actors.
+- **§14 Em/en dashes** — final pass should contain none (spaced " — " and
+  "--" included) unless the paper's own voice uses them; replace with comma,
+  period, or colon. In an academic draft the paper's existing prose is the
+  sample — match its dash habit, don't ban one lone dash in a quotation.
+  A single §4-like tell alone is not proof; flag dashes only when stacked
+  with other patterns.
+- **§15/§16 Bold abuse and bold mini-heading lists** — un-bold; inline the list.
+- **§23 Filler** — in order to / due to the fact that / at this point in
+  time / has the ability to / it is important to note that → because / now /
+  can / "the data shows".
+- **§24 Qualifier stacking** — could potentially possibly → one qualifier.
+- **§25 Generic positive endings** → end on the last concrete fact.
+- **§27 Pretending to reveal a deep truth** — the real question is / at its
+  core / fundamentally → plain claim.
+- **§28 Announcing the next point** — let's dive into / here's what you need
+  to know → state it.
+- **§29 Heading repeated in first sentence** → cut the repeat.
+- **§31 Forced punchlines/fragments** → merge into prose.
+- **§32 Formulaic sayings** — "X is the language of Y" → the specific claim.
+- **§34/§35 Unattributed objections / fake alternatives** — state the real
+  constraint directly; drop a strawman the text never needed.
+
+## 硬约束（HC-1 ~ HC-7，命中即修复）
+
+Before returning the rewrite, check the whole \`main.tex\` scope:
+
+| # | 约束 / constraint | 阈值 threshold |
+| --- | --- | --- |
+| HC-1 | 高频词密度 / overused AI words | ≤2/段（per paragraph） |
+| HC-2 | 段末总结套句 / sentence-end recap | ≤1/全文（whole doc） |
+| HC-3 | 整齐三元并列 / forced triads | ≤1/段（per paragraph） |
+| HC-4 | 理论起笔段落占比 / theory-openers | ≤20% 段落 |
+| HC-5 | 正文加粗 / bold | ≤5/全文 |
+| HC-6 | 泛化结尾 / generic-positive endings | 0 |
+| HC-7 | 模糊归因 / vague attribution | 0 |
+
+## 注入学者视角
+
+去痕之后的文字若「干净却无魂」仍会被识别为机器稿：
+
+- **承认局限** — 把局限放在它真实的位置：「这里的数据不够理想，只能做个初步判断」
+  / "These numbers are too noisy for a firm claim."
+- **表达意外** — 「出乎意料的是，访谈中没有一位受访者提到……」/ "Unexpectedly,
+  no participant mentioned…".
+- **留下判断** — 「笔者认为，这一解释固然有其道理，但……」/ "This reading,
+  though defensible, …".
+- **短句造节奏** — 每段夹一个 5–10 字短句打破长句的连续。
+
+## 噪声保留原则
+
+不要把每段都改得风格一致——人类写作本身有波动，去味的目标是「像人写的」，
+不是「零 AI 特征」：
+
+- 只在确实自然处保留轻微 AI 特征（轻度双项并列、程度较轻的过渡词），并以此为
+  度校准全文，而不是刻意制造统一腔调。
+- 不保留：「此案例印证了」「具有重要意义」、任何模糊归因——这些是 HC-2/6/7
+  命中的硬伤，必须清掉。
+- 成语/口语在叙述里自然出现即可，不堆砌。
+
+## 不要误报（false positives）
+
+- 完美的语法和一致的风格不是 AI 证明——专业作者本就如此。
+- 正式学术词汇不是痕迹，除非在黑名单里且成堆出现。一个 Moreover / 一个然而 没事。
+- 单独的 em dash 在英文中不算（许多编辑惯用）；要和其它特征同时出现才算。
+- 弯引号单独出现不算——macOS/Word/Google Docs 默认自动卷曲。
+- 一句短句作强调可以，**连续**短片段才是 AI 信号。
+- 引文、标题、专名、正在被讨论的短语保持逐字不动——不要改写二手文本。
+- 干净但「没有灵魂」不是模式命中，不要为了热闹把真诚的平淡改花。
+
+## 收尾核查
+
+All sections done, run the whole-tex checklist:
+
+- HC-1…HC-7 across the entire \`main.tex\`.
+- Every number / \\cite / \\ref / formula matches the wiki experiment and
+  evaluation records — nothing invented, nothing quietly dropped.
+- No claim strengthened beyond a \`supported\` verdict, no unsupported claim
+  added.
+- Compile clean, PDF preview reads like a person who ran those experiments.
+
+## 来源说明
+
+zh 模式为 aigc-humanizer-zh（MIT, shuohui-air-technology）16 模式引擎的程序化
+浓缩；en 模式为 blader/humanizer（MIT, Siqi Chen），其模式编码自维基百科
+"Signs of AI writing"（WikiProject AI Cleanup）。
 ` + SHARED_RULES
 
 export const RESEARCH_CITATION_AUDIT = String.raw`
@@ -589,6 +813,12 @@ export const BUNDLED_SKILLS: readonly BundledSkill[] = [
     description: 'Design claim-carrying figures, produce them reproducibly, and file them through figure_save so the Figures tab and the paper stay in sync. Use when the user says "画图", "figure plan", "论文配图", or a paper needs its figures designed.',
     whenToUse: 'A paper or report needs figures planned, produced, and registered in the workbench.',
     content: RESEARCH_FIGURE_PLAN,
+  },
+  {
+    name: 'research-paper-deai',
+    description: 'Bilingual (zh/en) de-AI polish pass over the paper draft: remove AI-writing tells from the prose while leaving every fact, number, formula, and citation byte-identical, then recompile. Use when the user says "去AI味", "去 AI", "de-AI", "humanize", "润色", or before submission.',
+    whenToUse: 'The paper draft reads complete and needs a final human-voice pass, or the user wants a specific section de-AI-ed.',
+    content: RESEARCH_PAPER_DEAI,
   },
   {
     name: 'research-meeting-deck',

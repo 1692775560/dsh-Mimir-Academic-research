@@ -1,7 +1,7 @@
 {
   "name": "dsh-client-ui-mimir",
   "description": "Mimir research workbench for the web surface: a sidebar-footer toggle plus a frame-level overlay listing wiki projects, the paper outline, and the latexmk/tectonic compile/PDF preview, backed by the research Host Remote",
-  "version": "0.15.0",
+  "version": "0.18.1",
   "publishConfig": {
     "access": "public"
   },
@@ -35,10 +35,11 @@
   "dsh": {
     "client": {
       "inject": [
-        "@deepseek-ai/dsh-client-runtime",
         "@deepseek-ai/dsh-api-remotes",
+        "@deepseek-ai/dsh-api-session-controller",
         "@deepseek-ai/dsh-client-locale",
         "@deepseek-ai/dsh-client-ui-layout",
+        "@deepseek-ai/dsh-client-ui-renderer",
         "@deepseek-ai/dsh-client-ui-sidebar",
         "@deepseek-ai/dsh-client-ui-theme"
       ],
@@ -50,28 +51,32 @@
   },
   "license": "MIT",
   "peerDependencies": {
-    "@deepseek-ai/cordis": ">=4.0.1",
-    "@deepseek-ai/dsh-api-remotes": ">=0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-locale": ">=0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-runtime": ">=0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-theme": ">=0.0.1-rc.1",
-    "@deepseek-ai/dsh-invariants": ">=0.1.0-rc.8",
-    "@deepseek-ai/dsh-typert-protocol": ">=0.1.0-rc.8",
+    "@deepseek-ai/cordis": ">=4.0.2",
+    "@deepseek-ai/dsh-api-remotes": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-api-session-controller": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-locale": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-store": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-layout": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-renderer": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-theme": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-invariants": ">=0.1.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": ">=0.1.2-rc.1",
     "dsh-mimir": ">=0.14.1"
   },
   "devDependencies": {
-    "@deepseek-ai/cordis": "4.0.1",
-    "@deepseek-ai/dsh-api-remotes": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-locale": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-runtime": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-layout": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-slots": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-client-ui-theme": "0.0.1-rc.1",
-    "@deepseek-ai/dsh-invariants": "0.1.0-rc.8",
-    "@deepseek-ai/dsh-typert-protocol": "0.1.0-rc.8",
+    "@deepseek-ai/cordis": "4.0.2",
+    "@deepseek-ai/dsh-api-remotes": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-api-session-controller": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-locale": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-store": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-layout": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-renderer": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-sidebar": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-slots": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-client-ui-theme": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-invariants": "0.1.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": "0.1.2-rc.1",
     "@types/react": "~18.3.1",
     "@types/react-dom": "~18.3.0",
     "dsh-mimir": "workspace:^",
@@ -83,5 +88,6 @@
     "lib/invariant.js",
     "lib/client.js",
     "lib/types/**/*.d.ts"
-  ]
+  ],
+  "dependencies": {}
 }

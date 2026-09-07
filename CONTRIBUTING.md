@@ -3,7 +3,13 @@
 English | [中文](CONTRIBUTING.zh.md)
 
 Thanks for helping build Mimir! This guide covers the workflow, the checks every
-change must pass, and the pitfalls that have bitten us before.
+change must pass, and the pitfalls that have bitten us before. Code-level
+conventions live in [CODE_STYLE.md](CODE_STYLE.md) — read it before your first PR.
+
+> **Hard gate:** a PR is merged only if `node scripts/check-style.mjs`
+> (enforced in CI) passes and the change follows CODE_STYLE.md. PRs that fix
+> nothing real, skip the tests, or restyle unrelated code are not merged —
+> they get review feedback instead.
 
 ## Setup
 

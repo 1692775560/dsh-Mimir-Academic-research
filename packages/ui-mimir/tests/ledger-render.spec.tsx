@@ -17,10 +17,12 @@ import type {
 } from 'dsh-mimir/types'
 import { LedgerView } from '../src/client/LedgerView.tsx'
 import type {
-  ResearchBriefSlice,
+  ResearchBriefView,
+  ResearchDigestSlice,
   ResearchForagingSlice,
-  ResearchLedgerSlice,
-  ResearchReportSlice,
+  ResearchLedgerView,
+  ResearchMomentsSlice,
+  ResearchReportView,
   ResearchWorktreeSlice,
 } from '../src/client/controller.ts'
 import { zh } from '../src/client/locales.ts'
@@ -111,26 +113,46 @@ const FORAGING: ResearchForagingView = {
 
 describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
   it('renders the branch flow and the rhythm card without crashing', () => {
-    const cold = { status: 'cold', view: null, failure: null }
+    const coldLedger: ResearchLedgerView = { status: 'cold', list: [], failure: null }
+    const coldReport: ResearchReportView = { status: 'idle', markdown: '', generatedAt: null, eventCount: null, failure: null }
+    const coldBrief: ResearchBriefView = {
+      status: 'idle', markdown: '', generatedAt: null, eventCount: null,
+      derivationVersion: null, recalibrated: false, questions: [], failure: null,
+    }
+    const coldMoments: ResearchMomentsSlice = { status: 'cold', view: null, failure: null }
+    const coldDigest: ResearchDigestSlice = {
+      status: 'idle', tier: 'weekly', lang: 'zh', report: null, markdown: '', generatedAt: null, failure: null,
+    }
     const html = renderToString(
       <LedgerView
-        ledger={cold as ResearchLedgerSlice}
-        report={cold as unknown as ResearchReportSlice}
-        brief={cold as unknown as ResearchBriefSlice}
+        ledger={coldLedger}
+        report={coldReport}
+        brief={coldBrief}
         worktree={{ status: 'ready', view: WORKTREE, failure: null } as ResearchWorktreeSlice}
         foraging={{ status: 'ready', view: FORAGING, failure: null } as ResearchForagingSlice}
+        moments={coldMoments}
+        digest={coldDigest}
         selectedProjectId={null}
         loadLedger={() => {}}
-        generateReport={() => {}}
-        generateBrief={() => {}}
+        generateReport={async () => null}
+        generateBrief={async () => null}
         addJournal={async () => null}
         ensureWorktree={() => {}}
         refreshWorktree={() => {}}
         setMainline={async () => null}
         setIdeaParent={async () => null}
+        adoptIdea={async () => null}
         closeIdea={async () => null}
         ensureForaging={() => {}}
         refreshForaging={() => {}}
+        ensureMoments={() => {}}
+        refreshMoments={() => {}}
+        declineMoment={async () => null}
+        ensureDigest={() => {}}
+        refreshDigest={() => {}}
+        generateDigest={async () => null}
+        setEureka={async () => null}
+        pinMoment={async () => null}
         t={t as ResearchT}
       />,
     )

@@ -16,28 +16,35 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 // Type-only: pulls the ctx.webServer Context merge for the PDF route below.
 import type {} from '@deepseek-ai/dsh-host-webserver'
-import { researchWikiDomainSpec } from './store.ts'
+import { quarantineUnsafePaperIds, researchWikiDomainSpec } from './store.ts'
 import { createArxivSearchTool, createPaperFetchTool } from './tools/arxiv.ts'
 import { createWebSearchTool } from './tools/web-search.ts'
 import { createWikiNoteTool } from './tools/wiki.ts'
 import { createFigureOrganizeTool, createFigureSaveTool } from './tools/figure.ts'
 import { createMeetingDeckTool } from './tools/meeting.ts'
 import { createLatexCompileTool } from './tools/latex.ts'
+import { createServerCheckTool, createServerListJobsTool, createServerListTool, createServerSubmitJobTool } from './tools/server.ts'
 import { registerIdeaCommand } from './commands/idea.ts'
 import { registerPlanCommand } from './commands/plan.ts'
 import { registerReviewCommand } from './commands/review.ts'
 import { registerPaperCommands } from './commands/paper.ts'
+import { registerSkillSyncCommand } from './commands/skill-sync.ts'
 import type { ResearchCommandDeps } from './commands/common.ts'
 import { resolvePaperDir } from './paper-source.ts'
+import { isSameOriginWrite, projectPaperDir } from './http-write-boundary.ts'
 import type { ResearchServiceConfig } from './service.ts'
 import { isFigureFile } from './artifacts.ts'
 import { TEMPLATE_DIR_NAME } from './services/venue.ts'
 import { meetingDeckPath } from './services/meeting.ts'
 import { ResearchService } from './service.ts'
+import { recoverInterruptedJobs } from './services/server.ts'
 import { registerResearchSkills } from './skills.ts'
 import { registerSxngSkill } from './sxng-skill.ts'
 import { startWikiBackupLoop } from './backup.ts'
 import { startArxivSubscriptionLoop } from './arxiv-subscriptions.ts'
+import { createWikiChangeHub, createWikiEventsHandler } from './wiki-events.ts'
+import { startVenueDeadlineLoop } from './services/venue-deadlines.ts'
+import { createVenueSearchTool } from './tools/venue.ts'
 
 export type { Verdict, PaperRecord, PaperRelevance, IdeaRecord, ClaimRecord, ProjectRecord, ReviewIssue, ReviewRound, ProjectStage, ExperimentRecord, ExperimentStatus, ExperimentInput, FigureRecord, JobRecord, JobStatus, EventRecord, LedgerActor, LedgerActorKind, EventRefs, LedgerJsonValue, ResearchEventFilter, ResearchListEventsResult, ResearchProgressReportOptions, ResearchProgressReportResult } from './types.ts'
 export type {
@@ -419,6 +426,8 @@ export { createZoteroClient } from './tools/zotero.ts'
 export type { ZoteroBibRequest, ZoteroClient, ZoteroClientConfig, ZoteroCollection, ZoteroFetch, ZoteroItem } from './tools/zotero.ts'
 export { createWikiNoteTool } from './tools/wiki.ts'
 export { createFigureOrganizeTool, createFigureSaveTool } from './tools/figure.ts'
+export { createServerCheckTool, createServerListJobsTool, createServerListTool, createServerSubmitJobTool } from './tools/server.ts'
+export type { ResearchServiceResolver } from './tools/server.ts'
 export { createMeetingDeckTool } from './tools/meeting.ts'
 export { buildWikiSnapshot } from './wiki-snapshot.ts'
 export type { WikiSnapshotSource } from './wiki-snapshot.ts'
@@ -512,6 +521,18 @@ export interface Config {
      */
     dir?: string
   }
+  /**
+   * Register the model-callable `server_*` tools (list / check / submit /
+   * list jobs) that forward to the `server.*` Remote namespace (default
+   * true). These let the running agent drive remembered ssh runtimes the
+   * panel manages — a capability with real remote-execution reach, so
+   * compositions that want the panel's Servers view but no agent-driven
+   * compute can turn it off.
+   */
+  serverTools?: {
+    /** Master switch (default true); false skips registering the four server_* tools. */
+    enabled?: boolean
+  }
   /** Bundled research-skill registration knobs. */
   skills?: {
     /**
@@ -558,6 +579,9 @@ export const Config: z<Config> = z.object({
   skills: z.object({
     enabled: z.boolean().default(true),
   }).default({ enabled: true }),
+  serverTools: z.object({
+    enabled: z.boolean().default(true),
+  }).default({ enabled: true }),
 })
 
 /** Fully defaulted config view used by tools and commands. */
@@ -579,6 +603,7 @@ interface ResolvedConfig {
     readonly dir: string
   }
   readonly skills: { readonly enabled: boolean }
+  readonly serverTools: { readonly enabled: boolean }
 }
 
 /** Validate defaults even when a caller invokes apply() without Loader normalization. */
@@ -600,6 +625,7 @@ function resolveConfig(config: Config): ResolvedConfig {
     dir: config.backup?.dir ?? 'backups',
   }
   const skills = { enabled: config.skills?.enabled ?? true }
+  const serverTools = { enabled: config.serverTools?.enabled ?? true }
   if (workspaceDir.trim().length === 0) throw new TypeError('workspaceDir must be a non-empty path')
   if (reviewer.provider.trim().length === 0) throw new TypeError('reviewer.provider must be a non-empty provider name')
   if (!Number.isSafeInteger(reviewer.maxRounds) || reviewer.maxRounds < 1) throw new TypeError('reviewer.maxRounds must be a positive safe integer')
@@ -612,7 +638,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(backup.intervalMinutes) || backup.intervalMinutes < 1) throw new TypeError('backup.intervalMinutes must be a positive safe integer')
   if (!Number.isSafeInteger(backup.keep) || backup.keep < 1) throw new TypeError('backup.keep must be a positive safe integer')
   if (backup.dir.trim().length === 0) throw new TypeError('backup.dir must be a non-empty path')
-  return { workspaceDir, reviewer, latex, arxiv, search, zotero, subscriptions, backup, skills }
+  return { workspaceDir, reviewer, latex, arxiv, search, zotero, subscriptions, backup, skills, serverTools }
 }
 
 /**
@@ -640,7 +666,13 @@ function createPdfHandler(
       res.writeHead(404).end('expected /research/pdf/<project id>')
       return
     }
-    const projectId = decodeURIComponent(pathname.slice(prefix.length))
+    let projectId: string
+    try {
+      projectId = decodeURIComponent(pathname.slice(prefix.length))
+    } catch {
+      res.writeHead(400).end('invalid encoded project id')
+      return
+    }
     const record = deps.domain.table('projects').get(projectId)
     if (record === undefined) {
       res.writeHead(404).end('unknown research project')
@@ -664,6 +696,11 @@ function createPdfHandler(
       // The panel cache-busts with ?v=<pdfUpdatedAt>; a stale cached preview
       // would otherwise survive a recompile under the same URL.
       'Cache-Control': 'no-cache',
+      // Defense-in-depth: the served bytes are not our app; never let the
+      // browser guess a type or let a crafted PDF inherit our origin's
+      // privileges, even though the file is workspace-local.
+      'X-Content-Type-Options': 'nosniff',
+      'Content-Security-Policy': "default-src 'none'; sandbox",
     })
     if (req.method === 'HEAD') {
       res.end()
@@ -811,7 +848,13 @@ function createFigureHandler(
       res.writeHead(404).end('expected /research/figure/<project id>')
       return
     }
-    const projectId = decodeURIComponent(url.pathname.slice(prefix.length))
+    let projectId: string
+    try {
+      projectId = decodeURIComponent(url.pathname.slice(prefix.length))
+    } catch {
+      res.writeHead(400).end('invalid encoded project id')
+      return
+    }
     const record = deps.domain.table('projects').get(projectId)
     if (record === undefined) {
       res.writeHead(404).end('unknown research project')
@@ -864,9 +907,10 @@ const FIGURE_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024
 /**
  * Receive one uploaded figure for a wiki project's paper directory. The query
  * carries `?project=` (an unknown id is a 404), `?name=` (reduced to its
- * basename, so no traversal is expressible; a non-figure extension is a 400),
- * and an optional `?dir=` override resolved like the PDF route. The raw body
- * lands at `figures/<name>` under the paper directory (created on demand,
+ * basename, so no traversal is expressible; a non-figure extension is a 400).
+ * The route requires an exact same-origin `Origin` header and always resolves
+ * the destination from the project record's `paperDir`; callers cannot select
+ * a different workspace directory. The raw body lands at `figures/<name>` under the paper directory (created on demand,
  * same-name overwrite); a body over {@link FIGURE_UPLOAD_LIMIT_BYTES} is a
  * 413, any method but POST a 405.
  * @param deps - Shared command dependencies (workspace root and open domain).
@@ -879,6 +923,10 @@ function createFigureUploadHandler(
   return async (req, res) => {
     if (req.method !== 'POST') {
       res.writeHead(405).end()
+      return
+    }
+    if (!isSameOriginWrite(req.headers)) {
+      res.writeHead(403).end('cross-origin uploads are not allowed')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -897,7 +945,7 @@ function createFigureUploadHandler(
       res.writeHead(400).end('name must name a figure file (.png/.jpg/.jpeg/.svg/.pdf)')
       return
     }
-    const dir = resolvePaperDir(root, url.searchParams.get('dir') ?? undefined, record.paperDir)
+    const dir = projectPaperDir(root, record.paperDir)
     if (dir === undefined) {
       res.writeHead(400).end('dir must be a relative path inside the research workspace')
       return
@@ -931,8 +979,10 @@ const TEMPLATE_UPLOAD_EXTENSIONS = new Set(['.cls', '.sty', '.tex', '.bst', '.bb
  * Receive one uploaded venue-kit file for a wiki project's paper directory.
  * The query carries `?project=` (an unknown id is a 404) and `?name=`
  * (reduced to its basename; an extension outside
- * {@link TEMPLATE_UPLOAD_EXTENSIONS} is a 400), plus an optional `?dir=`
- * override resolved like the figure route. The raw body lands at
+ * {@link TEMPLATE_UPLOAD_EXTENSIONS} is a 400). The route requires an exact
+ * same-origin `Origin` header and always resolves the destination from the
+ * project record's `paperDir`; callers cannot select a different workspace
+ * directory. The raw body lands at
  * `template/<name>` under the paper directory (created on demand, same-name
  * overwrite); a body over {@link TEMPLATE_UPLOAD_LIMIT_BYTES} is a 413, any
  * method but POST a 405.
@@ -946,6 +996,10 @@ function createTemplateUploadHandler(
   return async (req, res) => {
     if (req.method !== 'POST') {
       res.writeHead(405).end()
+      return
+    }
+    if (!isSameOriginWrite(req.headers)) {
+      res.writeHead(403).end('cross-origin uploads are not allowed')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -964,7 +1018,7 @@ function createTemplateUploadHandler(
       res.writeHead(400).end('name must name a LaTeX kit file (.cls/.sty/.tex/.bst/...)')
       return
     }
-    const dir = resolvePaperDir(root, url.searchParams.get('dir') ?? undefined, record.paperDir)
+    const dir = projectPaperDir(root, record.paperDir)
     if (dir === undefined) {
       res.writeHead(400).end('dir must be a relative path inside the research workspace')
       return
@@ -1055,6 +1109,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const resolved = resolveConfig(config)
   const domain = await ctx.storageDomain.open(researchWikiDomainSpec)
   ctx.effect(() => () => domain.close(), 'mimir.domainClose')
+  // Stored paper records with path-unsafe ids predate the whitelist (or were
+  // hand-edited); quarantine them before any surface can join them into a
+  // filesystem path. The schema stays permissive so their presence can never
+  // abort the open itself.
+  await quarantineUnsafePaperIds(domain, message => ctx.logger.warn(message))
+  await recoverInterruptedJobs({ workspaceDir: resolve(process.cwd(), resolved.workspaceDir), domain })
 
   const deps: ResearchCommandDeps = {
     workspaceDir: resolve(process.cwd(), resolved.workspaceDir),
@@ -1077,6 +1137,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.tools.register(createFigureOrganizeTool(deps.workspaceDir, domain))
   ctx.tools.register(createMeetingDeckTool(deps.workspaceDir, domain))
   ctx.tools.register(createLatexCompileTool(resolved.latex))
+  ctx.tools.register(createVenueSearchTool(deps.workspaceDir))
 
   // Web search is optional: `auto` registers the tool when the sxng CLI
   // resolves on PATH (probed once) or as the bundled optional dependency; an
@@ -1095,6 +1156,25 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       maxResults: resolved.arxiv.maxResults,
     }))
   }
+  // The panel's Servers view and the model-callable server_* tools share the
+  // same server/job state through ResearchService; the tools only forward, so
+  // registering them is a pure addition to the runtime the panel already
+  // drives. The controller tests and the ssh-jobs harness construct the
+  // service directly, so `ctx.research` may not be set in-process for the
+  // full apply() wiring — resolve it lazily at execution time instead of
+  // at registration time.
+  if (resolved.serverTools.enabled) {
+    const getResearch = () => ctx.get('research') as ResearchService | undefined
+    ctx.tools.register(createServerListTool(getResearch))
+    ctx.tools.register(createServerCheckTool(getResearch))
+    ctx.tools.register(createServerSubmitJobTool(getResearch))
+    ctx.tools.register(createServerListJobsTool(getResearch))
+  }
+  // Live wiki change push hub: the domain bridge and the events route are
+  // wired further down; the service config below already carries the notify
+  // hook for file-side writes.
+  const wikiChangeHub = createWikiChangeHub()
+
   const serviceConfig: ResearchServiceConfig = {
     workspaceDir: deps.workspaceDir,
     domain,
@@ -1102,12 +1182,14 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     backup: { ...resolved.backup, dir: backupDir },
     ...(searchConfig === undefined ? {} : { search: searchConfig }),
     zotero: resolved.zotero,
+    notifyWikiChange: event => wikiChangeHub.publish(event),
   }
 
   registerIdeaCommand(ctx, deps)
   registerPlanCommand(ctx, deps)
   registerReviewCommand(ctx, deps)
   registerPaperCommands(ctx, deps)
+  registerSkillSyncCommand(ctx)
 
   // Bundled research skills: runtime contributions to the composition's
   // skill registry when one is mounted (ctx.inject makes the dependency
@@ -1144,6 +1226,39 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       'mimir.arxivSubscriptions',
     )
   }
+  // CCF venue-deadline refresh (same timer pattern as the wiki backup):
+  // first pass two seconds after start, then every six hours; a failed pass
+  // keeps the previous cache, and reads always hit the cache, never the
+  // network — the panel and the venue_search tool work offline.
+  ctx.effect(
+    () => startVenueDeadlineLoop({
+      workspaceDir: deps.workspaceDir,
+      onError: (error) => { console.warn('[mimir] venue deadline refresh failed:', error) },
+    }),
+    'mimir.venueDeadlines',
+  )
+  // Live wiki change push: every durable domain write (agent tools, slash
+  // commands, panel edits alike funnel through the domain) is bridged onto
+  // the SSE hub the open panels subscribe to; file-side writes (main.tex,
+  // bibliography.bib) reach the same hub through the service's notify hook.
+  // The listener is global: `domain/changed` is emitted on the storage-domain
+  // service context, whose scope filter excludes this plugin's context, so a
+  // plain `ctx.on` here would never fire.
+  ctx.effect(
+    () => ctx.on('domain/changed', (change) => {
+      if (change.domain !== researchWikiDomainSpec.name) return
+      wikiChangeHub.publish({ table: change.table, key: change.key, operation: change.operation })
+    }, { global: true }),
+    'mimir.wikiChangeBridge',
+  )
+  ctx.effect(
+    () => ctx.webServer.register({
+      kind: 'prefix',
+      path: '/research/events',
+      handler: createWikiEventsHandler(wikiChangeHub),
+    }),
+    'mimir.wikiEventsRoute',
+  )
   ctx.effect(
     () => ctx.webServer.register({
       kind: 'prefix',

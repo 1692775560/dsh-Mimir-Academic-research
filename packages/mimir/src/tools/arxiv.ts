@@ -9,18 +9,12 @@
 
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
+import { isValidArxivId } from '../arxiv-id.ts'
 import type { ResearchWikiDomain } from '../store.ts'
-import type { PaperRecord, ProjectRecord } from '../types.ts'
+import type { ArxivEntry, PaperRecord, ProjectRecord } from '../types.ts'
 
 /** One parsed arXiv entry, shared by both tools' output. */
-export interface ArxivEntry {
-  readonly id: string
-  readonly title: string
-  readonly authors: string[]
-  readonly summary: string
-  readonly published: string
-  readonly url: string
-}
+export type { ArxivEntry } from '../types.ts'
 
 /** Undo the small XML-entity vocabulary the arXiv Atom feed uses. */
 function unescapeXml(text: string): string {
@@ -160,6 +154,8 @@ export function paperPdfFileName(arxivId: string): string {
   return `${encodeURIComponent(arxivId)}.pdf`
 }
 
+export { isValidArxivId } from '../arxiv-id.ts'
+
 /** JSON-schema properties of one {@link ArxivEntry} in tool output. */
 const ENTRY_PROPERTIES = {
   id: { type: 'string', required: true },
@@ -197,6 +193,11 @@ export async function rememberFetchedPaper(
   entry: ArxivEntry,
   options: { readonly projectId?: string; readonly notes?: string; readonly tags?: readonly string[] } = {},
 ): Promise<PaperRecord> {
+  // The durable schema no longer hard-refines the id (a legacy bad row must
+  // not abort the domain open), so every write path validates explicitly.
+  if (!isValidArxivId(entry.id)) {
+    throw new Error(`paper_fetch: unsafe arXiv id '${entry.id}'`)
+  }
   const explicitProject = options.projectId === undefined ? undefined : domain.table('projects').get(options.projectId)
   if (options.projectId !== undefined && explicitProject === undefined) {
     throw new Error(`paper_fetch: no project with id '${options.projectId}'`)

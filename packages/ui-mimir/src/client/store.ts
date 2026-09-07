@@ -6,10 +6,10 @@
  * @module dsh-client-ui-mimir/client/store
  */
 
-import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-runtime/client'
+import { defineStore, type EngineStoreHandle } from '@deepseek-ai/dsh-client-store'
 
-/** The workbench's eight view tabs. */
-export type ResearchTab = 'overview' | 'paper' | 'papers' | 'experiments' | 'figures' | 'meetings' | 'servers' | 'ledger'
+/** The workbench's nine view tabs. */
+export type ResearchTab = 'overview' | 'paper' | 'papers' | 'experiments' | 'figures' | 'meetings' | 'servers' | 'ledger' | 'venues'
 
 /** The paper-view pane holding fullscreen, or null. */
 export type PaperFullscreen = 'editor' | 'preview'

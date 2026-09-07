@@ -143,6 +143,29 @@ export interface ResearchPanelInjected {
    * @param prompt - the assembled re-layout request (venue, brief path).
    */
   requestVenueFormat: (prompt: string) => Promise<void>
+  /**
+   * Load the venue catalog once, on the venues view's first open; a watch
+   * list loaded for another project refetches (the flags ride the read).
+   * @param projectId - the selected project whose watch list rides along, or null.
+   */
+  ensureVenues: (projectId: string | null) => void
+  /**
+   * Re-fetch the catalog read without a loading flash (the view's retry).
+   * @param projectId - the selected project whose watch list rides along, or null.
+   */
+  refreshVenues: (projectId: string | null) => void
+  /**
+   * Ask the host to fetch the upstream ccfddl catalog now and reload; a
+   * failure toasts and keeps the last good snapshot.
+   * @param projectId - the selected project whose watch list rides the reload, or null.
+   */
+  refreshVenueCatalog: (projectId: string | null) => Promise<void>
+  /**
+   * Flip one conference series in the selected project's watch list
+   * (optimistic; a failure rolls the star back and toasts).
+   * @param seriesKey - the ccfddl series key (lowercased title).
+   */
+  toggleVenueWatch: (seriesKey: string) => Promise<void>
   /** Load the arXiv subscription list once (a stale list triggers one open-time check). */
   ensureSubscriptions: () => void
   /**

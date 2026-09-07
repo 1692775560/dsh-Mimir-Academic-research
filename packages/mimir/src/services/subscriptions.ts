@@ -13,6 +13,7 @@ import {
   loadArxivSubscriptions,
   runArxivSubscriptionCheck,
   saveArxivSubscriptions,
+  withArxivSubscriptionsFileLock,
 } from '../arxiv-subscriptions.ts'
 import type {
   ArxivSubscriptionRecord,
@@ -75,21 +76,26 @@ export async function saveArxivSubscription(
   if (query.length > ARXIV_SUBSCRIPTION_QUERY_MAX) {
     return rejected({ code: 'invalid-input', message: `query must be at most ${ARXIV_SUBSCRIPTION_QUERY_MAX} characters` })
   }
-  const subscriptions = await loadArxivSubscriptions(deps.workspaceDir)
-  if (subscriptions.some(record => record.query.toLowerCase() === query.toLowerCase())) {
-    return rejected({ code: 'invalid-input', message: `already subscribed: ${query}` })
-  }
-  const record: ArxivSubscriptionRecord = {
-    id: randomUUID(),
-    query,
-    createdAt: new Date().toISOString(),
-    lastCheckedAt: null,
-    seenIds: Object.freeze([]),
-    newEntryIds: Object.freeze([]),
-    newEntries: Object.freeze([]),
-  }
-  await saveArxivSubscriptions(deps.workspaceDir, [...subscriptions, record])
-  return success({ subscription: toView(record) })
+  // The same file lock the check's save path holds: a check settling between
+  // our read and write would otherwise be overwritten whole. The duplicate
+  // probe and the append both re-read inside the lock.
+  return await withArxivSubscriptionsFileLock(deps.workspaceDir, async () => {
+    const subscriptions = await loadArxivSubscriptions(deps.workspaceDir)
+    if (subscriptions.some(record => record.query.toLowerCase() === query.toLowerCase())) {
+      return rejected({ code: 'invalid-input', message: `already subscribed: ${query}` })
+    }
+    const record: ArxivSubscriptionRecord = {
+      id: randomUUID(),
+      query,
+      createdAt: new Date().toISOString(),
+      lastCheckedAt: null,
+      seenIds: Object.freeze([]),
+      newEntryIds: Object.freeze([]),
+      newEntries: Object.freeze([]),
+    }
+    await saveArxivSubscriptions(deps.workspaceDir, [...subscriptions, record])
+    return success({ subscription: toView(record) })
+  })
 }
 
 /**
@@ -102,15 +108,20 @@ export async function deleteArxivSubscription(
   deps: SubscriptionDeps,
   request: { id: string },
 ): Promise<ResearchDeleteArxivSubscriptionResult> {
-  const subscriptions = await loadArxivSubscriptions(deps.workspaceDir)
-  if (!subscriptions.some(record => record.id === request.id)) {
-    return rejected({ code: 'subscription-not-found', id: request.id })
-  }
-  await saveArxivSubscriptions(
-    deps.workspaceDir,
-    subscriptions.filter(record => record.id !== request.id),
-  )
-  return success({ id: request.id })
+  // Same lock as the check's save path: re-read inside, then filter, so a
+  // concurrently settling check can neither resurrect the deleted record nor
+  // be lost itself.
+  return await withArxivSubscriptionsFileLock(deps.workspaceDir, async () => {
+    const subscriptions = await loadArxivSubscriptions(deps.workspaceDir)
+    if (!subscriptions.some(record => record.id === request.id)) {
+      return rejected({ code: 'subscription-not-found', id: request.id })
+    }
+    await saveArxivSubscriptions(
+      deps.workspaceDir,
+      subscriptions.filter(record => record.id !== request.id),
+    )
+    return success({ id: request.id })
+  })
 }
 
 /**

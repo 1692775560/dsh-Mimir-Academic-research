@@ -27,6 +27,8 @@ export interface OverviewStats {
   readonly experiments: number | null
   readonly figures: number | null
   readonly servers: number | null
+  /** Catalog deadlines landing within 30 days; null until the venues slice loads. */
+  readonly venues: number | null
 }
 
 /** How many rows each recent-activity column lists. */
@@ -67,6 +69,7 @@ export function OverviewView({ project, stats, backup, jobs, experiments, openLe
     { key: 'overview.statExperiments', value: stats.experiments },
     { key: 'overview.statFigures', value: stats.figures },
     { key: 'overview.statServers', value: stats.servers },
+    { key: 'overview.statVenues', value: stats.venues },
   ]
   // The jobs slice arrives most-recent-first already; the experiments slice
   // needs a sort by updatedAt. Both columns cap at ACTIVITY_LIMIT rows.

@@ -9,10 +9,11 @@
 import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
-import type { JsonValue } from '@deepseek-ai/dsh-session'
+import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { emitEvent, WIKI_AGENT_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type { LedgerJsonValue } from '../types.ts'
+import { isValidArxivId } from './arxiv.ts'
 
 const ACTIONS = [
   'add_paper', 'set_paper', 'add_idea', 'fail_idea', 'add_claim', 'set_claim', 'set_project',
@@ -97,6 +98,11 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
   switch (args.action) {
     case 'add_paper': {
       const arxivId = requireField(args.arxiv_id, 'arxiv_id', args.action)
+      // The id keys the papers table AND joins filesystem paths (cached PDF,
+      // figure crops) — reject anything that could escape a directory join.
+      if (!isValidArxivId(arxivId)) {
+        throw new Error(`wiki_note action 'add_paper' got an unsafe arxiv_id '${arxivId}'`)
+      }
       const existing = domain.table('papers').get(arxivId)
       const record = {
         arxivId,

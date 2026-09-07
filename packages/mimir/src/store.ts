@@ -8,10 +8,17 @@
 import { z } from 'zod'
 import { defineDomain, domainTable } from '@deepseek-ai/dsh-storage-domain'
 import type { Domain } from '@deepseek-ai/dsh-storage-domain'
-import type { ClaimRecord, EventRecord, ExperimentRecord, FigureRecord, IdeaRecord, JobRecord, PaperRecord, ProjectRecord, ServerRecord } from './types.ts'
+import { isValidArxivId } from './arxiv-id.ts'
+import type { ClaimRecord, EventRecord, ExperimentRecord, FigureRecord, IdeaRecord, JobRecord, PaperRecord, ProjectRecord, ServerRecord, VenueWatchRecord } from './types.ts'
 
 /** Durable shape of one remembered paper. */
 export const paperRecord = z.object({
+  // The id joins filesystem paths downstream. The schema deliberately does
+  // NOT hard-refine it: a stored record predating the whitelist (or a
+  // hand-edited one) must not abort the whole domain open — the load-time
+  // quarantine below removes it instead. Every WRITE path validates
+  // explicitly (tools/wiki.ts, tools/arxiv.ts, services/library.ts,
+  // services/wiki-admin.ts; see arxiv-id.ts).
   arxivId: z.string(),
   title: z.string(),
   authors: z.array(z.string()),
@@ -118,7 +125,7 @@ export const jobRecord = z.object({
   id: z.string(),
   serverId: z.string(),
   command: z.string(),
-  status: z.enum(['queued', 'running', 'succeeded', 'failed']),
+  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted']),
   experimentId: z.string().optional(),
   exitCode: z.number().int().nullable(),
   stdoutTail: z.string(),
@@ -170,8 +177,18 @@ export const eventRecord = z.object({
   payload: z.record(z.string(), z.json()).default({}),
 })
 
+/** Durable shape of one venue watch (the 会议 view's per-project follow). */
+export const venueWatchRecord = z.object({
+  /** Composite key: `<projectId>:<seriesKey>` — one row per followed series. */
+  id: z.string(),
+  projectId: z.string(),
+  /** ccfddl series key (lowercased title, e.g. `cvpr`). */
+  series: z.string(),
+  createdAt: z.string(),
+})
+
 /**
- * The research wiki domain spec: nine tables, no global singleton. The spec
+ * The research wiki domain spec: ten tables, no global singleton. The spec
  * object is the single source of the domain's name, version, and schemas.
  * The `servers`, `jobs`, `figures`, and `events` tables were added WITHOUT a
  * version bump: the domain loader fills a table missing from a stored
@@ -198,8 +215,36 @@ export const researchWikiDomainSpec = defineDomain({
     jobs: domainTable<string, JobRecord>(jobRecord),
     figures: domainTable<string, FigureRecord>(figureRecord),
     events: domainTable<string, EventRecord>(eventRecord),
+    // Added WITHOUT a version bump: a table missing from a stored snapshot
+    // opens empty, so existing v2 JSON stores keep loading (same rule as
+    // `servers`/`jobs`/`figures`/`events` above).
+    venue_watches: domainTable<string, VenueWatchRecord>(venueWatchRecord),
   },
 })
 
 /** Opened research-wiki domain handle, typed by {@link researchWikiDomainSpec}. */
 export type ResearchWikiDomain = Domain<typeof researchWikiDomainSpec>
+
+/**
+ * Load-time quarantine for the durable papers table: drop every stored record
+ * whose arXiv id fails the path-safety whitelist, warning once per record.
+ * Runs right after domain open — such rows predate validation or come from
+ * hand-edited stores, and left in place they join filesystem paths
+ * downstream. The durable delete keeps memory and disk consistent.
+ * @param domain - the freshly opened wiki domain.
+ * @param warn - warning sink (the plugin logger).
+ * @returns the removed record keys.
+ */
+export async function quarantineUnsafePaperIds(
+  domain: ResearchWikiDomain,
+  warn: (message: string) => void,
+): Promise<readonly string[]> {
+  const removed: string[] = []
+  for (const [key, record] of [...domain.table('papers').entries()]) {
+    if (isValidArxivId(record.arxivId)) continue
+    warn(`research_wiki: dropping paper '${key}' — unsafe arXiv id '${record.arxivId}' (predates validation or hand-edited)`)
+    await domain.table('papers').delete(key)
+    removed.push(key)
+  }
+  return Object.freeze(removed)
+}

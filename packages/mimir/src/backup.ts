@@ -95,6 +95,8 @@ export interface WikiBackupLoopOptions {
   readonly firstDelayMs?: number
   /** Failure sink: called with each pass's error; the loop keeps going. */
   readonly onError: (error: unknown) => void
+  /** Backup implementation (test injection; defaults to {@link runWikiBackup}). */
+  readonly runBackup?: typeof runWikiBackup
 }
 
 /**
@@ -105,8 +107,14 @@ export interface WikiBackupLoopOptions {
  * @returns dispose: clears the pending timers (an in-flight pass finishes).
  */
 export function startWikiBackupLoop(options: WikiBackupLoopOptions): () => void {
+  const runBackup = options.runBackup ?? runWikiBackup
+  let inFlight = false
   const run = (): void => {
-    runWikiBackup(options.domain, options.dir, options.keep).catch(options.onError)
+    if (inFlight) return
+    inFlight = true
+    runBackup(options.domain, options.dir, options.keep)
+      .catch(options.onError)
+      .finally(() => { inFlight = false })
   }
   let interval: NodeJS.Timeout | undefined
   const first = setTimeout(() => {

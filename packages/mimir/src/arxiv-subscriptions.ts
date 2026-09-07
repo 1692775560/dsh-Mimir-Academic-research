@@ -12,9 +12,9 @@
  * @module dsh-mimir/src/arxiv-subscriptions
  */
 
-import { readFile } from 'node:fs/promises'
+import { lstat, readFile, rename, rm } from 'node:fs/promises'
 import { join } from 'node:path'
-import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { isNotFound } from './paper-source.ts'
 import { fetchArxivSearch } from './tools/arxiv.ts'
 import type { ArxivEntry } from './tools/arxiv.ts'
@@ -35,6 +35,42 @@ export const ARXIV_SUBSCRIPTION_FETCH_TIMEOUT_MS = 15_000
 export const ARXIV_SUBSCRIPTION_GAP_MS = 3_000
 /** How long after plugin start the FIRST scheduled check runs. */
 export const ARXIV_SUBSCRIPTION_FIRST_DELAY_MS = 120_000
+/** Age after which a lock left by a crashed writer may be quarantined. */
+export const ARXIV_SUBSCRIPTION_LOCK_STALE_MS = 5 * 60_000
+
+/** Remove one stale lock without deleting a lock a later writer may own. */
+async function recoverStaleArxivSubscriptionLock(filename: string): Promise<void> {
+  const lockPath = `${filename}.lock`
+  let stats
+  try {
+    stats = await lstat(lockPath)
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw error
+  }
+  if (Date.now() - stats.mtimeMs < ARXIV_SUBSCRIPTION_LOCK_STALE_MS) return
+
+  // Rename first so a lock created after the rename remains visible at the
+  // canonical path; only the quarantined orphan is removed below.
+  const quarantinePath = `${lockPath}.stale-${process.pid}-${Date.now()}`
+  try {
+    await rename(lockPath, quarantinePath)
+  } catch (error) {
+    if (isNotFound(error)) return
+    throw error
+  }
+  await rm(quarantinePath, { force: true })
+}
+
+/** Run one subscription-file mutation behind stale-lock recovery. */
+export async function withArxivSubscriptionsFileLock<T>(
+  workspaceDir: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const filename = join(workspaceDir, ARXIV_SUBSCRIPTIONS_FILE)
+  await recoverStaleArxivSubscriptionLock(filename)
+  return withFileLock(filename, operation)
+}
 
 /**
  * One persisted arXiv subscription. `seenIds` is the diff memory (newest
@@ -198,9 +234,33 @@ export interface ArxivSubscriptionCheckOptions {
  * @returns one outcome per selected subscription, in list order; undefined
  * when `id` selected an unknown subscription.
  */
+const activeChecks = new Map<string, Promise<readonly ArxivSubscriptionCheckOutcome[] | undefined>>()
+
+/** Serialize same-target in-process checks while the file lock covers other processes. */
 export async function runArxivSubscriptionCheck(
   workspaceDir: string,
   options: ArxivSubscriptionCheckOptions = {},
+): Promise<readonly ArxivSubscriptionCheckOutcome[] | undefined> {
+  // Merge only SAME-target calls: a full run and a single-subscription run
+  // differ in what they return (and in what the panel shows), so folding one
+  // into the other would hand back the wrong shape. The file lock inside the
+  // save path still serializes their persistence.
+  const key = `${workspaceDir}${options.id ?? ''}`
+  const existing = activeChecks.get(key)
+  if (existing !== undefined) return existing
+  const run = runArxivSubscriptionCheckUnlocked(workspaceDir, options)
+  activeChecks.set(key, run)
+  try {
+    return await run
+  } finally {
+    if (activeChecks.get(key) === run) activeChecks.delete(key)
+  }
+}
+
+/** Execute one check after the workspace-level in-process gate is acquired. */
+async function runArxivSubscriptionCheckUnlocked(
+  workspaceDir: string,
+  options: ArxivSubscriptionCheckOptions,
 ): Promise<readonly ArxivSubscriptionCheckOutcome[] | undefined> {
   const fetchSearch = options.fetchSearch ?? fetchArxivSearch
   const sleep = options.sleep ?? (async (ms: number): Promise<void> => {
@@ -215,7 +275,6 @@ export async function runArxivSubscriptionCheck(
     : subscriptions.filter(record => record.id === options.id)
   if (options.id !== undefined && selected.length === 0) return undefined
   const outcomes: ArxivSubscriptionCheckOutcome[] = []
-  const byId = new Map(subscriptions.map(record => [record.id, record]))
   let fetches = 0
   for (const record of selected) {
     if (fetches > 0 && gapMs > 0) await sleep(gapMs)
@@ -228,16 +287,40 @@ export async function runArxivSubscriptionCheck(
         { sortBySubmittedDate: true },
       )
       const folded = foldArxivSubscriptionCheck(record, entries, now)
-      byId.set(record.id, folded.record)
       outcomes.push({ record: folded.record, added: folded.added, error: null })
     } catch (error) {
       outcomes.push({ record, added: Object.freeze([]), error })
     }
   }
   if (outcomes.some(outcome => outcome.error === null)) {
-    await saveArxivSubscriptions(workspaceDir, subscriptions.map(record => byId.get(record.id) ?? record))
+    await withArxivSubscriptionsFileLock(workspaceDir, async () => {
+      const updates = new Map(outcomes
+        .filter((outcome): outcome is ArxivSubscriptionCheckOutcome & { readonly error: null } => outcome.error === null)
+        .map(outcome => [outcome.record.id, outcome.record]))
+      const latest = await loadArxivSubscriptions(workspaceDir)
+      await saveArxivSubscriptions(workspaceDir, latest.map(record => {
+        const updated = updates.get(record.id)
+        return updated === undefined ? record : mergeSubscriptionRecord(record, updated)
+      }))
+    })
   }
   return Object.freeze(outcomes)
+}
+
+/** Merge two concurrent checks without discarding entries discovered by either. */
+function mergeSubscriptionRecord(current: ArxivSubscriptionRecord, updated: ArxivSubscriptionRecord): ArxivSubscriptionRecord {
+  const seenIds = [...new Set([...updated.seenIds, ...current.seenIds])].slice(0, ARXIV_SUBSCRIPTION_SEEN_LIMIT)
+  const newEntryIds = [...new Set([...updated.newEntryIds, ...current.newEntryIds])].slice(0, ARXIV_SUBSCRIPTION_NEW_LIMIT)
+  const newEntries = [...new Map([...updated.newEntries, ...current.newEntries].map(entry => [entry.id, entry])).values()]
+    .filter(entry => newEntryIds.includes(entry.id))
+    .slice(0, ARXIV_SUBSCRIPTION_NEW_LIMIT)
+  return {
+    ...current,
+    ...updated,
+    seenIds: Object.freeze(seenIds),
+    newEntryIds: Object.freeze(newEntryIds),
+    newEntries: Object.freeze(newEntries),
+  }
 }
 
 /** Options for {@link startArxivSubscriptionLoop}. */

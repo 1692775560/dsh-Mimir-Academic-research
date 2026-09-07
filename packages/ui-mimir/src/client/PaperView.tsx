@@ -31,7 +31,8 @@ import { EDITOR_LINE_HEIGHT_PX, splitTokensByLine, visibleLineRange, widestLine 
 import { HIGHLIGHT_MAX_LENGTH, tokenizeLatex } from './latex-highlight.ts'
 import {
   editorShareFromDrag, loadPaperLayout, PAPER_LAYOUT_DEFAULT, PAPER_LAYOUT_STORAGE_KEY,
-  PAPER_NARROW_BREAKPOINT, paperSoloPane, RAIL_MAX_WIDTH, railWidthFromDrag, serializePaperLayout,
+  PAPER_NARROW_BREAKPOINT, paperSoloPane, RAIL_COLLAPSED_STRIP, RAIL_MAX_WIDTH, railWidthForContainer,
+  railWidthFromDrag, serializePaperLayout,
   type PaperLayout, type PaperSoloPane,
 } from './paper-layout.ts'
 import type { PaperFullscreen } from './store.ts'
@@ -61,6 +62,15 @@ const EXPAND_ICON: ReactNode = (
 const COMPRESS_ICON: ReactNode = (
   <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
     <path d="M6.2 2.5v3.7H2.5M9.8 2.5v3.7h3.7M6.2 13.5V9.8H2.5M9.8 13.5V9.8h3.7" />
+  </svg>
+)
+
+/** 16×16 double chevron for the outline-rail fold toggle (rotated 180° while
+ *  collapsed), matching the sidebar's fold control. */
+const RAIL_FOLD_ICON: ReactNode = (
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+    <path d="M9.5 3.5 6 8l3.5 4.5" />
+    <path d="M12.5 3.5 9 8l3.5 4.5" />
   </svg>
 )
 
@@ -365,8 +375,7 @@ export function PaperView({
   const flashTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const editorPaneRef = useRef<HTMLElement>(null)
   const previewPaneRef = useRef<HTMLElement>(null)
-  // The outline rail collapses to a slim strip so the editor can widen.
-  const [railCollapsed, setRailCollapsed] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
   // Gutter row flashed after a jump (issue list or outline click).
   const [flashLine, setFlashLine] = useState<number | null>(null)
   // The bibliography panel replaces the PDF preview while open.
@@ -383,9 +392,13 @@ export function PaperView({
   // re-render.
   const [viewport, setViewport] = useState({ firstLine: 0, height: 0 })
   // Pane widths; restored from localStorage, written back on every settle.
+  // The outline rail's collapsed flag persists inside the same record.
   const [layout, setLayout] = useState<PaperLayout>(() => loadPaperLayout(key => localStorage.getItem(key)))
   // Which drag handle is mid-gesture (drives the container's data-dragging).
   const [dragging, setDragging] = useState<'rail' | 'split' | null>(null)
+  // The container's content-box width, feeding the rail's squeeze-first
+  // clamping (the rail yields before the editor/preview minimums do).
+  const [containerW, setContainerW] = useState(0)
   // Under the narrow breakpoint the editor/preview degrade to a one-pane tab
   // layout (the fullscreen CSS hides the other pane, the rail, and the
   // handles); `solo` is the pane that currently owns the content area.
@@ -411,6 +424,18 @@ export function PaperView({
     }
   }, [layout])
 
+  // Track the container width so the outline rail can yield first when the
+  // window squeezes (see railWidthForContainer).
+  useEffect(() => {
+    const container = containerRef.current
+    if (container === null || typeof ResizeObserver === 'undefined') return undefined
+    const observer = new ResizeObserver((entries) => {
+      setContainerW(Math.round(entries[0]?.contentRect.width ?? 0))
+    })
+    observer.observe(container)
+    return () => { observer.disconnect() }
+  }, [])
+
   /**
    * Start one drag on the rail handle: pointer-captured move events resize
    * the rail until pointerup/pointercancel.
@@ -420,8 +445,8 @@ export function PaperView({
     const handle = event.currentTarget
     handle.setPointerCapture(event.pointerId)
     const startX = event.clientX
-    const startRail = railCollapsed || layout.rail === 0 ? 0 : layout.rail
-    if (startRail === 0) setRailCollapsed(false)
+    const startRail = layout.collapsed || layout.rail === 0 ? 0 : layout.rail
+    if (startRail === 0) setLayout(prev => ({ ...prev, collapsed: false }))
     setDragging('rail')
     const onMove = (move: PointerEvent): void => {
       setLayout(prev => ({ ...prev, rail: railWidthFromDrag(startRail, move.clientX - startX) }))
@@ -500,9 +525,9 @@ export function PaperView({
     if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
     event.preventDefault()
     const delta = event.key === 'ArrowRight' ? RAIL_KEY_STEP : -RAIL_KEY_STEP
-    if (delta > 0) setRailCollapsed(false)
     setLayout(prev => ({
       ...prev,
+      collapsed: delta > 0 ? false : prev.collapsed,
       rail: prev.rail === 0 && delta > 0 ? PAPER_LAYOUT_DEFAULT.rail : railWidthFromDrag(prev.rail, delta),
     }))
   }
@@ -638,14 +663,20 @@ export function PaperView({
   // every token recompute so it never lags the textarea.
   useEffect(() => { syncEditorScroll() }, [highlightTokens])
 
-  // The rail renders collapsed either by its own toggle or by a drag to 0.
-  const railGone = railCollapsed || layout.rail === 0
+  // The rail's rendered width: the persisted preference squeezed to what the
+  // container can spare (the rail yields before the editor/preview minimums;
+  // the 24px accounts for the two inter-pane gaps).
+  const railWidth = railWidthForContainer(layout.rail, Math.max(0, containerW - 24))
+  // The rail renders collapsed by its toggle, by a drag to 0, or by the
+  // container squeezing it below the collapse threshold.
+  const railGone = layout.collapsed || layout.rail === 0 || (containerW > 0 && railWidth === 0)
   /** Expand the collapsed rail, restoring the default width after a drag-to-0. */
   const expandRail = (): void => {
-    setRailCollapsed(false)
-    if (layout.rail === 0) {
-      setLayout(prev => ({ ...prev, rail: PAPER_LAYOUT_DEFAULT.rail }))
-    }
+    setLayout(prev => ({
+      ...prev,
+      collapsed: false,
+      rail: prev.rail === 0 ? PAPER_LAYOUT_DEFAULT.rail : prev.rail,
+    }))
   }
 
   // The outline accepts drops only while the editor is clean: a successful
@@ -709,6 +740,7 @@ export function PaperView({
 
   return (
     <div
+      ref={containerRef}
       className={css.paperLayout}
       data-fullscreen={solo ?? undefined}
       data-dragging={dragging ?? undefined}
@@ -716,7 +748,7 @@ export function PaperView({
       <aside
         className={css.outlineRail}
         data-collapsed={railGone || undefined}
-        style={{ flexBasis: railGone ? 44 : layout.rail }}
+        style={{ flexBasis: railGone ? RAIL_COLLAPSED_STRIP : railWidth }}
         aria-label={t('outline.title')}
         onKeyDown={onOutlineKeyDown}
       >
@@ -726,9 +758,10 @@ export function PaperView({
             className={css.railToggle}
             aria-label={t('outline.expand')}
             aria-expanded={false}
+            title={t('outline.expand')}
             onClick={expandRail}
           >
-            »
+            {RAIL_FOLD_ICON}
           </button>
         ) : (
           <>
@@ -739,9 +772,10 @@ export function PaperView({
                 className={css.railToggle}
                 aria-label={t('outline.collapse')}
                 aria-expanded
-                onClick={() => { setRailCollapsed(true) }}
+                title={t('outline.collapse')}
+                onClick={() => { setLayout(prev => ({ ...prev, collapsed: true })) }}
               >
-                «
+                {RAIL_FOLD_ICON}
               </button>
             </div>
             {projectId === null && <p className={css.hint}>{t('outline.hint')}</p>}
@@ -786,7 +820,7 @@ export function PaperView({
         role="separator"
         aria-orientation="vertical"
         aria-label={t('pane.resize')}
-        aria-valuenow={railGone ? 0 : Math.round(layout.rail)}
+        aria-valuenow={railGone ? 0 : Math.round(railWidth)}
         aria-valuemin={0}
         aria-valuemax={RAIL_MAX_WIDTH}
         tabIndex={0}

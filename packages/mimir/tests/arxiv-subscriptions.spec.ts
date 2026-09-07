@@ -7,7 +7,7 @@
  * workspace.
  */
 
-import { mkdtemp, readFile, writeFile } from 'node:fs/promises'
+import { mkdtemp, readFile, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -57,6 +57,13 @@ function record(id: string, query: string, seenIds: readonly string[] = ['2608.0
     newEntryIds: [],
     newEntries: [],
   }
+}
+
+/** A manually settled promise for coordinating concurrent check calls. */
+function deferred<T>(): { readonly promise: Promise<T>; readonly resolve: (value: T) => void } {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>(res => { resolve = res })
+  return { promise, resolve }
 }
 
 describe('arXiv subscription storage', () => {
@@ -115,6 +122,24 @@ describe('saveArxivSubscription / deleteArxivSubscription', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'subscription-not-found', id } })
     const listed = await listArxivSubscriptions(deps)
     expect(listed.ok && listed.value.subscriptions.length).toBe(0)
+  })
+
+  it('recovers an orphaned stale lock before a CRUD write', async () => {
+    const dir = await workspace()
+    const lockPath = join(dir, `${ARXIV_SUBSCRIPTIONS_FILE}.lock`)
+    await writeFile(lockPath, 'orphaned\n')
+    const staleAt = new Date(Date.now() - 5 * 60_000 - 1)
+    await utimes(lockPath, staleAt, staleAt)
+
+    const result = await saveArxivSubscription(
+      { workspaceDir: dir },
+      { query: 'mesh reconstruction' },
+    )
+
+    expect(result).toMatchObject({ ok: true })
+    await expect(readFile(lockPath, 'utf8')).rejects.toMatchObject({
+      code: 'ENOENT',
+    })
   })
 })
 
@@ -204,6 +229,76 @@ describe('runArxivSubscriptionCheck', () => {
     expect(persisted[1]?.seenIds).toEqual(['y', 'x'])
   })
 
+  it('keeps subscriptions added mid-check and honors mid-check deletions', async () => {
+    const dir = await workspace()
+    await saveArxivSubscriptions(dir, [record('s1', 'mesh', ['a']), record('s2', 'splatting', ['x'])])
+    const added = record('s3', 'diffusion', ['d'])
+    const outcomes = await runArxivSubscriptionCheck(dir, {
+      gapMs: 0,
+      now: new Date('2026-08-23T00:00:00.000Z'),
+      fetchSearch: async (query) => {
+        if (query === 'mesh') {
+          // A subscription added while the check is in flight must survive the save.
+          await saveArxivSubscriptions(dir, [record('s1', 'mesh', ['a']), record('s2', 'splatting', ['x']), added])
+        }
+        if (query === 'splatting') {
+          // A deletion mid-window must be honored, not resurrected by the merge.
+          await saveArxivSubscriptions(dir, [record('s1', 'mesh', ['a']), added])
+        }
+        return query === 'mesh' ? [entry('b')] : [entry('x')]
+      },
+    })
+    expect(outcomes).toHaveLength(2)
+    const persisted = await loadArxivSubscriptions(dir)
+    expect(persisted.map(item => item.id)).toEqual(['s1', 's3'])
+    // The check-updated state landed on the surviving record; the addition is untouched.
+    expect(persisted[0]?.newEntryIds).toEqual(['b'])
+    expect(persisted[1]).toEqual(added)
+  })
+
+  it('coalesces concurrent checks without losing the settled update', async () => {
+    const dir = await workspace()
+    await saveArxivSubscriptions(dir, [record('s1', 'mesh', ['base'])])
+    const first = deferred<ArxivEntry[]>()
+    let calls = 0
+    const fetchSearch = async (): Promise<ArxivEntry[]> => {
+      calls += 1
+      return calls === 1 ? first.promise : [entry('right'), entry('base')]
+    }
+    const left = runArxivSubscriptionCheck(dir, { gapMs: 0, fetchSearch })
+    await Promise.resolve()
+    const right = runArxivSubscriptionCheck(dir, { gapMs: 0, fetchSearch })
+    first.resolve([entry('left'), entry('base')])
+    await Promise.all([left, right])
+    expect(calls).toBe(1)
+    const [persisted] = await loadArxivSubscriptions(dir)
+    expect(persisted?.seenIds).toEqual(expect.arrayContaining(['left', 'base']))
+    expect(persisted?.newEntryIds).toEqual(expect.arrayContaining(['left']))
+  })
+
+  it('does NOT fold a single-subscription check into a full run in flight', async () => {
+    const dir = await workspace()
+    await saveArxivSubscriptions(dir, [record('s1', 'mesh', ['base']), record('s2', 'splatting', ['x'])])
+    const slow = deferred<ArxivEntry[]>()
+    const fetchSearch = async (query: string): Promise<ArxivEntry[]> =>
+      query === 'mesh' ? slow.promise : [entry('y'), entry('x')]
+    // The full run parks on s1's fetch; a single-target check for s2 must run
+    // on its own and return only s2's outcome.
+    const full = runArxivSubscriptionCheck(dir, { gapMs: 0, fetchSearch, now: new Date('2026-08-23T00:00:00.000Z') })
+    await Promise.resolve()
+    const single = await runArxivSubscriptionCheck(dir, { gapMs: 0, id: 's2', fetchSearch, now: new Date('2026-08-23T00:00:00.000Z') })
+    expect(single).toHaveLength(1)
+    expect(single?.[0]?.record.id).toBe('s2')
+    expect(single?.[0]?.record.newEntryIds).toEqual(['y'])
+    slow.resolve([entry('b'), entry('base')])
+    const outcomes = await full
+    expect(outcomes).toHaveLength(2)
+    // Both checks' updates survived: s1 from the full run, s2 from the single.
+    const persisted = await loadArxivSubscriptions(dir)
+    expect(persisted.find(item => item.id === 's1')?.newEntryIds).toEqual(['b'])
+    expect(persisted.find(item => item.id === 's2')?.newEntryIds).toEqual(['y'])
+  })
+
   it('returns undefined for an unknown id and skips the fetch entirely', async () => {
     const dir = await workspace()
     await saveArxivSubscriptions(dir, [record('s1', 'mesh')])
@@ -224,6 +319,32 @@ describe('runArxivSubscriptionCheck', () => {
     })
     expect(outcomes).toEqual([])
     expect(fetches).toBe(0)
+  })
+
+  it('service CRUD inside the check window neither loses the check update nor resurrects a deletion', async () => {
+    const dir = await workspace()
+    await saveArxivSubscriptions(dir, [record('s1', 'mesh', ['base']), record('s2', 'splatting', ['x'])])
+    const slow = deferred<ArxivEntry[]>()
+    const check = runArxivSubscriptionCheck(dir, {
+      gapMs: 0,
+      now: new Date('2026-08-23T00:00:00.000Z'),
+      fetchSearch: async (query) => query === 'mesh' ? slow.promise : [entry('x')],
+    })
+    await Promise.resolve()
+    // The panel's add/delete go through the SAME file lock as the check's
+    // save: they land after the check's persistence, and the check's earlier
+    // in-window state can never overwrite them.
+    const added = await saveArxivSubscription({ workspaceDir: dir }, { query: 'diffusion' })
+    expect(added.ok).toBe(true)
+    const deleted = await deleteArxivSubscription({ workspaceDir: dir }, { id: 's2' })
+    expect(deleted.ok).toBe(true)
+    slow.resolve([entry('b'), entry('base')])
+    await check
+    const persisted = await loadArxivSubscriptions(dir)
+    expect(persisted.map(item => item.id)).toHaveLength(2)
+    expect(persisted.some(item => item.id === 's2')).toBe(false) // not resurrected
+    expect(persisted.some(item => item.query === 'diffusion')).toBe(true) // not lost
+    expect(persisted.find(item => item.id === 's1')?.newEntryIds).toEqual(['b']) // check update kept
   })
 })
 

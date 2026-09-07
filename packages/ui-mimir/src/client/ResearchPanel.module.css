@@ -39,8 +39,8 @@
   /* Native widgets (select popups, checkboxes, scrollbars) follow the light
      palette; the dark override below flips them together with the tokens. */
   color-scheme: light;
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2, rgb(33 30 25 / 10%));
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2, rgb(33 30 25 / 20%));
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2, rgb(127 127 127 / 40%));
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2, rgb(127 127 127 / 55%));
   /* ── Paper & ink (light) ─────────────────────────────────────────────── */
   --mimir-paper: #f2ecdf;
   --mimir-paper-deep: #ece5d4;
@@ -110,6 +110,7 @@
 
 .sideHead {
   display: flex;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: space-between;
   padding: 20px 16px 18px;
@@ -201,11 +202,11 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 26px;
-  height: 26px;
+  width: 28px;
+  height: 28px;
   padding: 0;
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
-  border-radius: 8px;
+  border-radius: 7px;
   background: var(--dsw-specific-menu, #fff);
   color: var(--dsw-alias-label-tertiary, #5b6474);
   font-size: 11px;
@@ -224,8 +225,13 @@
   color: var(--dsw-alias-label-secondary, #3c4557);
 }
 
+/* The nav scrolls internally when the window is too short for every tab —
+   it must never eat the project picker's floor below. */
 .nav {
   display: flex;
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
   flex-direction: column;
   gap: 5px;
   padding: 4px 12px 16px;
@@ -405,10 +411,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 30px;
-  padding: 0 14px;
-  border-radius: 9px;
-  font-size: 12.5px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
   font-weight: 500;
   cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease, color 0.15s ease, box-shadow 0.15s ease;
@@ -497,7 +503,9 @@
 
 .sideProjects {
   flex: 1;
-  min-height: 0;
+  /* The floor keeps the toggle plus a row and a half visible at any window
+     height (the nav above absorbs the squeeze with its own scroll). */
+  min-height: 108px;
   overflow-y: auto;
   padding: 12px;
   border-top: 1px solid var(--dsw-alias-border-l1, rgb(0 0 0 / 4%));
@@ -506,12 +514,86 @@
 
 /* The rail's bottom line: the keyboard-shortcut hint. */
 .sideFoot {
+  flex: 0 0 auto;
   margin: 0;
   padding: 10px 16px;
   border-top: 1px solid var(--dsw-alias-border-l1, rgb(0 0 0 / 4%));
   color: var(--dsw-alias-label-tertiary, #5b6474);
   font-size: 11px;
   line-height: 1.5;
+}
+
+/* The rail fold toggle: a quiet row under the nav, chevrons pointing at the
+   fold direction (rotated 180° while folded). */
+.sideFold {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  margin: 0 12px 10px;
+  height: 26px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #5b6474);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.sideFold:hover {
+  background: var(--dsw-alias-interactive-bg-hover, rgb(38 49 72 / 6%));
+  color: var(--dsw-alias-label-secondary, #3c4557);
+}
+
+.sideFold:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4176e6);
+  outline-offset: -2px;
+}
+
+.sideFold svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+
+/* The folded narrow rail: icons only, tooltip carries the view name. All of
+   it is inert in top-bar mode (≤700px), where the fold button hides. */
+@media (min-width: 701px) {
+  .side[data-folded] {
+    flex-basis: 60px;
+  }
+
+  .side[data-folded] .brandCopy,
+  .side[data-folded] .headActions,
+  .side[data-folded] .navLabel,
+  .side[data-folded] .navCount,
+  .side[data-folded] .sideProjects,
+  .side[data-folded] .sideFoot {
+    display: none;
+  }
+
+  .side[data-folded] .sideHead {
+    justify-content: center;
+    padding: 20px 8px 18px;
+  }
+
+  .side[data-folded] .nav {
+    padding: 4px 8px 16px;
+  }
+
+  .side[data-folded] .navItem {
+    justify-content: center;
+    padding: 0;
+  }
+
+  .side[data-folded] .sideFold {
+    justify-content: center;
+    margin: 0 8px 10px;
+  }
+
+  .side[data-folded] .sideFold svg {
+    transform: rotate(180deg);
+  }
 }
 
 .sectionTitle {
@@ -830,12 +912,15 @@
 }
 
 /* Paper view: outline rail + editor + compile/preview as three cards. The
-   root takes the content well's full height (the well is a flex column). */
+   root takes the content well's full height (the well is a flex column).
+   Panes carry min-widths; when the well is narrower than rail + editor +
+   preview, the row scrolls horizontally instead of crushing the source. */
 .paperLayout {
   display: flex;
   flex: 1;
   min-height: 0;
   gap: 12px;
+  overflow-x: auto;
 }
 
 /* Slim label naming the project whose paper is being edited. */
@@ -1071,7 +1156,7 @@
   align-items: center;
   height: 24px;
   padding: 0 10px;
-  border: 1px dashed var(--mimir-hairline-strong);
+  border: 1px dashed var(--mimir-hairline-strong, rgba(23, 35, 61, 0.2));
   border-radius: 999px;
   background: transparent;
   color: var(--dsw-alias-label-secondary, #5b6472);
@@ -1106,8 +1191,8 @@
   max-height: 440px;
   overflow-y: auto;
   padding: 12px;
-  border: 1px solid var(--mimir-hairline);
-  border-radius: var(--mimir-radius-card);
+  border: 1px solid var(--mimir-hairline, rgba(23, 35, 61, 0.12));
+  border-radius: var(--mimir-radius-card, 10px);
   background: var(--dsw-specific-menu, #fff);
   box-shadow: var(--mimir-card-shadow);
 }
@@ -1189,7 +1274,12 @@
 
 
 .outlineRail {
-  flex: 0 0 200px;
+  /* The basis comes from the inline style (the persisted width squeezed by
+     the container clamp); flex-shrink stays 0 so only that clamp yields.
+     border-box makes the basis the pane's whole footprint, matching the
+     clamp math. */
+  flex: 0 0 auto;
+  box-sizing: border-box;
   min-height: 0;
   overflow-y: auto;
   padding: 14px 12px;
@@ -1212,16 +1302,26 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  min-width: 26px;
+  width: 26px;
   height: 26px;
-  padding: 0 8px;
+  padding: 0;
   border: none;
   border-radius: 8px;
   background: transparent;
   color: var(--dsw-alias-label-tertiary, #5b6474);
-  font-size: 13px;
   cursor: pointer;
   transition: background-color 0.15s ease;
+}
+
+.railToggle svg {
+  width: 16px;
+  height: 16px;
+  flex-shrink: 0;
+  transition: transform 0.18s ease;
+}
+
+.outlineRail[data-collapsed] .railToggle svg {
+  transform: rotate(180deg);
 }
 
 .railToggle:hover {
@@ -1362,13 +1462,24 @@ li.dropIndicator {
 }
 
 /* Editor gets 3 shares, preview 2 — the source is the primary surface. The
-   inline flexGrow/flexBasis from the persisted layout overrides these. */
+   inline flexGrow/flexBasis from the persisted layout overrides these. The
+   min-widths mirror EDITOR_MIN_WIDTH/PREVIEW_MIN_WIDTH in paper-layout.ts so
+   flex shrink alone can never crush a pane below its usable floor. */
 .editorPane {
   flex: 3;
+  min-width: 360px;
 }
 
 .previewPane {
   flex: 2;
+  min-width: 280px;
+}
+
+/* Solo (fullscreen/narrow-tab) mode: the one visible pane fills the well, so
+   the floors must not force horizontal scrolling. */
+.paperLayout[data-fullscreen] .editorPane,
+.paperLayout[data-fullscreen] .previewPane {
+  min-width: 0;
 }
 
 /* Drag handles between the three panes: a 12px hit area centered on the 12px
@@ -1631,13 +1742,13 @@ li.dropIndicator {
 
 .compileButton {
   flex-shrink: 0;
-  height: 30px;
-  padding: 0 16px;
+  height: 28px;
+  padding: 0 12px;
   border: none;
-  border-radius: 15px;
+  border-radius: 14px;
   background: var(--dsw-alias-button-primary-fill, #211e19);
   color: var(--dsw-alias-label-primary-foreground, #f6f1e6);
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -3084,15 +3195,15 @@ li.dropIndicator {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  height: 30px;
+  height: 28px;
   margin-left: auto;
   flex-shrink: 0;
-  padding: 0 14px;
+  padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
-  border-radius: 9px;
+  border-radius: 7px;
   background: var(--dsw-specific-menu, #fff);
   color: var(--dsw-alias-label-secondary, #3c4557);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -3379,6 +3490,15 @@ li.dropIndicator {
 
   .sideFoot {
     display: none;
+  }
+
+  /* Top-bar mode: the fold control would fight the horizontal nav. */
+  .sideFold {
+    display: none;
+  }
+
+  .sideProjects {
+    min-height: 0;
   }
 
   .content {
@@ -4461,12 +4581,12 @@ li.dropIndicator {
   justify-content: center;
   flex-shrink: 0;
   height: 28px;
-  padding: 0 12px;
+  padding: 0 10px;
   border: 1px solid var(--mimir-line-soft);
   border-radius: 7px;
   background: var(--dsw-specific-menu, #fff);
   color: var(--dsw-alias-label-secondary, #3c4557);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 500;
   white-space: nowrap;
   cursor: pointer;
@@ -5616,6 +5736,7 @@ li.dropIndicator {
   color: var(--clay-ink, #5b4a3f);
   font-size: 13px;
   box-shadow: inset 0 2px 4px rgba(92, 72, 58, 0.1);
+}
 
 /* Import-existing-project dialog: portaled to document.body, so the z-index
    is relative to the root stacking context — it must clear the workbench
@@ -5684,4 +5805,159 @@ li.dropIndicator {
 }
 
 .importWarnings li {   margin: 2px 0;
+}
+
+
+/* Venues view: the ccfddl conference card grid + the CCF-A journal directory. */
+.venues {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  width: 100%;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.venues .input[type='search'] {
+  width: 220px;
+}
+
+.venues select.input {
+  width: auto;
+}
+
+.venuesGrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 14px;
+}
+
+.venueCard {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 16px 18px;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  border-radius: 17px;
+  background: var(--dsw-specific-menu, #fff);
+  box-shadow: var(--mimir-card-shadow);
+  transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+}
+
+.venueCard:hover {
+  border-color: var(--dsw-alias-border-l3, rgb(0 0 0 / 12%));
+  box-shadow: 0 14px 32px rgb(33 30 25 / 12%);
+  transform: translateY(-1px);
+}
+
+.venueCard[data-watched] {
+  border-color: var(--dsw-alias-state-business-primary, #4176e6);
+}
+
+.venueCardHead {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+
+.venueCardTitle {
+  margin: 0;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-primary, #17233d);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.venueRank {
+  flex: none;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--dsw-alias-interactive-bg-hover, rgb(38 49 72 / 6%));
+  color: var(--dsw-alias-label-tertiary, #5b6474);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.7;
+}
+
+.venueRank[data-rank='A'] {
+  background: rgb(217 48 38 / 10%);
+  color: var(--dsw-alias-state-error-primary, #d93026);
+}
+
+.venueRank[data-rank='B'] {
+  background: rgb(255 153 0 / 12%);
+  color: var(--dsw-alias-state-warning-primary, #b25000);
+}
+
+.venueRank[data-rank='C'] {
+  background: rgb(65 118 230 / 10%);
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+}
+
+.venueWatch {
+  flex: none;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary, #5b6474);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.venueWatch:hover:not(:disabled) {
+  color: var(--dsw-alias-state-warning-primary, #b25000);
+}
+
+.venueWatch[data-on] {
+  color: var(--dsw-alias-state-warning-primary, #b25000);
+}
+
+.venueWatch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.venueCardDesc {
+  margin: 0;
+  overflow: hidden;
+  color: var(--dsw-alias-label-secondary, #3c4557);
+  font-size: 12px;
+  line-height: 1.5;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.venueCardDeadline {
+  margin: 0;
+  color: var(--dsw-alias-label-primary, #17233d);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.5;
+}
+
+.venueCardDeadline[data-soon] {
+  color: var(--dsw-alias-state-error-primary, #d93026);
+}
+
+.venueCardMeta {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary, #5b6474);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.venueCardLink {
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.venueCardLink:hover {
+  text-decoration: underline;
 }

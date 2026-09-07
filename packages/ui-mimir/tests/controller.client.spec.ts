@@ -6,9 +6,17 @@
  */
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { AUTOSAVE_DEBOUNCE_MS, COMPILE_DEBOUNCE_MS, ResearchController } from '../src/client/controller.ts'
+import { AUTOSAVE_DEBOUNCE_MS, COMPILE_DEBOUNCE_MS, LIVE_REFRESH_DEBOUNCE_MS, ResearchController } from '../src/client/controller.ts'
 import type { ResearchRemote } from '../src/client/controller.ts'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
+
+declare module '@deepseek-ai/dsh-typert-protocol' {
+  interface RemoteErrorDetailsMap {
+    /** Test-only carrier failure code for unreachable-host simulations. */
+    'unavailable': {}
+  }
+}
 import type {
   ResearchArtifactResult,
   ResearchBibliographyResult,
@@ -40,10 +48,13 @@ import type {
   ResearchListProjectsResult,
   ResearchListServersResult,
   ResearchOutlineResult,
+  ResearchPaperSnapshotsResult,
   ResearchPaperSourceResult,
   ResearchPapersResult,
   ResearchProgressReportResult,
   ResearchRemovePaperResult,
+  ResearchRenameFigureResult,
+  ResearchRevertPaperSnapshotResult,
   ResearchSaveBibliographyResult,
   ResearchSaveExperimentResult,
   ResearchSaveFigureResult,
@@ -54,6 +65,7 @@ import type {
   ResearchSubmitJobResult,
   ResearchUpdateExperimentResult,
   ResearchUpdatePaperResult,
+  ResearchVenueDeadlinesResult,
 } from 'dsh-mimir/types'
 
 /** Wrap one business result in the carrier's success branch. */
@@ -77,64 +89,22 @@ const PROJECTS: ResearchListProjectsResult = {
   },
 }
 
-/** Build a remote stub; unspecified calls reject, which no test path reaches. */
+/**
+ * Build a remote stub; unspecified calls reject, which no test path reaches.
+ * A Proxy keeps the stub total over ResearchRemote without enumerating every
+ * method, so a widening Remote face never silently drifts from a literal.
+ */
 function stubRemote(overrides: Partial<ResearchRemote>): ResearchRemote {
-  const missing = (name: string) => () => Promise.reject(new Error(`unexpected ${name} call`))
-  return {
-    listProjects: missing('listProjects'),
-    getPaperOutline: missing('getPaperOutline'),
-    compile: missing('compile'),
-    getCompileStatus: missing('getCompileStatus'),
-    getPaperSource: missing('getPaperSource'),
-    savePaperSource: missing('savePaperSource'),
-    listPapers: missing('listPapers'),
-    searchArxiv: missing('searchArxiv'),
-    searchWeb: missing('searchWeb'),
-    importPaper: missing('importPaper'),
-    removePaper: missing('removePaper'),
-    updatePaper: missing('updatePaper'),
-    fetchPaperPdf: missing('fetchPaperPdf'),
-    listExperiments: missing('listExperiments'),
-    deleteExperiment: missing('deleteExperiment'),
-    readArtifact: missing('readArtifact'),
-    listFigures: missing('listFigures'),
-    deleteFigure: missing('deleteFigure'),
-    convertFigure: missing('convertFigure'),
-    saveFigure: missing('saveFigure'),
-    listServers: missing('listServers'),
-    saveServer: missing('saveServer'),
-    deleteServer: missing('deleteServer'),
-    checkServer: missing('checkServer'),
-    submitJob: missing('submitJob'),
-    listJobs: missing('listJobs'),
-    deleteJob: missing('deleteJob'),
-    getBibliography: missing('getBibliography'),
-    saveBibliography: missing('saveBibliography'),
-    importPapersToBib: missing('importPapersToBib'),
-    reorderPaperSections: missing('reorderPaperSections'),
-    reorderPaperSubsections: missing('reorderPaperSubsections'),
-    listPaperSnapshots: missing('listPaperSnapshots'),
-    getPaperSnapshot: missing('getPaperSnapshot'),
-    revertPaperSnapshot: missing('revertPaperSnapshot'),
-    updateExperiment: missing('updateExperiment'),
-    saveExperiment: missing('saveExperiment'),
-    listBackups: missing('listBackups'),
-    listEvents: missing('listEvents'),
-    generateProgressReport: missing('generateProgressReport'),
-    generateBrief: missing('generateBrief'),
-    addJournalEntry: missing('addJournalEntry'),
-    getWorktree: missing('getWorktree'),
-    getForaging: missing('getForaging'),
-    getMomentIndex: missing('getMomentIndex'),
-    getEurekaView: missing('getEurekaView'),
-    setMainline: missing('setMainline'),
-    setIdeaParent: missing('setIdeaParent'),
-    adoptIdea: missing('adoptIdea'),
-    closeIdea: missing('closeIdea'),
-    getImageGenConfig: missing('getImageGenConfig'),
-    setImageGenConfig: missing('setImageGenConfig'),
-    ...overrides,
-  }
+  const target: Record<PropertyKey, unknown> = {}
+  const stub = new Proxy(target, {
+    get: (t, prop) => {
+      if (prop in t) return t[prop]
+      // Keep the stub non-thenable so it is never accidentally awaited.
+      if (prop === 'then') return undefined
+      return () => Promise.reject(new Error(`unexpected ${String(prop)} call`))
+    },
+  })
+  return Object.assign(stub as unknown as ResearchRemote, overrides)
 }
 
 const IDLE: ResearchCompileStatusResult = {
@@ -174,7 +144,7 @@ describe('ResearchController', () => {
       listProjects: () => {
         calls += 1
         return calls === 1
-          ? Promise.resolve({ ok: false, error: { code: 'unavailable', message: 'host down', details: {} } })
+          ? Promise.resolve({ ok: false, error: new RemoteError('unavailable', 'host down', {}) })
           : Promise.resolve(carried(PROJECTS))
       },
     }))
@@ -241,6 +211,23 @@ describe('ResearchController', () => {
     expect(controller.getSnapshot().outline?.projectId).toBe('p2')
   })
 
+  it('keeps an in-flight outline reply when source is loaded on demand', async () => {
+    const outline = deferred<RemoteResult<ResearchOutlineResult>>()
+    const controller = new ResearchController(stubRemote({
+      getPaperOutline: () => outline.promise,
+      getPaperSource: () => Promise.resolve(carried({ ok: true, value: { content: '\\begin{document}\\n\\end{document}', mtimeMs: 1 } })),
+      getCompileStatus: () => Promise.resolve(carried(IDLE)),
+    }))
+    controller.select('p1')
+    await controller.insertFigureIntoPaper('p1', {
+      name: 'figure.png', relPath: 'figures/figure.png', sizeBytes: 1, mtimeMs: 1, caption: '',
+    })
+    outline.resolve(carried({ ok: true, value: { projectId: 'p1', nodes: [] } }))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().outline?.status).toBe('ready')
+  })
+
   it('runs a compile to its settled ok state with the pdf timestamp', async () => {
     const controller = new ResearchController(stubRemote({
       compile: () => Promise.resolve(carried<ResearchCompileResult>({
@@ -287,6 +274,65 @@ describe('ResearchController', () => {
     const view = controller.getSnapshot().compile
     expect(view.state).toBe('error')
     expect(view.issues[0]?.message).toContain('latexmk')
+  })
+
+  it('queues a compile for another project while one is running', async () => {
+    const firstRun = deferred<RemoteResult<ResearchCompileResult>>()
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      compile: () => {
+        calls += 1
+        return calls === 1
+          ? firstRun.promise
+          : Promise.resolve(carried<ResearchCompileResult>({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 2 } }))
+      },
+    }))
+    const first = controller.compile('p1')
+    await controller.compile('p2')
+    expect(calls).toBe(1)
+    firstRun.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1 } }))
+    await first
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(calls).toBe(2)
+    expect(controller.getSnapshot().compile).toMatchObject({ projectId: 'p2', state: 'ok', pdfUpdatedAt: 2 })
+  })
+
+  it('does not keep another project compile view when status loading fails', async () => {
+    const controller = new ResearchController(stubRemote({
+      compile: () => Promise.resolve(carried<ResearchCompileResult>({
+        ok: true, value: { state: 'error', issues: [{ severity: 'error', message: 'project one error' }], engine: null, pdfUpdatedAt: 1 },
+      })),
+      getCompileStatus: () => Promise.reject(new Error('host unavailable')),
+    }))
+    await controller.compile('p1')
+    controller.select('p2')
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().compile).toMatchObject({ projectId: 'p2', state: 'idle', issues: [] })
+  })
+
+  it('drops a compile queued for the project being left on select', async () => {
+    const run = deferred<RemoteResult<ResearchCompileResult>>()
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      compile: () => { calls += 1; return run.promise },
+      getPaperOutline: ({ projectId }) => Promise.resolve(carried<ResearchOutlineResult>({
+        ok: true, value: { projectId, nodes: [] },
+      })),
+      getCompileStatus: () => Promise.resolve(carried(IDLE)),
+    }))
+    const first = controller.compile('p1')
+    await controller.compile('p1')
+    expect(calls).toBe(1)
+    // Switching away must not let the stale queue entry hijack the new
+    // project's compile lane when the in-flight run settles.
+    controller.select('p2')
+    run.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1 } }))
+    await first
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(calls).toBe(1)
   })
 })
 
@@ -457,6 +503,97 @@ describe('ResearchController source editing', () => {
     expect(compiles).toBe(2)
     expect(controller.getSnapshot().compile.state).toBe('ok')
   })
+
+  it('flushes a dirty draft of the project being left on select', async () => {
+    const saved: Array<{ projectId: string; content: string; baseMtimeMs: number }> = []
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: ({ projectId }: { projectId: string }) =>
+        Promise.resolve(carried(sourceOk(`${projectId} v1`, 1000))),
+      savePaperSource: (request) => {
+        saved.push(request)
+        return Promise.resolve(carried<ResearchSavePaperSourceResult>({ ok: true, value: { mtimeMs: 2000 } }))
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    controller.edit('p1 draft')
+    // Switch away before the autosave debounce fires: the draft must ride out
+    // with the switch instead of dying with the cleared timer.
+    controller.select('p2')
+    expect(saved).toEqual([{ projectId: 'p1', content: 'p1 draft', baseMtimeMs: 1000 }])
+    await vi.advanceTimersByTimeAsync(0)
+    expect(controller.getSnapshot().source?.projectId).toBe('p2')
+  })
+
+  it('saves the draft tail of the project left behind while its save was in flight', async () => {
+    const saved: Array<{ projectId: string; content: string; baseMtimeMs: number }> = []
+    const firstSave = deferred<RemoteResult<ResearchSavePaperSourceResult>>()
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: ({ projectId }: { projectId: string }) =>
+        Promise.resolve(carried(sourceOk(`${projectId} v1`, 1000))),
+      savePaperSource: (request) => {
+        saved.push(request)
+        if (saved.length === 1) return firstSave.promise
+        return Promise.resolve(carried<ResearchSavePaperSourceResult>({ ok: true, value: { mtimeMs: 3000 } }))
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    controller.edit('p1 draft')
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS)
+    // The autosave of 'p1 draft' is in flight; more keystrokes land after it.
+    expect(saved).toEqual([{ projectId: 'p1', content: 'p1 draft', baseMtimeMs: 1000 }])
+    controller.edit('p1 draft + tail')
+    // Switch away before the trailing debounce fires and before the in-flight
+    // save settles: the tail must still reach the file.
+    controller.select('p2')
+    firstSave.resolve(carried<ResearchSavePaperSourceResult>({ ok: true, value: { mtimeMs: 2000 } }))
+    await vi.advanceTimersByTimeAsync(0)
+    // The tail save chains off the first save's landed mtime (2000), not the
+    // stale base (1000) it would conflict against.
+    expect(saved[1]).toEqual({ projectId: 'p1', content: 'p1 draft + tail', baseMtimeMs: 2000 })
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS + COMPILE_DEBOUNCE_MS)
+    expect(saved).toHaveLength(2)
+  })
+
+  it('keeps the new project’s save lane intact when the old save settles late', async () => {
+    const saved: Array<{ projectId: string; content: string; baseMtimeMs: number }> = []
+    const firstSave = deferred<RemoteResult<ResearchSavePaperSourceResult>>()
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: ({ projectId }: { projectId: string }) =>
+        Promise.resolve(carried(sourceOk(`${projectId} v1`, 1000))),
+      savePaperSource: (request) => {
+        saved.push(request)
+        if (saved.length === 1) return firstSave.promise
+        return Promise.resolve(carried<ResearchSavePaperSourceResult>({
+          ok: true, value: { mtimeMs: request.baseMtimeMs + 1000 },
+        }))
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    controller.edit('p1 draft')
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS)
+    expect(saved).toHaveLength(1)
+    // p1's save flies; the user switches over with a settled (saving) draft.
+    controller.select('p2')
+    await vi.advanceTimersByTimeAsync(0)
+    controller.edit('p2 draft')
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS)
+    // p2's debounce fired but the lane is still p1's: no overlapping write.
+    expect(saved).toHaveLength(1)
+    // p1's late settle frees the lane and the queued p2 save follows — the
+    // old finally must not clobber the flag mid-flight nor mark a conflict.
+    firstSave.resolve(carried<ResearchSavePaperSourceResult>({ ok: true, value: { mtimeMs: 2000 } }))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(saved[1]).toEqual({ projectId: 'p2', content: 'p2 draft', baseMtimeMs: 1000 })
+    expect(controller.getSnapshot().source).toMatchObject({
+      projectId: 'p2', content: 'p2 draft', saveState: 'saved', mtimeMs: 2000,
+    })
+  })
 })
 
 describe('ResearchController workbench views', () => {
@@ -478,6 +615,7 @@ describe('ResearchController workbench views', () => {
             papers: [{
               arxivId: '2103.00020v2', title: 'A Paper', authors: ['Ann'],
               summary: 'S', url: 'https://arxiv.org/abs/2103.00020', notes: '',
+              tags: [], projectIds: [],
               addedAt: '2026-08-01T00:00:00Z',
             }],
           },
@@ -674,28 +812,45 @@ describe('ResearchController workbench views', () => {
     expect(calls).toBe(2)
   })
 
-  it('skips a fresh figures view and rescans on force', async () => {
+  it('queues a forced figures refresh that arrives during a scan', async () => {
+    const first = deferred<RemoteResult<ResearchFiguresResult>>()
     let calls = 0
     const controller = new ResearchController(stubRemote({
       listFigures: () => {
         calls += 1
-        return Promise.resolve(carried<ResearchFiguresResult>({
-          ok: true,
-          value: {
-            figures: [{ name: 'f1.png', relPath: 'f1.png', sizeBytes: 100, mtimeMs: 1 }],
-          },
-        }))
+        return calls === 1
+          ? first.promise
+          : Promise.resolve(carried<ResearchFiguresResult>({ ok: true, value: { figures: [] } }))
       },
     }))
     controller.loadFigures('p1')
-    await settle()
-    expect(controller.getSnapshot().figures).toMatchObject({ projectId: 'p1', status: 'ready' })
-    expect(controller.getSnapshot().figures?.list).toHaveLength(1)
-    controller.loadFigures('p1')
-    expect(calls).toBe(1)
     controller.loadFigures('p1', true)
+    expect(calls).toBe(1)
+    first.resolve(carried({ ok: true, value: { figures: [] } }))
     await settle()
     expect(calls).toBe(2)
+  })
+
+  it('queues a plain figures load that arrives during a scan instead of dropping it', async () => {
+    const first = deferred<RemoteResult<ResearchFiguresResult>>()
+    const seen: string[] = []
+    const controller = new ResearchController(stubRemote({
+      listFigures: ({ projectId }) => {
+        seen.push(projectId)
+        return seen.length === 1
+          ? first.promise
+          : Promise.resolve(carried<ResearchFiguresResult>({ ok: true, value: { figures: [] } }))
+      },
+    }))
+    controller.loadFigures('p1')
+    // A non-forced load for another project mid-scan must queue, not vanish —
+    // otherwise the view stays on p1 forever after the scan settles.
+    controller.loadFigures('p2')
+    expect(seen).toEqual(['p1'])
+    first.resolve(carried({ ok: true, value: { figures: [] } }))
+    await settle()
+    expect(seen).toEqual(['p1', 'p2'])
+    expect(controller.getSnapshot().figures?.projectId).toBe('p2')
   })
 })
 
@@ -777,7 +932,7 @@ describe('ResearchController servers and figure deletion', () => {
 
   it('resiliently folds a carrier failure into an offline probe view', async () => {
     const controller = new ResearchController(stubRemote({
-      checkServer: () => Promise.resolve({ ok: false, error: { code: 'unavailable', message: 'host down', details: {} } }),
+      checkServer: () => Promise.resolve({ ok: false, error: new RemoteError('unavailable', 'host down', {}) }),
     }))
     await controller.checkServer(SERVER.id)
     expect(controller.getSnapshot().serverChecks[SERVER.id]).toMatchObject({
@@ -1113,7 +1268,7 @@ describe('ResearchController arXiv search and paper import', () => {
 
   it('updatePaper forwards the patch and refreshes the list only on success', async () => {
     let lists = 0
-    let seen: { arxivId: string; tags?: string[]; projectIds?: string[]; notes?: string } | null = null
+    let seen: Parameters<ResearchRemote['updatePaper']>[0] | null = null
     const controller = new ResearchController(stubRemote({
       updatePaper: (request) => {
         seen = request
@@ -1357,7 +1512,7 @@ describe('ResearchController arXiv search and paper import', () => {
         outlineReads += 1
         return Promise.resolve(carried<ResearchOutlineResult>({
           ok: true,
-          value: { nodes: [{ title: 'Intro', line: 5, level: 1, children: [] }] },
+          value: { projectId: 'p1', nodes: [{ title: 'Intro', line: 5, level: 1, children: [] }] },
         }))
       },
       getPaperSource: () => {
@@ -1391,7 +1546,7 @@ describe('ResearchController arXiv search and paper import', () => {
     const controller = new ResearchController(stubRemote({
       getPaperOutline: () => {
         outlineReads += 1
-        return Promise.resolve(carried<ResearchOutlineResult>({ ok: true, value: { nodes: [] } }))
+        return Promise.resolve(carried<ResearchOutlineResult>({ ok: true, value: { projectId: 'p1', nodes: [] } }))
       },
       getPaperSource: () => {
         sourceReads += 1
@@ -1420,7 +1575,7 @@ describe('ResearchController arXiv search and paper import', () => {
     const controller = new ResearchController(stubRemote({
       getPaperOutline: () => {
         outlineReads += 1
-        return Promise.resolve(carried<ResearchOutlineResult>({ ok: true, value: { nodes: [] } }))
+        return Promise.resolve(carried<ResearchOutlineResult>({ ok: true, value: { projectId: 'p1', nodes: [] } }))
       },
       getPaperSource: () => {
         sourceReads += 1
@@ -1555,6 +1710,82 @@ describe('ResearchController figure insert', () => {
     expect(view.source?.content).toContain('\\label{fig:plot}')
     expect(view.paperJump).toMatchObject({ projectId: 'p1', line: 6 })
     expect(view.toasts.at(-1)).toMatchObject({ kind: 'success', copy: 'toast.figureConvertedSvg', detail: 'plot.svg → plot.pdf' })
+  })
+
+  it('aborts the insert when the project switched during the SVG conversion', async () => {
+    const conversion = deferred<RemoteResult<ResearchConvertFigureResult>>()
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: ({ projectId }: { projectId: string }) =>
+        Promise.resolve(carried(sourceOk(`${projectId} tex`, 1000))),
+      convertFigure: () => conversion.promise,
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    const pending = controller.insertFigureIntoPaper('p1', { ...FIGURE, name: 'plot.svg', relPath: 'figures/plot.svg' })
+    // Switch away while the host converts.
+    controller.select('p2')
+    conversion.resolve(carried({ ok: true, value: { relPath: 'figures/plot.pdf', converter: 'rsvg-convert' } }))
+    const line = await pending
+    expect(line).toBeNull()
+    await vi.advanceTimersByTimeAsync(0)
+    // p2's draft must not carry p1's figure block.
+    const view = controller.getSnapshot()
+    expect(view.source?.projectId).toBe('p2')
+    expect(view.source?.content).toBe('p2 tex')
+  })
+
+  it('does not re-read the paper when the project switched during a figure rename', async () => {
+    const rename = deferred<RemoteResult<ResearchRenameFigureResult>>()
+    const sourceReads: string[] = []
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: ({ projectId }: { projectId: string }) => {
+        sourceReads.push(projectId)
+        return Promise.resolve(carried(sourceOk(`${projectId} tex`, 1000)))
+      },
+      renameFigure: () => rename.promise,
+      listFigures: () => Promise.resolve(carried<ResearchFiguresResult>({ ok: true, value: { figures: [] } })),
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    const pending = controller.renameFigure('p1', 'figures/a.png', 'b.png')
+    rename.resolve(carried({ ok: true, value: { relPath: 'figures/b.png', references: 2 } }))
+    // The user switched projects before the rename reply landed.
+    controller.select('p2')
+    expect(await pending).toBeNull()
+    await vi.advanceTimersByTimeAsync(0)
+    // No stale re-read of p1's paper over p2's view.
+    expect(sourceReads.filter(id => id === 'p1')).toHaveLength(1)
+    expect(controller.getSnapshot().source?.projectId).toBe('p2')
+    expect(controller.getSnapshot().source?.content).toBe('p2 tex')
+  })
+
+  it('does not re-read the paper when the project switched during a snapshot revert', async () => {
+    const revert = deferred<RemoteResult<ResearchRevertPaperSnapshotResult>>()
+    const sourceReads: string[] = []
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: ({ projectId }: { projectId: string }) => {
+        sourceReads.push(projectId)
+        return Promise.resolve(carried(sourceOk(`${projectId} tex`, 1000)))
+      },
+      revertPaperSnapshot: () => revert.promise,
+      listPaperSnapshots: () => Promise.resolve(carried<ResearchPaperSnapshotsResult>({
+        ok: true, value: { snapshots: [] },
+      })),
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    const pending = controller.revertSnapshot('p1', 'snap-1')
+    revert.resolve(carried({ ok: true, value: { mtimeMs: 3000 } }))
+    // The user switched projects before the revert reply landed.
+    controller.select('p2')
+    expect(await pending).toBeNull()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sourceReads.filter(id => id === 'p1')).toHaveLength(1)
+    expect(controller.getSnapshot().source?.projectId).toBe('p2')
+    expect(controller.getSnapshot().source?.content).toBe('p2 tex')
   })
 
   it('treats an already-referenced converted product as inserted, never converting again', async () => {
@@ -1822,11 +2053,11 @@ describe('ResearchController ledger (growth record)', () => {
     const controller = new ResearchController(stubRemote({
       generateProgressReport: () => Promise.resolve(carried<ResearchProgressReportResult>({
         ok: false,
-        error: { code: 'project-not-found', message: 'no such project' },
+        error: { code: 'project-not-found', projectId: 'missing' },
       })),
     }))
     const failure = await controller.generateReport({ projectId: 'missing' })
-    expect(failure).toEqual({ code: 'project-not-found', message: 'no such project' })
+    expect(failure).toEqual({ code: 'project-not-found', message: 'project-not-found' })
     const report = controller.getSnapshot().report
     expect(report.status).toBe('error')
     expect(report.failure?.code).toBe('project-not-found')
@@ -1877,11 +2108,11 @@ describe('ResearchController cognitive brief (CBE)', () => {
     const controller = new ResearchController(stubRemote({
       generateBrief: () => Promise.resolve(carried<ResearchGenerateBriefResult>({
         ok: false,
-        error: { code: 'project-not-found', message: 'no such project' },
+        error: { code: 'project-not-found', projectId: 'ghost' },
       })),
     }))
     const failure = await controller.generateBrief({ projectId: 'ghost' })
-    expect(failure).toEqual({ code: 'project-not-found', message: 'no such project' })
+    expect(failure).toEqual({ code: 'project-not-found', message: 'project-not-found' })
     const brief = controller.getSnapshot().brief
     expect(brief.status).toBe('error')
     expect(brief.failure?.code).toBe('project-not-found')
@@ -1961,8 +2192,7 @@ describe('ResearchController cognitive brief (CBE)', () => {
   })
 })
 
-describe('ResearchController worktree (S2)', () => {
-  const TREE: ResearchWorktreeView = {
+const TREE: ResearchWorktreeView = {
     derivedAt: '2026-08-27T07:00:00.000Z',
     lanes: [
       {
@@ -1980,11 +2210,12 @@ describe('ResearchController worktree (S2)', () => {
         touches: [],
       },
     ],
-    mainline: { lineId: 'i1', label: 'Idea One', declaredAt: '2026-08-20T00:00:00.000Z' , touches: [] },
+    mainline: { lineId: 'i1', label: 'Idea One', declaredAt: '2026-08-20T00:00:00.000Z' },
     mainlineHistory: [{ lineId: 'i1', label: 'Idea One', declaredAt: '2026-08-20T00:00:00.000Z' }],
     counts: { open: 1, failed: 1, adopted: 0 },
-  }
+}
 
+describe('ResearchController worktree (S2)', () => {
   const STRUCTURAL_EVENT = {
     id: 'ev-s1',
     ts: '2026-08-27T07:10:00.000Z',
@@ -2111,8 +2342,7 @@ describe('ResearchController worktree (S2)', () => {
   })
 })
 
-describe('ResearchController foraging (S4)', () => {
-  const LAYER: ResearchForagingView = {
+const LAYER: ResearchForagingView = {
     derivedAt: '2026-08-27T08:00:00.000Z',
     territories: [
       {
@@ -2126,8 +2356,9 @@ describe('ResearchController foraging (S4)', () => {
     cards: [
       { projectId: 'p1', label: 'Project One', daysSinceHarvest: 6, daysSinceActivity: 1, baselineMedianDays: null },
     ],
-  }
+}
 
+describe('ResearchController foraging (S4)', () => {
   it('ensureForaging loads once and publishes the ready slice', async () => {
     let calls = 0
     const controller = new ResearchController(stubRemote({
@@ -2202,5 +2433,235 @@ describe('ResearchController adoptIdea (worktree merge)', () => {
     await new Promise(resolve => { setTimeout(resolve, 0) })
     expect(worktreeLoads).toBe(2) // the merge re-derives the tree
     expect(foragingLoads).toBe(1) // a merge is not a GUT departure
+  })
+})
+
+describe('ResearchController live refresh', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  /** A settled source-read reply. */
+  const sourceOk = (content: string, mtimeMs: number): ResearchPaperSourceResult => ({
+    ok: true,
+    value: { content, mtimeMs },
+  })
+
+  /** Stubs for the reads every select() fires, so a test only wires what it asserts. */
+  const selectReads = {
+    getPaperOutline: ({ projectId }: { projectId: string }) => Promise.resolve(
+      carried<ResearchOutlineResult>({ ok: true, value: { projectId, nodes: [] } }),
+    ),
+    getCompileStatus: () => Promise.resolve(carried(IDLE)),
+  }
+
+  it('refreshes a warm papers slice once for a burst of changes and leaves cold slices alone', async () => {
+    let lists = 0
+    const controller = new ResearchController(stubRemote({
+      listPapers: () => {
+        lists += 1
+        return Promise.resolve(carried<ResearchPapersResult>({ ok: true, value: { papers: [] } }))
+      },
+    }))
+    // Cold slice: pushed changes are dropped, nothing loads.
+    controller.enqueueWikiChange({ table: 'papers', key: 'a', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(lists).toBe(0)
+    controller.ensurePapers()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(lists).toBe(1)
+    // An agent importing ten papers collapses into ONE refresh.
+    for (let index = 0; index < 10; index += 1) {
+      controller.enqueueWikiChange({ table: 'papers', key: `2608.0000${index}`, operation: 'put' })
+    }
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(lists).toBe(2)
+  })
+
+  it('quietly rescans a warm figures slice through the guarded loader', async () => {
+    const scans: string[] = []
+    const controller = new ResearchController(stubRemote({
+      listFigures: ({ projectId }) => {
+        scans.push(projectId)
+        return Promise.resolve(carried<ResearchFiguresResult>({ ok: true, value: { figures: [] } }))
+      },
+    }))
+    controller.loadFigures('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(scans).toEqual(['p1'])
+    controller.enqueueWikiChange({ table: 'figures', key: 'p1:figures/a.png', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(scans).toEqual(['p1', 'p1'])
+  })
+
+  it('reloads the outline but never the draft when a paper change lands mid-edit', async () => {
+    let outlines = 0
+    let sourceReads = 0
+    const controller = new ResearchController(stubRemote({
+      getPaperOutline: ({ projectId }) => {
+        outlines += 1
+        return Promise.resolve(carried<ResearchOutlineResult>({ ok: true, value: { projectId, nodes: [] } }))
+      },
+      getCompileStatus: () => Promise.resolve(carried(IDLE)),
+      getPaperSource: () => {
+        sourceReads += 1
+        return Promise.resolve(carried(sourceOk('v1', 1000)))
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(sourceReads).toBe(1)
+    controller.edit('my draft')
+    controller.enqueueWikiChange({ table: 'paper-source', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    // The outline followed the file; the dirty draft was left alone.
+    expect(outlines).toBe(2)
+    expect(sourceReads).toBe(1)
+    expect(controller.getSnapshot().source).toMatchObject({ content: 'my draft', saveState: 'dirty' })
+  })
+
+  it('re-reads a settled draft and publishes only when the file moved', async () => {
+    let content = 'v1'
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: () => Promise.resolve(carried(sourceOk(content, content === 'v1' ? 1000 : 2000))),
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    const before = controller.getSnapshot().source
+    // The echo of the panel's own save: same content and mtime, no republish.
+    controller.enqueueWikiChange({ table: 'paper-source', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(controller.getSnapshot().source).toBe(before)
+    // An agent edit moves the file: the view follows without a loading flash.
+    content = 'agent v2'
+    controller.enqueueWikiChange({ table: 'paper-source', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(controller.getSnapshot().source).toMatchObject({
+      projectId: 'p1', status: 'ready', content: 'agent v2', mtimeMs: 2000, saveState: 'clean',
+    })
+  })
+
+  it('replays the ledger with its last filter and refreshes warm venues quietly', async () => {
+    let eventLists = 0
+    let venueLists = 0
+    const controller = new ResearchController(stubRemote({
+      listEvents: (request) => {
+        eventLists += 1
+        expect(request).toMatchObject({ limit: 50 })
+        return Promise.resolve(carried<ResearchListEventsResult>({ ok: true, value: { events: [] } }))
+      },
+      listVenueDeadlines: () => {
+        venueLists += 1
+        return Promise.resolve(carried<ResearchVenueDeadlinesResult>({
+          ok: true,
+          value: { venues: [], journals: [], watched: [], fetchedAt: '2026-09-01T00:00:00.000Z' },
+        }))
+      },
+    }))
+    controller.loadLedger({ limit: 50 })
+    controller.ensureVenues('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(eventLists).toBe(1)
+    expect(venueLists).toBe(1)
+    controller.enqueueWikiChange({ table: 'events', key: 'e1', operation: 'put' })
+    controller.enqueueWikiChange({ table: 'venue_watches', key: 'p1:cvpr', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(eventLists).toBe(2)
+    expect(venueLists).toBe(2)
+  })
+
+  it('re-reads every warm slice when the events stream reconnects', async () => {
+    let paperLists = 0
+    let figureLists = 0
+    const controller = new ResearchController(stubRemote({
+      listPapers: () => {
+        paperLists += 1
+        return Promise.resolve(carried<ResearchPapersResult>({ ok: true, value: { papers: [] } }))
+      },
+      listFigures: () => {
+        figureLists += 1
+        return Promise.resolve(carried<ResearchFiguresResult>({ ok: true, value: { figures: [] } }))
+      },
+    }))
+    let reconnect: (() => void) | undefined
+    controller.connectWikiEvents((_url, _onEvent, onReconnect) => {
+      reconnect = onReconnect
+      return { close: () => {} }
+    })
+    // Warm the papers slice only; figures stays cold.
+    controller.ensurePapers()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(paperLists).toBe(1)
+    expect(reconnect).toBeTypeOf('function')
+    // The stream reopened after an outage: unknown writes landed meanwhile,
+    // so warm slices re-read without waiting for the debounce window...
+    reconnect!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(paperLists).toBe(2)
+    // ...and cold slices are still left alone.
+    expect(figureLists).toBe(0)
+    // A repeated reconnect (flapping network) re-reads again, still once.
+    reconnect!()
+    await vi.advanceTimersByTimeAsync(0)
+    expect(paperLists).toBe(3)
+    controller.dispose()
+  })
+
+  it('discards a late source re-read reply when a newer one already landed', async () => {
+    const reads: Array<{ promise: Promise<RemoteResult<ResearchPaperSourceResult>>; resolve: (value: RemoteResult<ResearchPaperSourceResult>) => void }> = []
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: () => {
+        calls += 1
+        if (calls === 1) {
+          return Promise.resolve(carried(sourceOk('v1', 1000)))
+        }
+        const pending = deferred<RemoteResult<ResearchPaperSourceResult>>()
+        reads.push(pending)
+        return pending.promise
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(controller.getSnapshot().source).toMatchObject({ content: 'v1', saveState: 'clean' })
+    // Two agent edits land close together: two re-reads overlap in flight.
+    controller.enqueueWikiChange({ table: 'paper-source', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(reads).toHaveLength(1)
+    controller.enqueueWikiChange({ table: 'paper-source', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(reads).toHaveLength(2)
+    // The NEWER read settles first and publishes v2.
+    reads[1]!.resolve(carried(sourceOk('v2', 2000)))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(controller.getSnapshot().source).toMatchObject({ content: 'v2', mtimeMs: 2000 })
+    // The OLDER read settles late with an older snapshot: it must not rewind.
+    reads[0]!.resolve(carried(sourceOk('v1-late', 1500)))
+    await vi.advanceTimersByTimeAsync(0)
+    expect(controller.getSnapshot().source).toMatchObject({ content: 'v2', mtimeMs: 2000 })
+  })
+
+  it('keeps following live bibliography changes after a settled save', async () => {
+    let reads = 0
+    const controller = new ResearchController(stubRemote({
+      getBibliography: () => {
+        reads += 1
+        return Promise.resolve(carried(BIB))
+      },
+      saveBibliography: () => Promise.resolve(carried<ResearchSaveBibliographyResult>({ ok: true, value: { mtimeMs: 2000 } })),
+    }))
+    controller.ensureBibliography('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(reads).toBe(1)
+    // A settled save leaves the panel in 'saved', not 'clean'...
+    const failure = await controller.deleteBibEntry('alpha2024')
+    expect(failure).toBeNull()
+    expect(controller.getSnapshot().bib?.saveState).toBe('saved')
+    // ...which must still follow a teammate's/agent's bib change.
+    controller.enqueueWikiChange({ table: 'bibliography', key: 'p1', operation: 'put' })
+    await vi.advanceTimersByTimeAsync(LIVE_REFRESH_DEBOUNCE_MS)
+    expect(reads).toBe(2)
+    expect(controller.getSnapshot().bib?.saveState).toBe('clean')
   })
 })

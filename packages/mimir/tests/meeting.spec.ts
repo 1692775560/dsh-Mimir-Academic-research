@@ -16,7 +16,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
-import { buildDeckModel, meetingDeckPath, DECK_MAX_PAPERS } from '../src/services/meeting.ts'
+import { buildDeckModel, meetingDeckPath, DECK_MAX_PAPERS, localToday } from '../src/services/meeting.ts'
 import type {
   ExperimentRecord,
   FigureRecord,
@@ -89,6 +89,15 @@ const PNG_BYTES = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==',
   'base64',
 )
+
+describe('localToday', () => {
+  it('formats the local calendar date with zero padding, not the UTC one', () => {
+    // Constructed from local components, so the expectation holds in any zone.
+    expect(localToday(new Date(2026, 0, 15, 1, 0))).toBe('2026-01-15')
+    expect(localToday(new Date(2026, 11, 31, 23, 59))).toBe('2026-12-31')
+    expect(localToday(new Date(2026, 2, 3, 12, 0))).toBe('2026-03-03')
+  })
+})
 
 describe('buildDeckModel', () => {
   it('orders slides title → agenda → progress → experiments → figures → papers → closing', () => {

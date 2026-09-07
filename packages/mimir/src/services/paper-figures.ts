@@ -21,6 +21,7 @@ import {
   loadPaperFigures,
   type PaperFigureAsset,
 } from './meeting.ts'
+import { isValidArxivId, paperPdfFileName } from '../tools/arxiv.ts'
 
 /** Upstream skill repo providing the extract pipeline (cloned on demand). */
 export const GROUP_MEETING_SKILLS_REPO = 'https://github.com/mlxbc12138/academic-Group-meeting-skills'
@@ -85,13 +86,16 @@ const CLONE_TIMEOUT_MS = 120_000
 const EXTRACT_TIMEOUT_MS = 300_000
 
 /**
- * Locate the cached arXiv PDF for a paper: `papers/<arxivId>.pdf`, or a
- * version-suffixed sibling (`<arxivId>v2.pdf`).
+ * Locate the cached arXiv PDF for a paper: `papers/<paperPdfFileName(arxivId)>`
+ * (the same percent-encoded name the write side uses), or a version-suffixed
+ * sibling. An id failing {@link isValidArxivId} resolves to nothing rather
+ * than escaping the papers directory.
  * @returns the absolute PDF path, or undefined when nothing is cached.
  */
 export async function resolvePaperPdf(workspaceDir: string, arxivId: string): Promise<string | undefined> {
+  if (!isValidArxivId(arxivId)) return undefined
   const papersDir = join(workspaceDir, 'papers')
-  const exact = join(papersDir, `${arxivId}.pdf`)
+  const exact = join(papersDir, paperPdfFileName(arxivId))
   if ((await stat(exact).catch(() => undefined))?.isFile() === true) return exact
   let names: string[]
   try {
@@ -99,8 +103,9 @@ export async function resolvePaperPdf(workspaceDir: string, arxivId: string): Pr
   } catch {
     return undefined
   }
+  const prefix = encodeURIComponent(arxivId)
   const versioned = names
-    .filter(name => name.startsWith(`${arxivId}v`) && name.endsWith('.pdf'))
+    .filter(name => name.startsWith(`${prefix}v`) && name.endsWith('.pdf'))
     .sort()
   return versioned.length > 0 ? join(papersDir, versioned[0]!) : undefined
 }
@@ -141,6 +146,8 @@ export async function extractPaperFigures(
   arxivId: string,
   deps: PaperFigureExtractDeps = {},
 ): Promise<readonly PaperFigureAsset[]> {
+  // An unsafe id never reaches a path join; extraction fails open.
+  if (!isValidArxivId(arxivId)) return []
   const existing = await loadPaperFigures(workspaceDir, arxivId)
   if (existing.length > 0) return existing
 

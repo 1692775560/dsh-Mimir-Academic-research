@@ -5,7 +5,7 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import { parseTectonicErrors, resolveLatexEngine } from '../src/tools/latex.ts'
+import { createAutoEngineResolver, parseTectonicErrors, resolveLatexEngine } from '../src/tools/latex.ts'
 import type { LatexEngineProbe } from '../src/tools/latex.ts'
 
 /** A probe answering from a fixed set of on-PATH commands. */
@@ -47,6 +47,26 @@ describe('resolveLatexEngine', () => {
   it('rejects an absolute path whose basename matches no known engine', async () => {
     await expect(resolveLatexEngine('/tmp/pdflatex'))
       .rejects.toThrow(/must point at a tectonic or latexmk executable/)
+  })
+})
+
+describe('createAutoEngineResolver', () => {
+  it('caches a successful probe but re-probes after a failure', async () => {
+    let latexmkOnPath = false
+    let probes = 0
+    const probe: LatexEngineProbe = (command) => {
+      probes += 1
+      return Promise.resolve(command === 'latexmk' && latexmkOnPath)
+    }
+    const resolve = createAutoEngineResolver(probe)
+    // A failed resolution is not cached: a TeX install later in the session wins.
+    await expect(resolve()).rejects.toThrow(/No LaTeX engine found on PATH/)
+    latexmkOnPath = true
+    await expect(resolve()).resolves.toEqual({ kind: 'latexmk', executable: 'latexmk' })
+    // A successful resolution is cached: no further probing.
+    const settled = probes
+    await expect(resolve()).resolves.toEqual({ kind: 'latexmk', executable: 'latexmk' })
+    expect(probes).toBe(settled)
   })
 })
 

@@ -78,9 +78,11 @@ describe('auto-candidates from the stream', () => {
   })
 
   it('does not propose a quiet couple of events — that is just Tuesday', () => {
+    // No line refs: S9b's milestone source keys off a line's first decision,
+    // so unattributed events stay silent below the burst floor.
     const moments = deriveCuratedMoments([
-      ev(at(0), 'writing.bib.saved', { ideaId: 'i1' }),
-      ev(at(5), 'writing.bib.saved', { ideaId: 'i1' }),
+      ev(at(0), 'writing.bib.saved'),
+      ev(at(5), 'writing.bib.saved'),
     ], null, null)
     expect(moments).toEqual([])
   })
@@ -90,7 +92,11 @@ describe('auto-candidates from the stream', () => {
       ev(at(index * 5), 'writing.bib.saved', { ideaId: 'i1' }))
     const moments = deriveCuratedMoments(events, null, null)
     expect(moments).toHaveLength(1)
-    expect(moments[0]?.kind).toBe('burst')
+    // S9b: the same anchor is also the line's first decision, so the burst
+    // merges with the lane-opening milestone — the ladder keeps milestone.
+    expect(moments[0]?.kind).toBe('milestone')
+    expect(moments[0]?.sources).toContain('burst')
+    expect(moments[0]?.sources).toContain('milestone')
   })
 
   it('lets a declared Eureka outrank a terminal in the same burst', () => {
@@ -98,7 +104,10 @@ describe('auto-candidates from the stream', () => {
       ev(at(0), 'knowledge.idea.failed', { ideaId: 'i1' }),
       ev(at(5), EUREKA_ACTION, { ideaId: 'i1' }, { title: '想通了' }),
     ], null, null)
-    expect(moments[0]?.kind).toBe('eureka')
+    // S9b also proposes a lane-opening milestone on the terminal itself, so
+    // the Eureka is no longer first in time order — it still outranks the
+    // terminal as the burst's kind.
+    expect(moments.find(moment => moment.kind === 'eureka')).toBeDefined()
   })
 
   it('splits bursts at the session gap', () => {

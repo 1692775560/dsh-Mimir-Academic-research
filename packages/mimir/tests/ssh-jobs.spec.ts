@@ -17,6 +17,7 @@ import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
+import { recoverInterruptedJobs } from '../src/services/server.ts'
 import { ResearchService } from '../src/service.ts'
 import type { ExperimentRecord, JobRecord } from '../src/types.ts'
 
@@ -112,6 +113,47 @@ describe('ResearchService.submitJob validation', () => {
   })
 })
 
+describe('ResearchService job recovery', () => {
+  it('marks pre-restart active jobs interrupted and releases their linked experiment', async () => {
+    const { domain, workspaceDir } = await harness()
+    const job: JobRecord = {
+      id: 'job-running', serverId: 'srv-1', command: 'python train.py', status: 'running',
+      experimentId: EXPERIMENT.id, exitCode: null, stdoutTail: '', stderrTail: '',
+      createdAt: '2026-08-21T00:00:00.000Z', startedAt: '2026-08-21T00:00:01.000Z',
+    }
+    await domain.table('experiments').put(EXPERIMENT.id, { ...EXPERIMENT, status: 'running' })
+    await domain.table('jobs').put(job.id, job)
+
+    await recoverInterruptedJobs({ workspaceDir, domain })
+
+    expect(domain.table('jobs').get(job.id)).toMatchObject({
+      status: 'interrupted', exitCode: null, stderrTail: 'host restarted before the job outcome was known',
+    })
+    expect(domain.table('experiments').get(EXPERIMENT.id)).toMatchObject({ status: 'failed' })
+  })
+
+  it('does not overwrite an experiment owned by a newer settled job', async () => {
+    const { domain, workspaceDir } = await harness()
+    const stale: JobRecord = {
+      id: 'job-old-1', serverId: 'srv-1', command: 'python old.py', status: 'running',
+      experimentId: EXPERIMENT.id, exitCode: null, stdoutTail: '', stderrTail: '',
+      createdAt: '2026-08-21T00:00:00.000Z',
+    }
+    const newer: JobRecord = {
+      ...stale, id: 'job-new-2', command: 'python new.py', status: 'succeeded', exitCode: 0,
+      createdAt: '2026-08-21T00:01:00.000Z', finishedAt: '2026-08-21T00:02:00.000Z',
+    }
+    await domain.table('experiments').put(EXPERIMENT.id, { ...EXPERIMENT, status: 'success' })
+    await domain.table('jobs').put(stale.id, stale)
+    await domain.table('jobs').put(newer.id, newer)
+
+    await recoverInterruptedJobs({ workspaceDir, domain })
+
+    expect(domain.table('jobs').get(stale.id)?.status).toBe('interrupted')
+    expect(domain.table('jobs').get(newer.id)?.status).toBe('succeeded')
+    expect(domain.table('experiments').get(EXPERIMENT.id)?.status).toBe('success')
+  })
+})
 describe('ResearchService job lifecycle', () => {
   it('omits experimentId from an unlinked job instead of writing undefined', async () => {
     const { domain, service } = await harness()
@@ -313,6 +355,43 @@ describe('ResearchService.listJobs / deleteJob', () => {
     expect(filtered.value.jobs.map(job => job.id)).toEqual(['job-old'])
     await expect(service.listJobs({ serverId: 'srv-missing' }))
       .resolves.toMatchObject({ ok: false, error: { code: 'server-not-found', id: 'srv-missing' } })
+  })
+
+  it('cancels an active job instead of deleting its record while SSH continues', async () => {
+    const { service } = await harness()
+    await stubFakeSsh()
+    const created = await service.saveServer({ server: SERVER_INPUT })
+    if (!created.ok) throw new Error('create failed')
+    const submitted = await service.submitJob({
+      serverId: created.value.server.id,
+      command: 'mimir-slow python train.py --epochs 20',
+    })
+    if (!submitted.ok) throw new Error('submit rejected')
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const listed = await service.listJobs({})
+      if (listed.ok && listed.value.jobs.some(job => job.id === submitted.value.job.id && job.status === 'running')) break
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+
+    await expect(service.deleteJob({ id: submitted.value.job.id })).resolves.toEqual({
+      ok: true,
+      value: { id: submitted.value.job.id },
+    })
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const listed = await service.listJobs({})
+      if (listed.ok) {
+        const job = listed.value.jobs.find(record => record.id === submitted.value.job.id)
+        if (job?.status === 'cancelled') {
+          expect(job).toMatchObject({
+            exitCode: null,
+            stderrTail: expect.stringContaining('remote process outcome is unknown'),
+          })
+          return
+        }
+      }
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+    throw new Error('cancelled job did not settle')
   })
 
   it('deletes a record and reports job-not-found on a repeat', async () => {

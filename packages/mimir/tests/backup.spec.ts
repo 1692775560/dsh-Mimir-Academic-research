@@ -155,6 +155,24 @@ describe('startWikiBackupLoop', () => {
     }
   })
 
+  it('does not overlap an in-flight pass', async () => {
+    const calls: Array<() => void> = []
+    const runBackup = vi.fn(() => new Promise<string>(resolve => { calls.push(() => resolve('done')) }))
+    const dir = await mkdtemp(join(tmpdir(), 'mimir-backup-loop-'))
+    const stop = startWikiBackupLoop({
+      domain: {} as never, dir, intervalMs: 5, keep: 24, firstDelayMs: 1, onError: () => {}, runBackup,
+    })
+    try {
+      await vi.waitFor(() => { expect(runBackup).toHaveBeenCalledTimes(1) }, { timeout: 5000, interval: 5 })
+      await new Promise(resolveTimer => setTimeout(resolveTimer, 30))
+      expect(runBackup).toHaveBeenCalledTimes(1)
+      calls[0]?.()
+      await vi.waitFor(() => { expect(runBackup).toHaveBeenCalledTimes(2) }, { timeout: 5000, interval: 5 })
+    } finally {
+      stop()
+      calls[1]?.()
+    }
+  })
   it('survives a failing pass and retries next cycle', async () => {
     const { domain, workspaceDir } = await openDomain()
     // A file where the directory should be: mkdir/readdir fail until removed.

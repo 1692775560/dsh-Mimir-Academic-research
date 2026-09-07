@@ -8,7 +8,8 @@
  * @module dsh-client-ui-mimir/client
  */
 
-import type { ClientContext, ISessions } from '@deepseek-ai/dsh-client-runtime/client'
+import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the Client assembly's ctx.remote merge (TypertClientRemote).
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
 // Runtime + types: the generated research Remote contribution. The panel
@@ -20,6 +21,8 @@ import researchRemote from 'dsh-mimir/remote'
 import type {} from '@deepseek-ai/dsh-client-locale/client'
 // Type-only: pulls the theme plugin's Context merge (ctx.theme).
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
+// Type-only: pulls the renderer-owned SlotRegistry service merge (ctx.slots).
+import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { ResearchController } from './controller.ts'
 import { ResearchPanel } from './ResearchPanel.tsx'
 import { ResearchToggle } from './ResearchToggle.tsx'
@@ -166,6 +169,22 @@ function panelApply(ctx: ClientContext): void {
   ctx.on('connection/reset', () => { controller.resync() })
   ctx.effect(() => () => { controller.dispose() }, 'ui-mimir: controller')
 
+  // Live refresh: the host pushes every wiki write over /research/events and
+  // the controller re-reads the dirtied slices through the usual guarded
+  // loaders — no more F5 after the agent edits the wiki. A hidden tab lets
+  // the debounce accumulate; coming back to the foreground flushes at once.
+  controller.connectWikiEvents()
+  if (typeof document !== 'undefined') {
+    const onVisible = (): void => {
+      if (!document.hidden) controller.flushWikiChanges()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    ctx.effect(
+      () => () => document.removeEventListener('visibilitychange', onVisible),
+      'ui-mimir: visibility flush',
+    )
+  }
+
   ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
     name: 'sidebar.footer.action',
     id: 'research',
@@ -236,6 +255,11 @@ function panelApply(ctx: ClientContext): void {
       ensureVenueTemplates: () => { controller.ensureVenueTemplates() },
       applyVenueTemplate: (projectId, options) => controller.applyVenueTemplate(projectId, options),
       clearVenueTemplate: projectId => controller.clearVenueTemplate(projectId),
+      // The venues view (ccfddl catalog + the selected project's watch list).
+      ensureVenues: projectId => { controller.ensureVenues(projectId) },
+      refreshVenues: projectId => { controller.refreshVenues(projectId) },
+      refreshVenueCatalog: projectId => controller.refreshVenueCatalog(projectId),
+      toggleVenueWatch: seriesKey => controller.toggleVenueWatch(seriesKey),
       uploadTemplateFiles: async (projectId, dir, files) => {
         let done = 0
         for (const file of files) {

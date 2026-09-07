@@ -19,12 +19,13 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { parseLatexErrors } from '../latex-log.ts'
 import type { LatexIssue } from '../latex-log.ts'
+import type { LatexEngineKind } from '../types.ts'
+
+/** A TeX engine this tool knows how to drive. */
+export type { LatexEngineKind } from '../types.ts'
 
 /** Characters of log tail returned to the model; the rest is unrecoverable noise. */
 const LOG_EXCERPT_CHARS = 4096
-
-/** A TeX engine this tool knows how to drive. */
-export type LatexEngineKind = 'latexmk' | 'tectonic'
 
 /** The concrete executable and command-line dialect of one resolved engine. */
 export interface ResolvedLatexEngine {
@@ -96,15 +97,35 @@ function kindFromBasename(path: string): LatexEngineKind {
   )
 }
 
-/** Process-lifetime cache of the auto-detected engine (default probe only). */
-let autoEngineCache: Promise<ResolvedLatexEngine> | undefined
-
 /** Probe `latexmk` then `tectonic` on PATH; the first hit wins. */
 async function detectEngine(probe: LatexEngineProbe): Promise<ResolvedLatexEngine> {
   if (await probe('latexmk')) return { kind: 'latexmk', executable: 'latexmk' }
   if (await probe('tectonic')) return { kind: 'tectonic', executable: 'tectonic' }
   throw new Error(`No LaTeX engine found on PATH (looked for latexmk and tectonic). ${INSTALL_GUIDANCE}`)
 }
+
+/**
+ * Build the process-lifetime cached auto resolver: the probe runs once and
+ * the settled engine is shared by every later resolve. A FAILED probe is
+ * never cached — the rejection clears the slot so the next resolve re-probes
+ * (a TeX distribution installed mid-session gets picked up).
+ * @param probe - the PATH probe to cache around.
+ */
+export function createAutoEngineResolver(probe: LatexEngineProbe): () => Promise<ResolvedLatexEngine> {
+  let cache: Promise<ResolvedLatexEngine> | undefined
+  return async () => {
+    cache ??= detectEngine(probe)
+    try {
+      return await cache
+    } catch (error) {
+      cache = undefined
+      throw error
+    }
+  }
+}
+
+/** The process-lifetime auto resolver around the real PATH probe. */
+const resolveAutoEngine = createAutoEngineResolver(probeOnPath)
 
 /**
  * Resolve the configured engine selection to a concrete executable.
@@ -124,8 +145,7 @@ export async function resolveLatexEngine(engine: string, probe?: LatexEngineProb
     return { kind: 'latexmk', executable: engine }
   }
   if (probe !== undefined) return detectEngine(probe)
-  autoEngineCache ??= detectEngine(probeOnPath)
-  return autoEngineCache
+  return resolveAutoEngine()
 }
 
 /** One tectonic diagnostic line: `error: [file.tex:NN: ]message`. */

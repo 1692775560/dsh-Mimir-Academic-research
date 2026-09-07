@@ -54,7 +54,7 @@ describe('bibEntryFromDraft', () => {
     expect(entry).not.toBeNull()
     expect(entry?.type).toBe('article')
     expect(Object.keys(entry?.fields ?? {})).toEqual(
-      COMMON_BIB_FIELDS.filter(name => ['title', 'author', 'year'].includes(name)).concat('pages'),
+      [...COMMON_BIB_FIELDS.filter(name => ['title', 'author', 'year'].includes(name)), 'pages'],
     )
     expect(entry?.fields['pages']).toBe('1--9')
   })
