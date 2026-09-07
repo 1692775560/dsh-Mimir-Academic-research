@@ -66,6 +66,32 @@ describe('paper-source', () => {
     })
   })
 
+  describe('read/save coherence (R01)', () => {
+    it('never pairs new content with a stale mtime while a save is mid-commit', async () => {
+      await writeFile(texPath, 'v1\n', 'utf8')
+      // Rewrite under a pinned timestamp on the SAME inode: with a coarse
+      // clock (ms resolution on WSL2/ext4) two writes can share one mtime,
+      // so the file can change while its mtime does not. A lock-free reader
+      // could then read the new content but carry the old mtime as its base
+      // — a base that wrongly passes the optimistic check and overwrites.
+      const stamp = new Date(1_700_000_000_000)
+      await utimes(texPath, stamp, stamp)
+      const staleBase = (await stat(texPath)).mtimeMs
+      await writeFile(texPath, 'v2\n', 'utf8')
+      const snapshot = await readPaperSource(texPath)
+      // The read+stat both happened under the writer lock, so the snapshot
+      // is coherent: it reports the content it actually read. If the read
+      // had been lock-free it could carry `staleBase` while returning v2.
+      expect(snapshot?.content).toBe('v2\n')
+      expect(snapshot?.mtimeMs).toBe((await stat(texPath)).mtimeMs)
+      // The reported base must NOT accept a save of stale content over v2.
+      expect(snapshot?.mtimeMs).not.toBe(staleBase)
+      const staleSave = await savePaperSourceFile(texPath, 'stale draft\n', staleBase)
+      expect(staleSave).toEqual({ kind: 'conflict', currentMtimeMs: snapshot?.mtimeMs })
+      expect(await readFile(texPath, 'utf8')).toBe('v2\n')
+    })
+  })
+
   describe('savePaperSourceFile', () => {
     it('reports missing when the file does not exist', async () => {
       expect(await savePaperSourceFile(texPath, 'x', 0)).toEqual({ kind: 'missing' })
