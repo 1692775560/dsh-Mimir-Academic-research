@@ -2688,13 +2688,22 @@ export class ResearchController implements HostObservable<ResearchView> {
         this.notify('error', 'toast.figureSvgConvertFailed', transportFailure(error).message)
         return null
       }
-      // The conversion round-trip is long: a project switch in between means
-      // the editor below would write this project's block into ANOTHER
-      // project's draft.
-      if (this.disposed || this.view.source?.projectId !== projectId) return null
+    }
+    // The conversion round-trip is long relative to the draft. Re-anchor on the
+    // CURRENT view rather than the pre-conversion `source` snapshot: a user who
+    // kept typing while the host converted must keep that text — splicing the
+    // block into the stale snapshot would overwrite their continued draft. A
+    // project switch or dispose mid-flight still writes nothing, and a draft
+    // that went into conflict (the agent landed a version mid-conversion) is
+    // reported instead of silently skipping the insert.
+    const live = this.view.source
+    if (this.disposed || live === null || live.projectId !== projectId || live.status !== 'ready') return null
+    if (live.saveState === 'conflict') {
+      this.notify('error', 'toast.figureInsertConflict')
+      return null
     }
     const block = figureBlockOf(relPath, entry.caption ?? '')
-    const inserted = insertFigureBlock(source.content, block)
+    const inserted = insertFigureBlock(live.content, block)
     this.edit(inserted.content)
     this.jumpPaper(projectId, inserted.line)
     this.notify('success', convertedName === null ? 'toast.figureInserted' : 'toast.figureConvertedSvg', convertedName ?? entry.name)
