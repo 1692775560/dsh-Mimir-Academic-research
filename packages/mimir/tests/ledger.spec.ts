@@ -9,7 +9,7 @@
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
@@ -24,6 +24,7 @@ import {
   appendEvent,
   buildProgressReport,
   countEvents,
+  emitEvent,
   listEvents,
   newEvent,
   truncatePayload,
@@ -1060,5 +1061,49 @@ describe('wiki_note ledger wiring (agent actor)', () => {
       refs: { ideaId: 'i1' },
       payload: { reason: 'collapses without retrieval on long splits' },
     })
+  })
+})
+
+
+describe('emitEvent transient-failure retry (R28)', () => {
+  /** Real storage underneath; only the transport hiccups on demand. */
+  const flakyDomain = (domain: ResearchWikiDomain, failures: { left: number }): ResearchWikiDomain => ({
+    table: () => {
+      const handle = domain.table('events')
+      return {
+        put: async (key: string, value: EventRecord): Promise<void> => {
+          if (failures.left > 0) {
+            failures.left -= 1
+            throw new Error('transient storage hiccup')
+          }
+          await handle.put(key, value)
+        },
+      }
+    },
+  }) as unknown as ResearchWikiDomain
+
+  it('retries a transient storage failure and still lands the event', async () => {
+    const domain = await domainHarness()
+    const failures = { left: 2 }
+    await emitEvent(flakyDomain(domain, failures), {
+      actor: PANEL_ACTOR, action: 'a.retried', now: new Date('2026-08-01T00:00:00.000Z'),
+    })
+    expect(failures.left).toBe(0)
+    const all = await listEvents(domain)
+    expect(all.map(event => event.action)).toContain('a.retried')
+  })
+
+  it('warns once after the bounded retries and never throws', async () => {
+    const domain = await domainHarness()
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const failures = { left: Number.MAX_SAFE_INTEGER }
+    await expect(emitEvent(flakyDomain(domain, failures), {
+      actor: PANEL_ACTOR, action: 'a.doomed',
+    })).resolves.toBeUndefined()
+    expect(warn).toHaveBeenCalledTimes(1)
+    expect(warn.mock.calls[0]?.[0]).toBe('[mimir] ledger append failed after retries:')
+    warn.mockRestore()
+    const all = await listEvents(domain)
+    expect(all.map(event => event.action)).not.toContain('a.doomed')
   })
 })
