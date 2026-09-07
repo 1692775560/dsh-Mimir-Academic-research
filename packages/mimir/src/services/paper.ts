@@ -581,7 +581,7 @@ export function getCompileStatus(
  * native and forward-slash spellings, so engine/IO failures stay actionable
  * without leaking the local workspace layout.
  */
-function redactDirs(message: string, workspaceDir: string | undefined, paperDir: string | undefined): string {
+export function redactDirs(message: string, workspaceDir: string | undefined, paperDir: string | undefined): string {
   let redacted = message
   if (workspaceDir !== undefined) {
     redacted = redacted

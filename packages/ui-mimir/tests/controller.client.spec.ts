@@ -2665,3 +2665,42 @@ describe('ResearchController live refresh', () => {
     expect(controller.getSnapshot().bib?.saveState).toBe('clean')
   })
 })
+
+
+describe('derivationRecalibrated localStorage key migration', () => {
+  let store: Record<string, string>
+  beforeEach(() => {
+    store = {}
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => (key in store ? store[key]! : null),
+      setItem: (key: string, value: string) => { store[key] = value },
+      removeItem: (key: string) => { delete store[key] },
+    })
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  const callMigration = (version: number): boolean => {
+    const controller = new ResearchController(stubRemote({}))
+    return (controller as unknown as { derivationRecalibrated(v: number): boolean }).derivationRecalibrated(version)
+  }
+
+  it('migrates a legacy colon-key value without re-prompting when the version is unchanged', () => {
+    store['mimir:cbe-derivation-version'] = '3'
+    expect(callMigration(3)).toBe(false)
+    expect(store['mimir.cbe-derivation-version']).toBe('3')
+    expect('mimir:cbe-derivation-version' in store).toBe(false)
+  })
+
+  it('re-prompts when the migrated legacy value differs from the current version', () => {
+    store['mimir:cbe-derivation-version'] = '2'
+    expect(callMigration(3)).toBe(true)
+    expect(store['mimir.cbe-derivation-version']).toBe('3')
+  })
+
+  it('reads the dotted key first and leaves a stale legacy leftover alone', () => {
+    store['mimir.cbe-derivation-version'] = '3'
+    store['mimir:cbe-derivation-version'] = '1'
+    expect(callMigration(3)).toBe(false)
+    expect(store['mimir:cbe-derivation-version']).toBe('1')
+  })
+})
