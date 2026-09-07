@@ -521,7 +521,11 @@ export async function compile(
     state.compileStatus.set(key, settled)
     return rejected({
       code: 'operation-failed',
-      message: error instanceof Error ? error.message : 'latex compile failed to run',
+      message: redactDirs(
+        error instanceof Error ? error.message : 'latex compile failed to run',
+        deps.workspaceDir,
+        dir,
+      ),
     })
   }
 
@@ -569,4 +573,25 @@ export function getCompileStatus(
     return Promise.resolve(rejected({ code: 'project-not-found', projectId: request.projectId }))
   }
   return Promise.resolve(success(state.compileStatus.get(key) ?? IDLE_STATUS))
+}
+
+/**
+ * Redact absolute directory prefixes from an error message before it reaches
+ * the wire (no absolute paths in error text). Each directory is masked in its
+ * native and forward-slash spellings, so engine/IO failures stay actionable
+ * without leaking the local workspace layout.
+ */
+function redactDirs(message: string, workspaceDir: string | undefined, paperDir: string | undefined): string {
+  let redacted = message
+  if (workspaceDir !== undefined) {
+    redacted = redacted
+      .replaceAll(workspaceDir, '<workspace>')
+      .replaceAll(workspaceDir.replaceAll('\\', '/'), '<workspace>')
+  }
+  if (paperDir !== undefined) {
+    redacted = redacted
+      .replaceAll(paperDir, '<paper-dir>')
+      .replaceAll(paperDir.replaceAll('\\', '/'), '<paper-dir>')
+  }
+  return redacted
 }

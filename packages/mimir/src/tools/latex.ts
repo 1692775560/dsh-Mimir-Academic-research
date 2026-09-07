@@ -180,8 +180,8 @@ function runEngine(
         }
         if (error !== null && isMissingEngine(error)) {
           const reason = isAbsolute(engine.executable)
-            ? `LaTeX engine '${engine.executable}' was not found: the configured absolute path does not exist or is not executable.`
-            : `LaTeX engine '${engine.executable}' was not found on PATH.`
+            ? `LaTeX engine '${basename(engine.executable)}' was not found: the configured absolute path does not exist or is not executable.`
+            : `LaTeX engine '${basename(engine.executable)}' was not found on PATH.`
           reject(new Error(`${reason} ${INSTALL_GUIDANCE}`, { cause: error }))
           return
         }

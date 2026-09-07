@@ -27,9 +27,9 @@
  * @module dsh-mimir/src/habits
  */
 
-import { CBE_SESSION_GAP_MINUTES } from './cognitive-map.ts'
+import { CBE_SESSION_GAP_MINUTES } from './vocabulary.ts'
 import type { EventRecord } from './types.ts'
-import { MS_PER_DAY, tsToMs } from './time.ts'
+import { MS_PER_DAY, MS_PER_MINUTE, sessionize, sliceEvents, tsToMs } from './time.ts'
 
 /** Sessions before the comparative numbers may speak (I2's floor). */
 export const CBE_HABIT_MIN_SESSIONS = 3
@@ -37,14 +37,10 @@ export const CBE_HABIT_MIN_SESSIONS = 3
 /** Events before any session arithmetic is attempted at all. */
 export const CBE_HABIT_MIN_EVENTS = 5
 
-const MS_PER_MINUTE = 60_000
-
 /** Round to 3 decimals for stable rendering/serialization. */
 function r3(value: number): number {
   return Math.round(value * 1000) / 1000
 }
-
-/** Parse one ISO-8601 timestamp to epoch ms (NaN → null). */
 
 /** One sitting: consecutive events with no gap wider than the session gap. */
 export interface CbeSession {
@@ -97,34 +93,29 @@ function median(values: readonly number[]): number {
 }
 
 /**
- * Cut an ordered event stream into sittings: a new session starts whenever
- * the gap to the previous event exceeds {@link CBE_SESSION_GAP_MINUTES}.
- * Unparseable timestamps are skipped (they cannot be placed on a clock).
- * @param events - events in ascending (ts, id) order.
+ * Cut an event stream into sittings: a new session starts whenever the gap to
+ * the previous event exceeds {@link CBE_SESSION_GAP_MINUTES}.
+ *
+ * The cut is the shared {@link sessionize} primitive, projected onto the
+ * `{startedAt, endedAt, minutes, eventCount}` rows this profile reports. The
+ * input may be in any order — it is ordered internally, so a caller can never
+ * hand an unsorted stream to the cut and silently get wrong sittings.
+ * Unparseable timestamps are dropped (they cannot be placed on a clock).
+ * @param events - ledger events, any order.
  * @returns the sessions in time order.
  */
 export function deriveSessions(events: readonly EventRecord[]): readonly CbeSession[] {
   const sessions: CbeSession[] = []
-  let open: { startMs: number; lastMs: number; count: number } | null = null
-  const flush = (): void => {
-    if (open === null) return
+  for (const group of sessionize(events, CBE_SESSION_GAP_MINUTES)) {
+    const startMs = tsToMs(group[0]?.ts ?? '') ?? 0
+    const lastMs = tsToMs(group[group.length - 1]?.ts ?? '') ?? startMs
     sessions.push(Object.freeze({
-      startedAt: new Date(open.startMs).toISOString(),
-      endedAt: new Date(open.lastMs).toISOString(),
-      minutes: r3((open.lastMs - open.startMs) / MS_PER_MINUTE),
-      eventCount: open.count,
+      startedAt: new Date(startMs).toISOString(),
+      endedAt: new Date(lastMs).toISOString(),
+      minutes: r3((lastMs - startMs) / MS_PER_MINUTE),
+      eventCount: group.length,
     }))
-    open = null
   }
-  for (const event of events) {
-    const ms = tsToMs(event.ts)
-    if (ms === null) continue
-    if (open !== null && ms - open.lastMs > CBE_SESSION_GAP_MINUTES * MS_PER_MINUTE) flush()
-    if (open === null) open = { startMs: ms, lastMs: ms, count: 0 }
-    open.lastMs = ms
-    open.count += 1
-  }
-  flush()
   return Object.freeze(sessions)
 }
 
@@ -148,12 +139,11 @@ export function deriveHabits(
 ): CbeHabitProfile {
   const untilMs = tsToMs(until) ?? nowMs
   const sinceMs = tsToMs(since) ?? 0
-  const inWindow = [...events]
-    .map(event => ({ event, ms: tsToMs(event.ts) }))
-    .filter(entry => entry.ms !== null && entry.ms >= sinceMs && entry.ms < untilMs)
-    .sort((a, b) => a.event.ts.localeCompare(b.event.ts) || a.event.id.localeCompare(b.event.id))
+  // The shared slice: same window semantics as every other fold, and already
+  // in canonical order, so no second sort is needed below.
+  const inWindow = sliceEvents(events, sinceMs, untilMs)
 
-  const sessions = deriveSessions(inWindow.map(entry => entry.event))
+  const sessions = deriveSessions(inWindow)
   const lengths = sessions.map(session => session.minutes)
   const speaks = sessions.length >= CBE_HABIT_MIN_SESSIONS
     && inWindow.length >= CBE_HABIT_MIN_EVENTS
@@ -161,8 +151,8 @@ export function deriveHabits(
   const hourCounts = new Map<number, number>()
   const weekdayCounts = new Map<number, number>()
   const days = new Set<string>()
-  for (const entry of inWindow) {
-    const at = new Date(entry.ms ?? 0)
+  for (const event of inWindow) {
+    const at = new Date(tsToMs(event.ts) ?? 0)
     const hour = at.getHours()
     const weekday = at.getDay()
     hourCounts.set(hour, (hourCounts.get(hour) ?? 0) + 1)

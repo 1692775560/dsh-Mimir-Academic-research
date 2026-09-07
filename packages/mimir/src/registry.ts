@@ -26,7 +26,7 @@ export type CbeParameterTrack = 'anchored' | 'calibratable' | 'provisional'
 /** One registered parameter. */
 export interface CbeParameterEntry {
   /** The governed value — the audit test asserts it equals the export. */
-  readonly value: number | string
+  readonly value: number | string | boolean
   readonly track: CbeParameterTrack
   /** The literature anchor or engineering rationale that pins it. */
   readonly anchor: string
@@ -38,7 +38,7 @@ export interface CbeParameterEntry {
 
 /** The registry itself: keyed by exported constant name. */
 export const PARAMETER_REGISTRY: Readonly<Record<string, CbeParameterEntry>> = Object.freeze({
-  /* ── cognitive-map.ts ─────────────────────────────────────────────── */
+  /* ── vocabulary.ts ────────────────────────────────────────────────── */
   CBE_HALF_LIFE_DAYS: {
     value: 7,
     track: 'calibratable',
@@ -214,5 +214,83 @@ export const PARAMETER_REGISTRY: Readonly<Record<string, CbeParameterEntry>> = O
     anchor: 'I2’s no-words floor applied to departures: five documented closes before the personal baseline may speak.',
     issue: 'Provisional until G1; the GUT number itself stays E0 (a date difference) regardless.',
     lastReviewed: '2026-08-27',
+  },
+
+  /* ── ledger-ews.ts (information-theoretic floors — backfilled I3) ──── */
+  CBE_EWS_MIN_EVENTS: {
+    value: 12,
+    track: 'provisional',
+    anchor: 'Sample floor for order-≥1 conditional quantities (Tabatabaeian et al. 2025 operationalisation); below it, an estimate would be numerology.',
+    issue: 'Retire only by re-deriving the admissible-order table against the user’s own stream at G1; do not hand-tune.',
+    lastReviewed: '2026-08-31',
+  },
+  CBE_EWS_MAX_ORDER: {
+    value: 3,
+    track: 'provisional',
+    anchor: 'Highest Markov order ever attempted; the admissible order shrinks with sample size so we never estimate more context than the data carries.',
+    issue: 'Retire when the order-selection rule is refit on real ledgers at G1; hand-tuning forbidden.',
+    lastReviewed: '2026-08-31',
+  },
+
+  /* ── eureka.ts (S8 declaration model — backfilled I3) ─────────────── */
+  CBE_EUREKA_WINDOW_DAYS: {
+    value: 14,
+    track: 'provisional',
+    anchor: 'The fortnight lead-in: long enough to span a work chapter, short enough to stay local; pairs with an equal-length control window.',
+    issue: 'G1: compare 7/14/28-day windows by descriptive fit on the user’s own declared Eurekas; replace, do not tune.',
+    lastReviewed: '2026-08-31',
+  },
+  CBE_EUREKA_MIN_DECLARATIONS: {
+    value: 3,
+    track: 'provisional',
+    anchor: 'I2 floor for the lift profile: three declared Eurekas before any lead-vs-control contrast is voiced.',
+    issue: 'Retire if G1 shows the floor never binds, or the paired-window design gains a better silence criterion.',
+    lastReviewed: '2026-08-31',
+  },
+
+  /* ── moment-index.ts (S9 curated index — backfilled I3) ───────────── */
+  CBE_MOMENT_BURST_MIN_EVENTS: {
+    value: 3,
+    track: 'provisional',
+    anchor: 'Below three events with nothing significant in it, a sitting is not a moment — it is just Tuesday.',
+    issue: 'G1 descriptive fit against the user’s own pin behaviour; retire when the five-source candidates (S9b) supply a better floor.',
+    lastReviewed: '2026-08-31',
+  },
+
+  /* ── moment-candidates.ts (S9b five sources) ──────────────────────── */
+  CBE_MOMENT_RETURN_GAP_DAYS: {
+    value: 14,
+    track: 'provisional',
+    anchor: 'Two quiet weeks on one line before its next decision event reads as a return — matched to the eureka lead-in length for a shared sense of "a while".',
+    issue: 'G1: compare 7/14/28 against the user’s own line rhythms; replace with the return-interval quartiles, do not hand-tune.',
+    lastReviewed: '2026-08-31',
+  },
+  CBE_MOMENT_CONVERGENCE_LINES: {
+    value: 2,
+    track: 'provisional',
+    anchor: 'Two distinct lines each carrying a decision event in one sitting is the smallest honest "convergence".',
+    issue: 'G1: retire if single-line focus proves the richer signal on real ledgers; a threshold over lines is not a quality claim.',
+    lastReviewed: '2026-08-31',
+  },
+  CBE_MOMENT_LONG_SITTING_FACTOR: {
+    value: 2,
+    track: 'provisional',
+    anchor: 'Twice the user’s own median sitting length — a within-person contrast, never a cross-user norm.',
+    issue: 'G1 descriptive fit; retire together with the median floor if sitting span proves noise on real ledgers.',
+    lastReviewed: '2026-08-31',
+  },
+  CBE_MOMENT_LONG_SITTING_MIN_SESSIONS: {
+    value: 5,
+    track: 'provisional',
+    anchor: 'I2 floor: five sittings before a median may speak; below it the long-sitting source stays silent rather than emit a fake baseline.',
+    issue: 'G1: revisit together with CBE_SESSION_GAP_MINUTES (the two define "sitting" jointly).',
+    lastReviewed: '2026-08-31',
+  },
+  CBE_MOMENT_CLOSNESS_ENABLED: {
+    value: true,
+    track: 'provisional',
+    anchor: 'The selection-power guard: closeness is a descriptive footnote on already-selected candidates, never a selector; this switch is the one-line retreat to pure structural sources.',
+    issue: 'Retire (hard-delete the footnote path) if G1 review holds it adds no value; do not extend it toward selection.',
+    lastReviewed: '2026-08-31',
   },
 })

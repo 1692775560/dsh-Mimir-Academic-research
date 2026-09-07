@@ -38,8 +38,9 @@ import {
   type CbeCapsulePerspective,
   type CbeExperienceCapsule,
 } from './report-capsules.ts'
+import { CREATION_ACTIONS } from './vocabulary.ts'
 import type { EventRecord } from './types.ts'
-import { tsToMs } from './time.ts'
+import { sliceEvents, tsToMs } from './time.ts'
 
 /** The three report depths (light → heavy). */
 export type CbeDigestTier = 'weekly' | 'monthly' | 'project'
@@ -108,6 +109,24 @@ export interface DigestInput {
   readonly until: string
   readonly tier: CbeDigestTier
   readonly nowMs: number
+  /**
+   * The TRUE number of events the window matched, when the caller already
+   * knows it (e.g. the ledger's honest `countEvents`). When omitted,
+   * `assembleDigest` falls back to `events.length` — which is the CAPPED
+   * stream it was handed, not the ledger, and would let a truncation pass
+   * itself off as the whole history. The one production caller passes the
+   * real total so the retrieval line stays honest even past the fold cap.
+   */
+  readonly eventsTotal?: number
+  /**
+   * An OPTIONAL extended event set handed to the eureka fold only. Eureka
+   * reads a control window of `2 × CBE_EUREKA_WINDOW_DAYS` BEFORE each
+   * declaration; a short digest window would make those controls "unobservable"
+   * and silently drop declarations. The caller may pass a longer lookback here
+   * while the other — window-scoped — folds keep using `events`. When omitted,
+   * eureka uses `events` like every other fold.
+   */
+  readonly eurekaEvents?: readonly EventRecord[]
 }
 
 /** Cap per perspective, by tier (Infinity = show all). */
@@ -147,14 +166,13 @@ export function assembleDigest(input: DigestInput): CbeDigestReport {
   const sinceMs = tsToMs(since) ?? 0
   const untilMs = tsToMs(until) ?? nowMs
 
-  const inWindow = events.filter(event => {
-    const ms = tsToMs(event.ts)
-    return ms !== null && ms >= sinceMs && ms < untilMs
-  })
-  const creations = inWindow.filter(event =>
-    event.action === 'knowledge.idea.added'
-    || event.action === 'knowledge.claim.added'
-    || event.action === 'experiments.saved').length
+  // The shared slice, so this report counts exactly the events every other
+  // fold counts for the same bounds.
+  const inWindow = sliceEvents(events, sinceMs, untilMs)
+  // The whole creation class, as the vocabulary defines it. This used to list
+  // three of the six members by hand, which under-reported "新建" on every
+  // digest that imported a paper or saved a figure.
+  const creations = inWindow.filter(event => CREATION_ACTIONS.has(event.action)).length
 
   const worktree = deriveWorktree(events, wiki, nowMs)
   const moments = deriveCuratedMoments(events, since, until)
@@ -162,8 +180,14 @@ export function assembleDigest(input: DigestInput): CbeDigestReport {
   const habits = deriveHabits(events, since, until, nowMs)
   const brief = deriveBrief(events, wiki, { since, until, projectId: null }, nowMs)
   const allCapsules = deriveCapsules({ window: { since, until }, worktree, moments, library, habits, brief })
-  const eurekas = eurekaDeclarations(events)
-  const eurekaModel = eurekaModelAt(events)
+  // Eureka needs the lead-in AND control windows: a declaration at `at` reads
+  // `2 × CBE_EUREKA_WINDOW_DAYS` of history BEFORE it (see `eureka.ts`). The
+  // digest window is often shorter (a weekly digest), so the caller may hand
+  // an extended lookback here that the other — window-scoped — folds never
+  // see. Falls back to the window events when no lookback was provided.
+  const eurekaSource = input.eurekaEvents ?? events
+  const eurekas = eurekaDeclarations(eurekaSource)
+  const eurekaModel = eurekaModelAt(eurekaSource)
 
   // Tier-capped perspective blocks.
   const caps = TIER_CAPS[tier]
@@ -226,26 +250,38 @@ export function assembleDigest(input: DigestInput): CbeDigestReport {
     since,
     until,
     eventsHit: inWindow.length,
-    eventsTotal: events.length,
+    eventsTotal: input.eventsTotal ?? events.length,
     derivationVersion: CBE_DERIVATION_VERSION,
     silences: Object.freeze(silences),
   })
 
   // Eureka EWS table + Mermaid — project tier only, both purely descriptive.
+  // Only declarations that actually fall inside the digest window belong in
+  // the table; the eureka model may have been folded over a longer lookback,
+  // so pre-window declarations (kept only to anchor the control baseline) are
+  // filtered out. The lead/control vectors stay aligned to their declaration
+  // by carrying the original row index through the filter.
   const eurekaTable = tier === 'project'
-    ? eurekaModel.declarations.map((decl, index) => {
-      const lead = eurekaModel.leads[index]
-      const control = eurekaModel.controls[index]
-      return Object.freeze({
-        index: index + 1,
+    ? eurekaModel.declarations
+      .map((decl, index) => ({
+        decl,
+        lead: eurekaModel.leads[index],
+        control: eurekaModel.controls[index],
+        row: index + 1,
+      }))
+      .filter(({ decl }) => {
+        const ms = tsToMs(decl.at)
+        return ms !== null && ms >= sinceMs && ms < untilMs
+      })
+      .map(({ decl, lead, control, row }) => Object.freeze({
+        index: row,
         at: decl.at,
         title: decl.title,
         leadEntropyRate: lead?.conditionalEntropy ?? null,
         controlEntropyRate: control?.conditionalEntropy ?? null,
         leadMeanSurprisal: lead?.meanSurprisal ?? null,
         controlMeanSurprisal: control?.meanSurprisal ?? null,
-      })
-    })
+      }))
     : []
   const mermaid = tier === 'project' ? buildWorktreeMermaid(worktree) : null
 

@@ -20,6 +20,8 @@
 
 import { formatCapsule, type CapsuleLang } from './report-capsules.ts'
 import type { CbeDigestReport } from './report-tier.ts'
+import { CBE_EUREKA_WINDOW_DAYS } from './eureka.ts'
+import { MS_PER_DAY, tsToMs } from './time.ts'
 
 /** Round to 3 decimals for stable EWS numbers in the table. */
 function r3(value: number): number {
@@ -40,10 +42,10 @@ function tierTitle(tier: CbeDigestReport['tier'], lang: CapsuleLang): string {
 
 /** Format one window as a human day-span. */
 function daySpan(since: string, until: string): string {
-  const from = Date.parse(since)
-  const to = Date.parse(until)
-  if (Number.isNaN(from) || Number.isNaN(to)) return '—'
-  return `${Math.max(0, Math.round((to - from) / 86_400_000))}`
+  const from = tsToMs(since)
+  const to = tsToMs(until)
+  if (from === null || to === null) return '—'
+  return `${Math.max(0, Math.round((to - from) / MS_PER_DAY))}`
 }
 
 /**
@@ -101,7 +103,9 @@ export function renderDigest(report: CbeDigestReport, lang: CapsuleLang): string
   if (report.eurekaTable.length > 0) {
     lines.push(`## ${L ? 'Eureka 里程碑与它的前奏' : 'Eureka milestones and their lead-ins'}`)
     lines.push('')
-    lines.push(`| # | ${L ? '日期' : 'date'} | ${L ? '里程碑' : 'milestone'} | ${L ? '前 14 天熵率' : 'lead entropy rate'} | ${L ? '对照窗' : 'control'} | lift |`)
+    // The window length comes from the engine, not from this string: a copy
+    // typed here keeps describing a fortnight after the parameter moves.
+    lines.push(`| # | ${L ? '日期' : 'date'} | ${L ? '里程碑' : 'milestone'} | ${L ? `前 ${CBE_EUREKA_WINDOW_DAYS} 天熵率` : `${CBE_EUREKA_WINDOW_DAYS}-day lead entropy rate`} | ${L ? '对照窗' : 'control'} | lift |`)
     lines.push('| --- | --- | --- | --- | --- | --- |')
     for (const row of report.eurekaTable) {
       const lift = row.leadMeanSurprisal !== null && row.controlMeanSurprisal !== null

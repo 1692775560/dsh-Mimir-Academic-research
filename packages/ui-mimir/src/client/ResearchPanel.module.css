@@ -39,8 +39,8 @@
   /* Native widgets (select popups, checkboxes, scrollbars) follow the light
      palette; the dark override below flips them together with the tokens. */
   color-scheme: light;
-  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2);
-  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2);
+  --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2, rgb(33 30 25 / 10%));
+  --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2, rgb(33 30 25 / 20%));
   /* ── Paper & ink (light) ─────────────────────────────────────────────── */
   --mimir-paper: #f2ecdf;
   --mimir-paper-deep: #ece5d4;

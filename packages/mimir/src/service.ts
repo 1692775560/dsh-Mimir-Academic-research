@@ -34,6 +34,8 @@ import type {
   ResearchSetMainlineResult,
   ResearchSetEurekaResult,
   ResearchPinMomentResult,
+  ResearchGetMomentIndexResult,
+  ResearchGetEurekaViewResult,
   ResearchGenerateDigestResult,
   ResearchBibliographyResult,
   ResearchCheckArxivSubscriptionsResult,
@@ -650,6 +652,7 @@ export class ResearchService extends TypertRemoteService {
     until?: string | undefined
     limit?: number | undefined
     order?: string | undefined
+    anchor?: string | undefined
   }): Promise<ResearchListEventsResult> {
     return ledger.listEventsRemote(this.deps, request)
   }
@@ -734,6 +737,22 @@ export class ResearchService extends TypertRemoteService {
     pinned?: boolean | undefined
   }): Promise<ResearchPinMomentResult> {
     return ledger.pinMomentRemote(this.deps, request)
+  }
+
+  // moment index & eureka view (S9b/S8c): pull-only reads of the unified
+  // timeline. The five sources propose; canonical status belongs solely to
+  // the researcher's declarations. No ranking, no push, zero verbs.
+  @Remote('getMomentIndex')
+  getMomentIndex(request: {
+    since?: string | undefined
+    until?: string | undefined
+  }): Promise<ResearchGetMomentIndexResult> {
+    return ledger.getMomentIndexRemote(this.deps, request)
+  }
+
+  @Remote('getEurekaView')
+  getEurekaView(): Promise<ResearchGetEurekaViewResult> {
+    return ledger.getEurekaViewRemote(this.deps)
   }
 
   @Remote('generateDigest')

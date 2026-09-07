@@ -19,10 +19,11 @@ import { researchWikiDomainSpec } from '../src/store.ts'
 import type { ResearchWikiDomain } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
 import { createWikiNoteTool } from '../src/tools/wiki.ts'
-import { CBE_DERIVATION_VERSION } from '../src/cognitive-map.ts'
+import { CBE_DERIVATION_VERSION, CBE_TIER_E1_USER_EVENTS, QUESTION_SHOWED_ACTION } from '../src/cognitive-map.ts'
 import {
   appendEvent,
   buildProgressReport,
+  countEvents,
   listEvents,
   newEvent,
   truncatePayload,
@@ -173,6 +174,38 @@ describe('ledger append + query', () => {
     await expect(listEvents(domain, { limit: LIST_EVENTS_MAX_LIMIT + 1 })).rejects.toThrow(RangeError)
     await expect(listEvents(domain, { since: 'not-a-date' })).rejects.toThrow(RangeError)
     await expect(listEvents(domain, { until: 'not-a-date' })).rejects.toThrow(RangeError)
+  })
+
+  it('caps the NEWEST window, not the oldest, so a long ledger never freezes', async () => {
+    const domain = await domainHarness()
+    const base = new Date('2026-08-01T00:00:00.000Z')
+    for (let i = 0; i < 5; i += 1) {
+      await appendEvent(domain, { actor: PANEL_ACTOR, action: `a.${i}`, now: new Date(base.getTime() + i * 1000) })
+    }
+    // The window is the newest matches, still handed back time-ascending so
+    // the downstream folds (sessionize, symbol sequences) keep their order.
+    const newest = await listEvents(domain, { limit: 2 })
+    expect(newest.map(event => event.action)).toEqual(['a.3', 'a.4'])
+    const newestDesc = await listEvents(domain, { limit: 2, order: 'desc' })
+    expect(newestDesc.map(event => event.action)).toEqual(['a.4', 'a.3'])
+    // `oldest` is opt-in, for callers that really want the head of history.
+    const oldest = await listEvents(domain, { limit: 2, anchor: 'oldest' })
+    expect(oldest.map(event => event.action)).toEqual(['a.0', 'a.1'])
+  })
+
+  it('counts every match uncapped, so a truncated window can say so', async () => {
+    const domain = await domainHarness()
+    const base = new Date('2026-08-01T00:00:00.000Z')
+    for (let i = 0; i < 5; i += 1) {
+      await appendEvent(domain, { actor: PANEL_ACTOR, action: `a.${i}`, now: new Date(base.getTime() + i * 1000) })
+    }
+    await appendEvent(domain, { actor: SERVICE_ACTOR, action: 'b.other', now: new Date(base.getTime() + 5000) })
+    expect(await countEvents(domain)).toBe(6)
+    expect(await countEvents(domain, { actorKind: 'system' })).toBe(1)
+    // The capped window is 2 long; the honest total is 6.
+    const window = await listEvents(domain, { limit: 2 })
+    expect(window).toHaveLength(2)
+    expect(await countEvents(domain)).toBeGreaterThan(window.length)
   })
 })
 
@@ -531,6 +564,53 @@ describe('cognitive beidou remotes (CBE service wiring)', () => {
       actor: { kind: 'user', id: 'panel' },
       payload: { count: 1, lineIds: ['c9'] },
     })
+  })
+
+  it('does not let the instrument’s own observations lift a line’s evidence tier', async () => {
+    const { domain, service } = await serviceHarness()
+    await domain.table('ideas').put('i1', {
+      id: 'i1',
+      title: 'Observer-proof line',
+      hypothesis: 'The tier comes from research, not from looking.',
+      status: 'active',
+      createdAt: new Date(Date.now() - 30 * 86_400_000).toISOString(),
+    })
+    const now = Date.now()
+    // One real event short of the E1 window mass (CBE_TIER_E1_USER_EVENTS).
+    for (let i = 0; i < CBE_TIER_E1_USER_EVENTS - 1; i += 1) {
+      await appendEvent(domain, {
+        actor: WIKI_AGENT_ACTOR,
+        action: 'knowledge.claim.set',
+        refs: { ideaId: 'i1' },
+        payload: { status: 'supported' },
+        now: new Date(now - (CBE_TIER_E1_USER_EVENTS - i) * 1000),
+      })
+    }
+    // The instrument's own ticks: without excluding these, opening the panel
+    // a few times would push the window over the E1 floor and upgrade the
+    // line from e0 to e0+e1 with no research behind it.
+    await appendEvent(domain, { actor: PANEL_ACTOR, action: QUESTION_SHOWED_ACTION, refs: {}, payload: { count: 1 } })
+    await appendEvent(domain, { actor: PANEL_ACTOR, action: QUESTION_SHOWED_ACTION, refs: {}, payload: { count: 1 } })
+
+    const brief = await service.generateBrief({})
+    expect(brief.ok).toBe(true)
+    if (!brief.ok) throw new Error('unreachable')
+    expect(brief.value.markdown).toContain('| e0 |')
+    expect(brief.value.markdown).not.toContain('| e0+e1 |')
+
+    // Control: one more REAL decision-grade event crosses the floor, so the
+    // test above is not vacuous — the tier does move when research happens.
+    await appendEvent(domain, {
+      actor: WIKI_AGENT_ACTOR,
+      action: 'knowledge.claim.set',
+      refs: { ideaId: 'i1' },
+      payload: { status: 'supported' },
+      now: new Date(now),
+    })
+    const upgraded = await service.generateBrief({})
+    expect(upgraded.ok).toBe(true)
+    if (!upgraded.ok) throw new Error('unreachable')
+    expect(upgraded.value.markdown).toContain('| e0+e1 |')
   })
 
   it('addJournalEntry answers a question card with the I4 answered meta event', async () => {

@@ -156,7 +156,7 @@ export function DataSection({ backup, exportWiki, importWiki, t }: {
           </p>
           <ul className={css.artifactList}>
             {pending.summary.tables.map(table => (
-              <li key={table.name}>{t(`wikiTable.${table.name}`)} × {table.count}</li>
+              <li key={table.name}>{t(`wikiTable.${table.name}` as Parameters<ResearchT>[0])} × {table.count}</li>
             ))}
           </ul>
           {replaceArmed ? (

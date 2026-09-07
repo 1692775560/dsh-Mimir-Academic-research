@@ -102,6 +102,20 @@ export function DigestView({
 }) {
   const [eurekaTitle, setEurekaTitle] = useState('')
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+
+  // Guard: a test or any caller may mount this component without a `digest`
+  // prop. The store always supplies one in production, but reading
+  // `digest.report` before that check would throw on `undefined`. Render the
+  // same idle card used for the `status === 'idle'` branch instead.
+  if (digest == null) {
+    return (
+      <div className={css.reportCard}>
+        <ViewHead title={t('digest.title')} subtitle={t('digest.subtitle')} />
+        <p className={css.hint}>{t('digest.empty')}</p>
+      </div>
+    )
+  }
+
   const report: ResearchDigestView | null = digest.report
   const lang = digest.lang
 

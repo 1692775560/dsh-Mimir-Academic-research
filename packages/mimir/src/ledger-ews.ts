@@ -76,8 +76,6 @@ export interface CbeEwsReading {
   readonly conditionalEntropy: number | null
   /** The order k actually used (0 when only H₁ is reported). */
   readonly order: number
-  /** H(k) at the largest admissible k — the sequence's unpredictability. */
-  readonly entropyRate: number | null
   /** H₁ − H(1): symbolic persistence, the critical-slowing-down analogue. */
   readonly lag1MutualInformation: number | null
   /** Mean −log₂ p of each symbol given its k predecessors. */
@@ -186,7 +184,7 @@ export function conditionalEntropy(
   const byContext = new Map<string, Map<string, number>>()
   const contextTotals = new Map<string, number>()
   for (let i = order; i < symbols.length; i += 1) {
-    const context = symbols.slice(i - order, i).join(' ')
+    const context = symbols.slice(i - order, i).join('\u0000')
     const next = symbols[i]
     if (next === undefined) continue
     const bucket = byContext.get(context) ?? new Map<string, number>()
@@ -223,7 +221,7 @@ export function surprisalSequence(
   const byContext = new Map<string, Map<string, number>>()
   const contextTotals = new Map<string, number>()
   for (let i = order; i < symbols.length; i += 1) {
-    const context = symbols.slice(i - order, i).join(' ')
+    const context = symbols.slice(i - order, i).join('\u0000')
     const next = symbols[i]
     if (next === undefined) continue
     const bucket = byContext.get(context) ?? new Map<string, number>()
@@ -233,7 +231,7 @@ export function surprisalSequence(
   }
   return symbols.map((symbol, index) => {
     if (index < order) return null
-    const context = symbols.slice(index - order, index).join(' ')
+    const context = symbols.slice(index - order, index).join('\u0000')
     const bucket = byContext.get(context)
     const total = contextTotals.get(context) ?? 0
     if (bucket === undefined || total <= 0) return null
@@ -286,7 +284,6 @@ export function ewsReading(
     unigramEntropy: h1,
     conditionalEntropy: hk,
     order,
-    entropyRate: hk,
     lag1MutualInformation: lag1,
     meanSurprisal,
   })

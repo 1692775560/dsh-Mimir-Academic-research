@@ -9,7 +9,7 @@
  */
 
 import { readFile, stat } from 'node:fs/promises'
-import { isAbsolute, resolve, sep } from 'node:path'
+import { basename, isAbsolute, resolve, sep } from 'node:path'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 
 /** Paper directory used when neither the request nor the project names one. */
@@ -124,7 +124,7 @@ export async function saveTextFileOptimistic(
     // stat is an I/O race the wire union cannot name; fail loud instead of
     // reporting the stale base mtime as the commit's.
     if (committed === undefined) {
-      throw new Error(`research: '${filePath}' disappeared during an atomic save`)
+      throw new Error(`research: '${basename(filePath)}' disappeared during an atomic save`)
     }
     return { kind: 'saved', mtimeMs: committed.mtimeMs }
   })

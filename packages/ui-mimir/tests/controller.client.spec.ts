@@ -125,6 +125,8 @@ function stubRemote(overrides: Partial<ResearchRemote>): ResearchRemote {
     addJournalEntry: missing('addJournalEntry'),
     getWorktree: missing('getWorktree'),
     getForaging: missing('getForaging'),
+    getMomentIndex: missing('getMomentIndex'),
+    getEurekaView: missing('getEurekaView'),
     setMainline: missing('setMainline'),
     setIdeaParent: missing('setIdeaParent'),
     adoptIdea: missing('adoptIdea'),

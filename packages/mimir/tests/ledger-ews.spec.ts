@@ -180,7 +180,6 @@ describe('window reading', () => {
     // "perfectly predictable", which is a claim about nothing.
     expect(reading.unigramEntropy).toBeNull()
     expect(reading.conditionalEntropy).toBeNull()
-    expect(reading.entropyRate).toBeNull()
     expect(reading.lag1MutualInformation).toBeNull()
     expect(reading.meanSurprisal).toBeNull()
     expect(reading.order).toBe(0)

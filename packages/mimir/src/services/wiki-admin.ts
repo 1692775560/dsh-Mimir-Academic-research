@@ -11,6 +11,7 @@ import { isBackupFileName } from '../backup.ts'
 import {
   buildWikiSnapshot,
   snapshotEnvelopeError,
+  snapshotTables,
   tableRowsError,
   WIKI_TABLE_KEY,
   WIKI_TABLE_NAMES,
@@ -83,7 +84,10 @@ export function listProjects(deps: WikiAdminDeps): Promise<ResearchListProjectsR
 
 /**
  * Export the whole wiki as one snapshot: every record of all seven tables
- * under the format envelope (backup/migration).
+ * plus the whole `events` ledger under the format envelope (backup/
+ * migration). The ledger travels with the wiki because every CBE organ is a
+ * pure fold over it — a snapshot without it would restore the library and
+ * silently zero the researcher's whole cognitive layer.
  * @param deps - open wiki domain.
  * @returns the snapshot; the table arrays carry each record with its
  * primary-key field (`arxivId`/`id`).
@@ -105,11 +109,13 @@ export async function exportWiki(deps: WikiAdminDeps): Promise<ResearchExportWik
  * schema BEFORE any write, so a bad snapshot changes nothing. `merge`
  * upserts only absent primary keys — existing records are never
  * overwritten, just counted as skipped (conservative first). `replace`
- * wipes all seven tables first, so it additionally requires
+ * wipes the tables the snapshot carries first, so it additionally requires
  * `confirmReplace: true` (`invalid-input` otherwise).
  * @param deps - open wiki domain.
  * @param request - the parsed snapshot JSON, the mode, and the replace
- * confirmation flag.
+ * confirmation flag. A legacy v2 snapshot (seven tables, no `events`) is
+ * still accepted: it restores no ledger and — even in `replace` mode — never
+ * wipes the ledger it says nothing about.
  * @returns per-table imported/skipped row counts.
  */
 export async function importWiki(
@@ -132,16 +138,17 @@ export async function importWiki(
   const envelopeError = snapshotEnvelopeError(request.snapshot)
   if (envelopeError !== null) return rejected({ code: 'invalid-input', message: envelopeError })
   const snapshot = request.snapshot
-  for (const name of WIKI_TABLE_NAMES) {
+  const names = snapshotTables(snapshot)
+  for (const name of names) {
     const rowError = tableRowsError(name, snapshot.tables[name])
     if (rowError !== null) return rejected({ code: 'invalid-input', message: rowError })
   }
   const zeroCounts = (): Record<ResearchWikiTableName, number> => ({
-    papers: 0, ideas: 0, claims: 0, projects: 0, experiments: 0, servers: 0, figures: 0,
+    papers: 0, ideas: 0, claims: 0, projects: 0, experiments: 0, servers: 0, figures: 0, events: 0,
   })
   const imported = zeroCounts()
   const skipped = zeroCounts()
-  for (const name of WIKI_TABLE_NAMES) {
+  for (const name of names) {
     const table = deps.domain.table(name) as {
       get: (key: string) => unknown
       put: (key: string, value: unknown) => Promise<void>

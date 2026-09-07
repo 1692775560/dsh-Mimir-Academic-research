@@ -11,8 +11,10 @@ import type { ResearchWikiDomain } from '../store.ts'
 import {
   appendEvent,
   buildProgressReport,
+  countEvents,
   emitEvent,
   EVENT_PAYLOAD_MAX_CHARS,
+  isObservationEvent,
   JOURNAL_TEXT_MAX_CHARS,
   LIST_EVENTS_MAX_LIMIT,
   listEvents,
@@ -38,14 +40,17 @@ import type {
   CbeMainlineDeclaration,
   CbeWorktreeLane,
 } from '../worktree.ts'
-import { EUREKA_ACTION } from '../eureka.ts'
-import { MOMENT_PIN_ACTION } from '../moment-index.ts'
+import { CBE_EUREKA_WINDOW_DAYS, EUREKA_ACTION, eurekaContextAt, eurekaModelAt, eurekaProfileOf } from '../eureka.ts'
+import { MOMENT_PIN_ACTION, deriveCuratedMoments } from '../moment-index.ts'
+import { CBE_MOMENT_RETURN_GAP_DAYS } from '../moment-candidates.ts'
 import { assembleDigest } from '../report-tier.ts'
 import type { CbeDigestTier } from '../report-tier.ts'
 import { renderDigest } from '../render-digest.ts'
 import type {
+  EventRecord,
   EventRefs,
   LedgerActorKind,
+  ResearchEventFilter,
   ResearchAddJournalEntryResult,
   ResearchBriefQuestion,
   ResearchCloseIdeaResult,
@@ -58,6 +63,11 @@ import type {
   ResearchGetHabitsResult,
   ResearchGetLibraryThemesResult,
   ResearchGetWorktreeResult,
+  ResearchGetMomentIndexResult,
+  ResearchGetEurekaViewResult,
+  ResearchMomentIndexView,
+  ResearchMomentView,
+  ResearchEurekaView,
   ResearchListEventsResult,
   ResearchProgressReportOptions,
   ResearchProgressReportResult,
@@ -70,6 +80,7 @@ import type {
   ResearchGenerateDigestResult,
   ResearchGenerateDigestOptions,
 } from '../types.ts'
+import type { CbeWindowFeatures } from '../window-features.ts'
 import { rejected, success } from './common.ts'
 
 /** Everything the ledger domain functions need from the service scope. */
@@ -113,13 +124,62 @@ function resolveWindow(
   return { since: new Date(anchor - spanDays * MS_PER_DAY).toISOString(), until: untilIso }
 }
 
+/** One bounded ledger read: what was folded, and what was really there. */
+interface LedgerWindow {
+  /** The events handed to the fold — the newest window, time-ascending, observations out. */
+  readonly events: readonly EventRecord[]
+  /** Every event matching the filter, uncapped by {@link LIST_EVENTS_MAX_LIMIT}. */
+  readonly total: number
+  /** Whether the fold saw less than the whole match set. */
+  readonly truncated: boolean
+}
+
+/**
+ * Read one bounded ledger window for a pure CBE fold. Three guards that the
+ * bare `listEvents` call used to leave open:
+ *
+ * - **Newest window, not oldest.** `listEvents` caps at
+ *   {@link LIST_EVENTS_MAX_LIMIT}; keeping the head of history froze every
+ *   organ on the first events ever written, silently and forever.
+ * - **Observation events stripped.** The read path writes
+ *   `cbe.question.showed` / `.answered` about itself; counting them let
+ *   repeatedly opening the panel inflate the window mass and lift a line's
+ *   I2 evidence tier with no research behind it.
+ * - **The real total reported.** `events.length` is the capped window, not
+ *   the ledger — callers must not dress the cap up as the total.
+ *
+ * @param domain - open wiki domain.
+ * @param filter - the same predicates `listEvents` takes.
+ * @param label - what is folding, for the truncation warning.
+ */
+async function loadLedgerWindow(
+  domain: ResearchWikiDomain,
+  filter: Omit<ResearchEventFilter, 'limit' | 'order' | 'anchor'>,
+  label: string,
+): Promise<LedgerWindow> {
+  const [events, total] = await Promise.all([
+    listEvents(domain, { ...filter, limit: LIST_EVENTS_MAX_LIMIT }),
+    countEvents(domain, filter),
+  ])
+  const research = events.filter(event => !isObservationEvent(event))
+  const truncated = total > LIST_EVENTS_MAX_LIMIT
+  if (truncated) {
+    console.warn(
+      `[mimir] ledger window truncated: ${label} folded ${research.length} of ${total} events (cap ${LIST_EVENTS_MAX_LIMIT})`,
+    )
+  }
+  return { events: research, total, truncated }
+}
+
 /**
  * Query the research ledger (the append-only growth record). Every field is
  * an optional filter: a project ref, an actor kind, an action prefix
  * (e.g. `compute.`), and ISO-8601 time bounds (`since` inclusive, `until`
  * exclusive). The result is capped (default 200, hard cap 1000) and ordered
- * by (ts, id); `order: 'desc'` inverts it. An illegal limit or an
- * unparseable bound is `invalid-input` — the ledger itself is never mutated
+ * by (ts, id); `order: 'desc'` inverts it. The cap keeps the NEWEST matches
+ * (`anchor: 'oldest'` is the explicit exception), so a ledger past the cap
+ * still returns live activity. An illegal limit, anchor, or bound, or an
+ * unparseable one, is `invalid-input` — the ledger itself is never mutated
  * by this read.
  * @param deps - open wiki domain.
  * @param request - the optional filters.
@@ -135,6 +195,7 @@ export async function listEventsRemote(
     until?: string | undefined
     limit?: number | undefined
     order?: string | undefined
+    anchor?: string | undefined
   },
 ): Promise<ResearchListEventsResult> {
   const kind = request.actorKind
@@ -145,6 +206,10 @@ export async function listEventsRemote(
   if (order !== undefined && order !== 'asc' && order !== 'desc') {
     return rejected({ code: 'invalid-input', message: `order must be 'asc' or 'desc', got '${order}'` })
   }
+  const anchor = request.anchor
+  if (anchor !== undefined && anchor !== 'newest' && anchor !== 'oldest') {
+    return rejected({ code: 'invalid-input', message: `anchor must be 'newest' or 'oldest', got '${anchor}'` })
+  }
   try {
     const events = await listEvents(deps.domain, {
       ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
@@ -154,6 +219,7 @@ export async function listEventsRemote(
       ...(request.until === undefined ? {} : { until: request.until }),
       ...(request.limit === undefined ? {} : { limit: request.limit }),
       ...(order === undefined ? {} : { order }),
+      ...(anchor === undefined ? {} : { anchor }),
     })
     return success({ events })
   } catch (error) {
@@ -253,12 +319,11 @@ export async function generateBriefRemote(
     projectId: options.projectId ?? null,
   }
   try {
-    const events = await listEvents(deps.domain, {
+    const { events } = await loadLedgerWindow(deps.domain, {
       ...(options.projectId === undefined ? {} : { projectId: options.projectId }),
       ...(options.since === undefined ? {} : { since: options.since }),
       ...(options.until === undefined ? {} : { until: options.until }),
-      limit: LIST_EVENTS_MAX_LIMIT,
-    })
+    }, 'brief')
     const wiki = wikiSnapshot(deps.domain)
     const brief = deriveBrief(events, wiki, window, Date.now())
     const questions = briefQuestions(brief, wiki)
@@ -426,7 +491,7 @@ export async function addJournalEntryRemote(
  */
 export async function getEvidenceProfileRemote(deps: LedgerDeps): Promise<ResearchGetEvidenceProfileResult> {
   try {
-    const events = await listEvents(deps.domain, { limit: LIST_EVENTS_MAX_LIMIT })
+    const { events } = await loadLedgerWindow(deps.domain, {}, 'evidence profile')
     const model = evidenceModelAt(events)
     const profile = evidenceProfileOf(model)
     return success({
@@ -436,7 +501,8 @@ export async function getEvidenceProfileRemote(deps: LedgerDeps): Promise<Resear
         actions: profile.actions,
       },
     })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the evidence profile could not be folded', error)
     return rejected({ code: 'operation-failed', message: 'the evidence profile could not be folded' })
   }
 }
@@ -452,7 +518,7 @@ export async function getEvidenceProfileRemote(deps: LedgerDeps): Promise<Resear
  */
 export async function getForagingRemote(deps: LedgerDeps): Promise<ResearchGetForagingResult> {
   try {
-    const events = await listEvents(deps.domain, { limit: LIST_EVENTS_MAX_LIMIT })
+    const { events } = await loadLedgerWindow(deps.domain, {}, 'foraging')
     const wiki = wikiSnapshot(deps.domain)
     const layer = deriveForaging(events, wiki, Date.now())
     return success({
@@ -463,7 +529,8 @@ export async function getForagingRemote(deps: LedgerDeps): Promise<ResearchGetFo
         cards: layer.cards,
       },
     })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the foraging layer could not be derived', error)
     return rejected({ code: 'operation-failed', message: 'the foraging layer could not be derived' })
   }
 }
@@ -512,7 +579,7 @@ function declaredView(
  */
 export async function getWorktreeRemote(deps: LedgerDeps): Promise<ResearchGetWorktreeResult> {
   try {
-    const events = await listEvents(deps.domain, { limit: LIST_EVENTS_MAX_LIMIT })
+    const { events } = await loadLedgerWindow(deps.domain, {}, 'worktree')
     const wiki = wikiSnapshot(deps.domain)
     const tree = deriveWorktree(events, wiki, Date.now())
     const labels = worktreeLabels(wiki)
@@ -530,7 +597,8 @@ export async function getWorktreeRemote(deps: LedgerDeps): Promise<ResearchGetWo
       counts: Object.freeze({ ...tree.counts }),
     })
     return success({ worktree: view })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the worktree could not be derived', error)
     return rejected({ code: 'operation-failed', message: 'the worktree could not be derived' })
   }
 }
@@ -580,7 +648,8 @@ export async function setMainlineRemote(
       refs: ideaId !== undefined ? { ideaId } : { projectId: projectId as string },
     })
     return success({ event })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the mainline declaration could not be written', error)
     return rejected({ code: 'operation-failed', message: 'the mainline declaration could not be written' })
   }
 }
@@ -619,7 +688,8 @@ export async function setIdeaParentRemote(
         payload: { parentIdeaId: null },
       })
       return success({ event })
-    } catch {
+    } catch (error) {
+      console.warn('[mimir]', 'the derivation edge could not be written', error)
       return rejected({ code: 'operation-failed', message: 'the derivation edge could not be written' })
     }
   }
@@ -650,7 +720,8 @@ export async function setIdeaParentRemote(
       payload: { parentIdeaId },
     })
     return success({ event })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the derivation edge could not be written', error)
     return rejected({ code: 'operation-failed', message: 'the derivation edge could not be written' })
   }
 }
@@ -709,7 +780,8 @@ export async function closeIdeaRemote(
       payload: { reason },
     })
     return success({ event })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the close could not be written', error)
     return rejected({ code: 'operation-failed', message: 'the close could not be written' })
   }
 }
@@ -761,7 +833,8 @@ export async function adoptIdeaRemote(
       payload: {},
     })
     return success({ event })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the adoption could not be written', error)
     return rejected({ code: 'operation-failed', message: 'the adoption could not be written' })
   }
 }
@@ -804,7 +877,8 @@ export async function getLibraryThemesRemote(
         speaks: layer.speaks,
       },
     })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the library themes could not be derived', error)
     return rejected({ code: 'operation-failed', message: 'the library themes could not be derived' })
   }
 }
@@ -833,11 +907,11 @@ export async function getHabitsRemote(
 ): Promise<ResearchGetHabitsResult> {
   try {
     const window = resolveWindow(request.since, request.until, DEFAULT_SPAN_DAYS)
-    const events = await listEvents(deps.domain, {
-      since: window.since,
-      until: window.until,
-      limit: LIST_EVENTS_MAX_LIMIT,
-    })
+    const { events } = await loadLedgerWindow(
+      deps.domain,
+      { since: window.since, until: window.until },
+      'habits',
+    )
     const profile = deriveHabits(events, window.since, window.until, Date.now())
     return success({
       habits: {
@@ -853,7 +927,8 @@ export async function getHabitsRemote(
         speaks: profile.speaks,
       },
     })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the habit profile could not be derived', error)
     return rejected({ code: 'operation-failed', message: 'the habit profile could not be derived' })
   }
 }
@@ -904,12 +979,11 @@ export async function generateJournalDraftRemote(
   try {
     const nowMs = Date.now()
     const window = resolveWindow(request.since, request.until, DRAFT_SPAN_DAYS[kind])
-    const events = await listEvents(deps.domain, {
+    const { events } = await loadLedgerWindow(deps.domain, {
       ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
       since: window.since,
       until: window.until,
-      limit: LIST_EVENTS_MAX_LIMIT,
-    })
+    }, 'journal draft')
     const wiki = wikiSnapshot(deps.domain)
     const papers = [...deps.domain.table('papers').entries()].map(([, record]) => record)
     const briefWindow: CbeBriefWindow = {
@@ -986,14 +1060,21 @@ export async function setEurekaRemote(
     })
   }
   try {
+    // Context receipt, computed BEFORE the write so it describes the road the
+    // declaration caps — a pure derivation, returned (never persisted): re-
+    // computing it later over the same ledger yields the same numbers.
+    const foldedNow = await loadLedgerWindow(deps.domain, {}, 'setEureka context')
+    const lineId = ideaId !== undefined ? ideaId : (projectId !== undefined ? `project:${projectId}` : null)
+    const context = eurekaContextAt(foldedNow.events, Date.now(), lineId)
     const event = await appendEvent(deps.domain, {
       actor: PANEL_ACTOR,
       action: EUREKA_ACTION,
       refs: ideaId !== undefined ? { ideaId } : { projectId: projectId as string },
       payload: { title },
     })
-    return success({ event })
-  } catch {
+    return success({ event, context })
+  } catch (error) {
+    console.warn('[mimir]', 'the eureka declaration could not be written', error)
     return rejected({ code: 'operation-failed', message: 'the eureka declaration could not be written' })
   }
 }
@@ -1034,8 +1115,149 @@ export async function pinMomentRemote(
       payload: { targetEventId, note: note ?? null, pinned: pinned ?? true },
     })
     return success({ event })
-  } catch {
+  } catch (error) {
+    console.warn('[mimir]', 'the moment pin could not be written', error)
     return rejected({ code: 'operation-failed', message: 'the moment pin could not be written' })
+  }
+}
+
+/**
+ * Read the unified moment timeline (S9b): the five deterministic candidate
+ * sources folded over the window, unified with the researcher's pins and
+ * declines. Pull-only — there is no push, no notification, no ranking, and
+ * every row is refusable; canonical status belongs to the declarations
+ * (`cbe.moment.pin` / `cbe.eureka.set`), never to this read.
+ *
+ * Window discipline: the fold receives the window events PLUS a lookback
+ * prefix (`since − (CBE_MOMENT_RETURN_GAP_DAYS + 1) days`) so dormancy
+ * returns and lane-openings can judge line history; prefix events never
+ * anchor. Truncation registers as a silence, not as a smaller truth.
+ * @param deps - open wiki domain.
+ * @param request - optional ISO-8601 window bounds (defaults: 30 days to now).
+ * @returns the moment index view.
+ */
+export async function getMomentIndexRemote(
+  deps: LedgerDeps,
+  request: {
+    since?: string | undefined
+    until?: string | undefined
+  } = {},
+): Promise<ResearchGetMomentIndexResult> {
+  for (const bound of [request.since, request.until]) {
+    if (bound !== undefined && Number.isNaN(Date.parse(bound))) {
+      return rejected({ code: 'invalid-input', message: `since/until must be ISO-8601, got '${bound}'` })
+    }
+  }
+  const window = resolveWindow(request.since, request.until, DEFAULT_SPAN_DAYS)
+  try {
+    const folded = await loadLedgerWindow(deps.domain, {
+      since: window.since,
+      until: window.until,
+    }, 'moment index')
+    // Lookback prefix: line-history judgements (dormancy, lane-opening) read
+    // before the window; the prefix never anchors a candidate.
+    const prefixSince = new Date(
+      Date.parse(window.since) - (CBE_MOMENT_RETURN_GAP_DAYS + 1) * MS_PER_DAY,
+    ).toISOString()
+    const prefixFolded = await loadLedgerWindow(deps.domain, {
+      since: prefixSince,
+      until: window.until,
+    }, 'moment index lookback')
+    // Merge window + prefix (dedupe by id) — the fold sorts canonically.
+    const seen = new Set(folded.events.map(event => event.id))
+    const merged = [...folded.events, ...prefixFolded.events.filter(event => !seen.has(event.id))]
+
+    const wiki = wikiSnapshot(deps.domain)
+    const labels = new Map<string, string>([
+      ...wiki.ideas.map(idea => [idea.id, idea.title] as const),
+      ...wiki.projects.map(project => [`project:${project.id}`, project.title] as const),
+    ])
+
+    const curated = deriveCuratedMoments(merged, window.since, window.until)
+    const speaks = eurekaProfileOf(eurekaModelAt(merged), Date.now()).speaks
+    const moments: readonly ResearchMomentView[] = curated.map(moment => Object.freeze({
+      id: moment.id,
+      at: moment.at,
+      lineId: moment.lineId,
+      lineLabel: moment.lineId === null ? null : labels.get(moment.lineId) ?? moment.lineId,
+      kind: moment.kind,
+      sources: moment.sources,
+      action: moment.action,
+      note: moment.note,
+      pinned: moment.pinned,
+      declined: moment.declined,
+      canonical: moment.pinned || moment.kind === 'eureka',
+      eventCount: moment.eventCount,
+      stats: moment.stats,
+      closeness: moment.closeness,
+      evidence: moment.evidence,
+    }))
+    const view: ResearchMomentIndexView = Object.freeze({
+      derivedAt: new Date().toISOString(),
+      window: Object.freeze({ since: window.since, until: window.until }),
+      retrieval: Object.freeze({
+        eventsHit: folded.events.length,
+        eventsTotal: folded.total,
+        truncated: folded.truncated,
+        silences: Object.freeze(folded.truncated
+          ? [`events truncated: window matched ${folded.total}, fold cap ${LIST_EVENTS_MAX_LIMIT}, folded newest ${folded.events.length}`]
+          : []),
+      }),
+      speaks,
+      moments: Object.freeze(moments),
+    })
+    return success(view)
+  } catch (error) {
+    console.warn('[mimir]', 'the moment index could not be derived', error)
+    return rejected({ code: 'operation-failed', message: 'the moment index could not be derived' })
+  }
+}
+
+/**
+ * Read the retrospective eureka view (S8c): every declared milestone with its
+ * lead-in and control window features (the shared fold), plus the profile —
+ * whose lift rows stay null below the declaration floor (I2). Descriptive
+ * only: nothing here predicts or scores; the UI renders it with the same
+ * "description, not prediction" note the digest carries.
+ * @param deps - open wiki domain.
+ * @returns the eureka view.
+ */
+export async function getEurekaViewRemote(
+  deps: LedgerDeps,
+): Promise<ResearchGetEurekaViewResult> {
+  try {
+    // Eureka lead-ins reach 2 × CBE_EUREKA_WINDOW_DAYS before each
+    // declaration; open the whole ledger window so controls stay observable.
+    const folded = await loadLedgerWindow(deps.domain, {}, 'eureka view')
+    const wiki = wikiSnapshot(deps.domain)
+    const labels = new Map<string, string>([
+      ...wiki.ideas.map(idea => [idea.id, idea.title] as const),
+      ...wiki.projects.map(project => [`project:${project.id}`, project.title] as const),
+    ])
+    const model = eurekaModelAt(folded.events)
+    const profile = eurekaProfileOf(model, Date.now())
+    const declarations = model.declarations.map((declaration, index) => {
+      const lead = model.leads[index]
+      const control = model.controls[index] ?? null
+      return Object.freeze({
+        id: declaration.id,
+        at: declaration.at,
+        title: declaration.title,
+        lineId: declaration.lineId,
+        lineLabel: declaration.lineId === null ? null : labels.get(declaration.lineId) ?? declaration.lineId,
+        lead: lead as CbeWindowFeatures,
+        control,
+      })
+    })
+    const view: ResearchEurekaView = Object.freeze({
+      derivedAt: new Date().toISOString(),
+      declarations: Object.freeze(declarations),
+      profile,
+    })
+    return success(view)
+  } catch (error) {
+    console.warn('[mimir]', 'the eureka view could not be derived', error)
+    return rejected({ code: 'operation-failed', message: 'the eureka view could not be derived' })
   }
 }
 
@@ -1070,8 +1292,11 @@ export async function generateDigestRemote(
   const nowMs = Date.now()
   let window: { readonly since: string; readonly until: string }
   if (safeTier === 'project' && request.since === undefined) {
-    const all = await listEvents(deps.domain, { limit: LIST_EVENTS_MAX_LIMIT })
-    const earliestMs = all.reduce((min, event) => {
+    // Explicit `oldest`: this call genuinely wants the head of history (the
+    // project tier opens the whole ledger), where every other read folds the
+    // newest window. Without the anchor the cap would answer "newest 1000".
+    const oldest = await listEvents(deps.domain, { anchor: 'oldest', limit: 1 })
+    const earliestMs = oldest.reduce((min, event) => {
       const ms = Date.parse(event.ts)
       return Number.isNaN(ms) ? min : Math.min(min, ms)
     }, nowMs)
@@ -1083,11 +1308,23 @@ export async function generateDigestRemote(
     window = resolveWindow(request.since, request.until, DIGEST_SPAN_DAYS[safeTier])
   }
   try {
-    const events = await listEvents(deps.domain, {
+    const folded = await loadLedgerWindow(deps.domain, {
       since: window.since,
       until: window.until,
-      limit: LIST_EVENTS_MAX_LIMIT,
-    })
+    }, `digest (${safeTier})`)
+    const events = folded.events
+    // Eureka reads a control window of `2 × CBE_EUREKA_WINDOW_DAYS` BEFORE
+    // each declaration; a short digest window would make those controls
+    // "unobservable" and silently drop declarations. Fetch an extended
+    // lookback so the eureka model sees its baseline, while the other folds
+    // keep using the (window-scoped) `events` above.
+    const eurekaLookbackSince = new Date(
+      Date.parse(window.since) - 2 * CBE_EUREKA_WINDOW_DAYS * MS_PER_DAY,
+    ).toISOString()
+    const eurekaFolded = await loadLedgerWindow(deps.domain, {
+      since: eurekaLookbackSince,
+      until: window.until,
+    }, `digest eureka lookback (${safeTier})`)
     const wiki = wikiSnapshot(deps.domain)
     const papers = [...deps.domain.table('papers').entries()].map(([, record]) => record)
     const digest = assembleDigest({
@@ -1098,10 +1335,29 @@ export async function generateDigestRemote(
       until: window.until,
       tier: safeTier,
       nowMs,
+      // Honest total: the capped window `events` is not the ledger, so hand
+      // the real match count to `assembleDigest` instead of letting it fall
+      // back to `events.length`.
+      eventsTotal: folded.total,
+      // Give eureka the extended lookback (see above) so its control windows
+      // stay observable; the other folds never receive these events.
+      eurekaEvents: eurekaFolded.events,
     })
-    const markdown = renderDigest(digest, lang as 'zh' | 'en')
+    // Register a truncation as a silence rather than letting the fold cap pass
+    // itself off as the whole history. `eventsTotal` is already the true
+    // total inside the digest; only the silence needs appending here.
+    const retrieval = Object.freeze({
+      ...digest.retrieval,
+      silences: folded.truncated
+        ? Object.freeze([
+          ...digest.retrieval.silences,
+          `events 截断：窗口共 ${folded.total} 条，超过单次折叠上限 ${LIST_EVENTS_MAX_LIMIT}，本报告只折叠最新的 ${digest.retrieval.eventsHit} 条`,
+        ])
+        : digest.retrieval.silences,
+    })
+    const markdown = renderDigest({ ...digest, retrieval }, lang as 'zh' | 'en')
     return success({
-      digest,
+      digest: { ...digest, retrieval },
       markdown,
       tier: safeTier,
       lang,

@@ -37,6 +37,10 @@ import type {
   ResearchAdoptIdeaResult,
   ResearchGetForagingResult,
   ResearchGetWorktreeResult,
+  ResearchGetMomentIndexResult,
+  ResearchGetEurekaViewResult,
+  ResearchMomentIndexView,
+  ResearchEurekaView,
   ResearchForagingView,
   ResearchSetIdeaParentResult,
   ResearchSetMainlineResult,
@@ -368,12 +372,19 @@ export interface ResearchRemote {
     projectId?: string | undefined
     title: string
   }) => Promise<RemoteResult<ResearchSetEurekaResult>>
-  /** Pin (or unpin) one moment — the explicit bookmark of a curated instant. */
+  /** Pin (or unpin/decline) one moment — the explicit bookmark of a curated instant. */
   pinMoment: (request: {
     targetEventId: string
     note?: string | undefined
     pinned?: boolean | undefined
   }) => Promise<RemoteResult<ResearchPinMomentResult>>
+  /** Read the unified moment timeline (S9b): pull-only, five sources, zero verbs. */
+  getMomentIndex: (request: {
+    since?: string | undefined
+    until?: string | undefined
+  }) => Promise<RemoteResult<ResearchGetMomentIndexResult>>
+  /** Read the retrospective eureka view (S8c): declarations × measured roads. */
+  getEurekaView: () => Promise<RemoteResult<ResearchGetEurekaViewResult>>
 }
 
 /** Quiet period after the last keystroke before the draft autosaves. */
@@ -626,6 +637,20 @@ export interface ResearchForagingSlice {
   readonly failure: ResearchFailureView | null
 }
 
+/** The moments (S9b) slice: the unified timeline, cold until first opened. */
+export interface ResearchMomentsSlice {
+  readonly status: ResearchLoadStatus
+  readonly view: ResearchMomentIndexView | null
+  readonly failure: ResearchFailureView | null
+}
+
+/** The eureka (S8c) slice: declarations × measured roads, cold until opened. */
+export interface ResearchEurekaSlice {
+  readonly status: ResearchLoadStatus
+  readonly view: ResearchEurekaView | null
+  readonly failure: ResearchFailureView | null
+}
+
 /** The selected project's `references.bib` view, edited entry-wise through the panel. */
 export interface ResearchBibView {
   readonly projectId: string
@@ -702,6 +727,10 @@ export interface ResearchView {
   readonly worktree: ResearchWorktreeSlice
   /** The ledger view's foraging layer (S4): territories, the GUT baseline, the GUT cards. */
   readonly foraging: ResearchForagingSlice
+  /** The ledger view's moments (S9b): the unified timeline, five sources, zero verbs. */
+  readonly moments: ResearchMomentsSlice
+  /** The ledger view's eureka (S8c): declarations with their measured roads. */
+  readonly eureka: ResearchEurekaSlice
   /** The ledger view's digest (B–F): six-perspective capsules + Eureka EWS, pushed on open. */
   readonly digest: ResearchDigestSlice
   /** The corner toast queue (oldest first); the host component sweeps expiries. */
@@ -753,6 +782,8 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   brief: Object.freeze({ status: 'idle', markdown: '', generatedAt: null, eventCount: null, derivationVersion: null, recalibrated: false, questions: Object.freeze([]), failure: null }),
   worktree: Object.freeze({ status: 'cold', view: null, failure: null }),
   foraging: Object.freeze({ status: 'cold', view: null, failure: null }),
+  moments: Object.freeze({ status: 'cold', view: null, failure: null }),
+  eureka: Object.freeze({ status: 'cold', view: null, failure: null }),
   digest: Object.freeze({ status: 'idle', tier: 'weekly', lang: 'zh', report: null, markdown: '', generatedAt: null, failure: null }),
   toasts: Object.freeze([]),
   backup: null,
@@ -809,6 +840,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   private worktreePromise: Promise<void> | null = null
   /** In-flight foraging load guard (the ensure/refresh contract). */
   private foragingPromise: Promise<void> | null = null
+  private momentsPromise: Promise<void> | null = null
+  private eurekaPromise: Promise<void> | null = null
   private figuresInFlight = false
   private meetingsGeneration = 0
   private meetingsInFlight = false
@@ -1046,18 +1079,30 @@ export class ResearchController implements HostObservable<ResearchView> {
   }
 
   /** localStorage key of the last-seen derivation version (I5 notice). */
-  private static readonly DERIVATION_STORAGE_KEY = 'mimir:cbe-derivation-version'
+  private static readonly DERIVATION_STORAGE_KEY = 'mimir.cbe-derivation-version'
+  /** legacy colon key, kept for one-cycle migration */
+  private static readonly DERIVATION_STORAGE_KEY_LEGACY = 'mimir:cbe-derivation-version'
 
   /**
    * I5: remember the derivation version the user last saw; a changed
    * version returns true so the brief view can show the re-calibration
-   * notice. Persistence is best-effort — a blocked storage just drops the
-   * cross-session comparison, never the brief.
+   * notice. Reads the dotted key first, falling back to the legacy colon
+   * key with an immediate migration (write new + remove old) so users who
+   * stored a version before the key rename are not re-prompted. Writes go
+   * to the dotted key only. Persistence is best-effort — a blocked storage
+   * just drops the cross-session comparison, never the brief.
    */
   private derivationRecalibrated(version: number): boolean {
     let previous: string | null = null
     try {
       previous = localStorage.getItem(ResearchController.DERIVATION_STORAGE_KEY)
+      if (previous === null) {
+        previous = localStorage.getItem(ResearchController.DERIVATION_STORAGE_KEY_LEGACY)
+        if (previous !== null) {
+          localStorage.setItem(ResearchController.DERIVATION_STORAGE_KEY, previous)
+          localStorage.removeItem(ResearchController.DERIVATION_STORAGE_KEY_LEGACY)
+        }
+      }
       localStorage.setItem(ResearchController.DERIVATION_STORAGE_KEY, String(version))
     } catch {
       previous = null
@@ -1226,6 +1271,29 @@ export class ResearchController implements HostObservable<ResearchView> {
       if (!result.ok) { this.notify('error', 'moment.failed'); return businessFailure(result.error) }
       this.notify('success', 'moment.pinned')
       if (this.view.digest.status === 'ready') void this.generateDigest(this.view.digest.tier, this.view.digest.lang)
+      await this.refreshMoments()
+      return null
+    } catch (error) {
+      this.notify('error', 'moment.failed')
+      return transportFailure(error)
+    }
+  }
+
+  /**
+   * Decline one moment candidate (the timeline's decline affordance): a
+   * `pinned:false` declaration on a never-canonical candidate — "seen and
+   * refused", distinct from unpin. The row stays (append-only readability)
+   * and moves to the declined group.
+   * @returns null on success, the settled failure view otherwise.
+   */
+  async declineMoment(targetEventId: string): Promise<ResearchFailureView | null> {
+    try {
+      const carried = await this.remote.pinMoment({ targetEventId, pinned: false })
+      if (!carried.ok) { this.notify('error', 'moment.failed'); return failureOf(carried.error.code, carried.error.message) }
+      const result = carried.value
+      if (!result.ok) { this.notify('error', 'moment.failed'); return businessFailure(result.error) }
+      this.notify('success', 'moment.declined')
+      await this.refreshMoments()
       return null
     } catch (error) {
       this.notify('error', 'moment.failed')
@@ -1336,6 +1404,84 @@ export class ResearchController implements HostObservable<ResearchView> {
   ensureForaging(): void {
     if (this.view.foraging.status === 'ready' || this.foragingPromise !== null) return
     this.foragingPromise = this.loadForaging().finally(() => { this.foragingPromise = null })
+  }
+
+  /**
+   * Load the moments (S9b) slice: the unified timeline over the five
+   * deterministic sources, unified with pins and declines. Pull-only; the
+   * same publish contract as the worktree/foraging slices.
+   */
+  private async loadMoments(): Promise<void> {
+    this.publish({
+      moments: Object.freeze({ status: 'loading', view: this.view.moments.view, failure: null }),
+    })
+    try {
+      const carried = await this.remote.getMomentIndex({})
+      if (!carried.ok) {
+        const failure = failureOf(carried.error.code, carried.error.message)
+        this.publish({ moments: Object.freeze({ status: 'error', view: null, failure }) })
+        return
+      }
+      const result = carried.value
+      if (!result.ok) {
+        const failure = businessFailure(result.error)
+        this.publish({ moments: Object.freeze({ status: 'error', view: null, failure }) })
+        return
+      }
+      this.publish({
+        moments: Object.freeze({ status: 'ready', view: result.value, failure: null }),
+      })
+    } catch (error) {
+      const failure = transportFailure(error)
+      this.publish({ moments: Object.freeze({ status: 'error', view: null, failure }) })
+    }
+  }
+
+  /** Load the moments timeline once, on the ledger view's first open. */
+  ensureMoments(): void {
+    if (this.view.moments.status === 'ready' || this.momentsPromise !== null) return
+    this.momentsPromise = this.loadMoments().finally(() => { this.momentsPromise = null })
+  }
+
+  /**
+   * Reload the moments timeline after a pin/decline/unpin write, so the
+   * timeline reflects the researcher's latest declarations.
+   */
+  async refreshMoments(): Promise<void> {
+    await this.loadMoments()
+  }
+
+  /** Load the eureka (S8c) slice: declarations × lead/control features + profile. */
+  private async loadEureka(): Promise<void> {
+    this.publish({
+      eureka: Object.freeze({ status: 'loading', view: this.view.eureka.view, failure: null }),
+    })
+    try {
+      const carried = await this.remote.getEurekaView()
+      if (!carried.ok) {
+        const failure = failureOf(carried.error.code, carried.error.message)
+        this.publish({ eureka: Object.freeze({ status: 'error', view: null, failure }) })
+        return
+      }
+      const result = carried.value
+      if (!result.ok) {
+        const failure = businessFailure(result.error)
+        this.publish({ eureka: Object.freeze({ status: 'error', view: null, failure }) })
+        return
+      }
+      this.publish({
+        eureka: Object.freeze({ status: 'ready', view: result.value, failure: null }),
+      })
+    } catch (error) {
+      const failure = transportFailure(error)
+      this.publish({ eureka: Object.freeze({ status: 'error', view: null, failure }) })
+    }
+  }
+
+  /** Load the eureka view once, on the ledger view's first open. */
+  ensureEureka(): void {
+    if (this.view.eureka.status === 'ready' || this.eurekaPromise !== null) return
+    this.eurekaPromise = this.loadEureka().finally(() => { this.eurekaPromise = null })
   }
 
   /** Re-fetch the foraging layer (the card's refresh button). */

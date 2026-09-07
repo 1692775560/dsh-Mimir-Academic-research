@@ -42,8 +42,9 @@
  * @module dsh-mimir/src/eureka
  */
 
-import { CREATION_ACTIONS, signedWeight } from './cognitive-map.ts'
-import { deriveSessions } from './habits.ts'
+import { lineOf } from './vocabulary.ts'
+import { windowFeatures } from './window-features.ts'
+import type { CbeWindowFeatures } from './window-features.ts'
 import { ewsReading } from './ledger-ews.ts'
 import type { CbeEwsReading } from './ledger-ews.ts'
 import { MS_PER_DAY, orderedEvents, tsToMs } from './time.ts'
@@ -63,26 +64,11 @@ export const CBE_EUREKA_MIN_DECLARATIONS = 3
  * information-theoretic early-warning signals. The EWS fields are `null`
  * whenever the window cannot carry them (below `CBE_EWS_MIN_EVENTS`
  * symbols) — a null is a refusal to estimate, never a zero.
+ *
+ * Type alias: the lead-in features ARE the shared window features
+ * (`window-features.ts`); the name is kept for signature compatibility.
  */
-export interface CbeEurekaFeatures {
-  /** Creation-class events (`knowledge.idea.added` and friends). */
-  readonly creationCount: number
-  readonly eventCount: number
-  /** Sittings cut at the map's own session gap. */
-  readonly sessionCount: number
-  /** Net signed weight of the window's events (direction of the push). */
-  readonly netSignedWeight: number
-  /** Distinct local calendar days carrying at least one event. */
-  readonly distinctDays: number
-  /** H₁ — the spread of action types (bits). */
-  readonly unigramEntropy: number | null
-  /** H(k) — how unpredictable the next action was, given the last k (bits). */
-  readonly conditionalEntropy: number | null
-  /** H₁ − H(1) — symbolic persistence, the slowing-down analogue (bits). */
-  readonly lag1MutualInformation: number | null
-  /** Mean −log₂ p per event given its predecessors (bits). */
-  readonly meanSurprisal: number | null
-}
+export type CbeEurekaFeatures = CbeWindowFeatures
 
 /** The feature keys the profile reports, in report order. */
 export const EUREKA_FEATURE_KEYS = [
@@ -142,13 +128,6 @@ function r3(value: number): number {
   return Math.round(value * 1000) / 1000
 }
 
-/** The line an event attributes to (idea first, then project), or null. */
-function lineOf(event: EventRecord): string | null {
-  if (event.refs.ideaId !== undefined) return event.refs.ideaId
-  if (event.refs.projectId !== undefined) return `project:${event.refs.projectId}`
-  return null
-}
-
 /**
  * Read the declared Eureka milestones off the ledger. A declaration is the
  * researcher's own call — an unparseable timestamp is skipped rather than
@@ -177,6 +156,8 @@ export function eurekaDeclarations(events: readonly EventRecord[]): readonly Cbe
  * The E0 feature vector of one window on one line: creation events, total
  * events, sittings, the net signed push, and the distinct active days.
  * Windows with no events fold to a zero vector (an honest zero, not a gap).
+ * Thin delegation to the shared fold (`window-features.ts`) — a Eureka
+ * lead-in and any other window consumer measure with the same ruler.
  * @param events - ledger events, any order.
  * @param lineId - the line to measure, or null for every event.
  * @param fromMs - window start, inclusive (epoch ms).
@@ -189,51 +170,22 @@ export function eurekaFeatures(
   fromMs: number,
   toMs: number,
 ): CbeEurekaFeatures {
-  const inWindow: EventRecord[] = []
-  for (const event of events) {
-    const ms = tsToMs(event.ts)
-    if (ms === null || ms < fromMs || ms >= toMs) continue
-    if (lineId !== null && lineOf(event) !== lineId) continue
-    inWindow.push(event)
-  }
-  const days = new Set<string>()
-  let netWeight = 0
-  let creationCount = 0
-  for (const event of inWindow) {
-    const at = new Date(tsToMs(event.ts) ?? 0)
-    days.add(`${at.getFullYear()}-${at.getMonth()}-${at.getDate()}`)
-    netWeight += signedWeight(event)
-    if (CREATION_ACTIONS.has(event.action)) creationCount += 1
-  }
-  // The early-warning signals read the SAME window as a symbol stream. They
-  // go null on their own when the sample cannot carry them.
-  const ews = ewsReading(inWindow, fromMs, toMs)
-  return Object.freeze({
-    creationCount,
-    eventCount: inWindow.length,
-    sessionCount: deriveSessions(inWindow).length,
-    netSignedWeight: r3(netWeight),
-    distinctDays: days.size,
-    unigramEntropy: ews.unigramEntropy,
-    conditionalEntropy: ews.conditionalEntropy,
-    lag1MutualInformation: ews.lag1MutualInformation,
-    meanSurprisal: ews.meanSurprisal,
-  })
+  return windowFeatures(events, lineId, fromMs, toMs)
 }
 
 /**
  * The lead-in / control window bounds for one declaration, anchored on its
- * timestamp. Both the folded model and the critical-state collector MUST derive
- * their windows from this so the control-observability rule — "a control that
+ * timestamp. Both the folded model, the critical-state collector AND the
+ * declaration-time context receipt (`eurekaContextAt`) MUST derive their
+ * windows from this so the control-observability rule — "a control that
  * would start before the ledger begins is not a control we estimate" — is
- * enforced in exactly one place. Previously the model applied it and the
- * collector did not, so the two could disagree about which Eurekas count;
- * that is the kind of silent drift a shared锅底 is meant to prevent.
- * @param declaration - the declared Eureka.
+ * enforced in exactly one place. Exporting it is the strengthening of that
+ * single-source-of-window-semantics rule, not a loosening.
+ * @param atMs - the declaration instant (epoch ms).
  * @param earliestMs - the ledger's first event time (the floor).
- * @returns the bounds, or null when the declaration timestamp is unparseable.
+ * @returns the bounds (never null — the caller already parsed the instant).
  */
-interface EurekaWindowBounds {
+export interface EurekaWindowBounds {
   /** The declaration instant (epoch ms). */
   readonly atMs: number
   /** Lead-in window start (epoch ms); the window is [leadFrom, atMs). */
@@ -244,9 +196,7 @@ interface EurekaWindowBounds {
   readonly observable: boolean
 }
 
-function eurekaWindowBounds(declaration: CbeEurekaDeclaration, earliestMs: number): EurekaWindowBounds | null {
-  const atMs = tsToMs(declaration.at)
-  if (atMs === null) return null
+export function eurekaWindowBounds(atMs: number, earliestMs: number): EurekaWindowBounds {
   const leadFrom = atMs - CBE_EUREKA_WINDOW_DAYS * MS_PER_DAY
   const controlFrom = atMs - 2 * CBE_EUREKA_WINDOW_DAYS * MS_PER_DAY
   return Object.freeze({
@@ -275,8 +225,10 @@ export function eurekaModelAt(events: readonly EventRecord[]): CbeEurekaModel {
   const controls: CbeEurekaFeatures[] = []
   const usable: CbeEurekaDeclaration[] = []
   for (const declaration of declarations) {
-    const bounds = eurekaWindowBounds(declaration, earliestMs)
-    if (bounds === null || !bounds.observable) continue
+    const atMs = tsToMs(declaration.at)
+    if (atMs === null) continue
+    const bounds = eurekaWindowBounds(atMs, earliestMs)
+    if (!bounds.observable) continue
     leads.push(eurekaFeatures(stream, declaration.lineId, bounds.leadFrom, bounds.atMs))
     controls.push(eurekaFeatures(stream, declaration.lineId, bounds.controlFrom, bounds.leadFrom))
     usable.push(declaration)
@@ -386,8 +338,10 @@ export function eurekaCriticalStateData(events: readonly EventRecord[]): readonl
     // Same window bounds as the folded model — the collector no longer skips
     // the control-observability rule, so "which Eurekas count" is identical
     // whichever path the (future) view takes.
-    const bounds = eurekaWindowBounds(declaration, earliestMs)
-    if (bounds === null || !bounds.observable) continue
+    const atMs = tsToMs(declaration.at)
+    if (atMs === null) continue
+    const bounds = eurekaWindowBounds(atMs, earliestMs)
+    if (!bounds.observable) continue
     samples.push(Object.freeze({
       declarationId: declaration.id,
       at: declaration.at,
@@ -397,4 +351,54 @@ export function eurekaCriticalStateData(events: readonly EventRecord[]): readonl
     }))
   }
   return Object.freeze(samples)
+}
+
+/**
+ * The declaration-time context receipt: what the shared fold says about the
+ * fortnight leading up to an instant, paired with its control window. This is
+ * what `setEurekaRemote` hands back WITH the stored declaration event — the
+ * researcher declares, and immediately sees the road that led there, measured
+ * with the same ruler as the retrospective model.
+ *
+ * Pure derivation, never persisted as fact: recomputing it later over the
+ * same ledger yields the same numbers. The control is `null` when the ledger
+ * does not reach back far enough to observe it (I2: unobservable is not
+ * estimated). Describes only — it never evaluates the declaration.
+ */
+export interface CbeEurekaContextView {
+  /** The lead-in window length the features cover. */
+  readonly windowDays: number
+  /** false when the control window would start before the ledger begins. */
+  readonly observable: boolean
+  /** The fortnight (windowDays) BEFORE the instant, folded. */
+  readonly lead: CbeWindowFeatures
+  /** The equal-length window before that; null when unobservable. */
+  readonly control: CbeWindowFeatures | null
+}
+
+/**
+ * Fold the declaration-time context for one instant: the lead-in window and
+ * its paired control, both measured by the shared window fold.
+ * @param events - ledger events, any order.
+ * @param atMs - the declaration instant (epoch ms).
+ * @param lineId - the line to scope the windows to, or null for every event.
+ * @returns the frozen context view (control null when unobservable).
+ */
+export function eurekaContextAt(
+  events: readonly EventRecord[],
+  atMs: number,
+  lineId?: string | null,
+): CbeEurekaContextView {
+  const stream = orderedEvents(events)
+  const earliestMs = stream.length === 0 ? 0 : (tsToMs(stream[0]?.ts ?? '') ?? 0)
+  const bounds = eurekaWindowBounds(atMs, earliestMs)
+  const scope = lineId ?? null
+  return Object.freeze({
+    windowDays: CBE_EUREKA_WINDOW_DAYS,
+    observable: bounds.observable,
+    lead: windowFeatures(stream, scope, bounds.leadFrom, bounds.atMs),
+    control: bounds.observable
+      ? windowFeatures(stream, scope, bounds.controlFrom, bounds.leadFrom)
+      : null,
+  })
 }

@@ -51,8 +51,25 @@ const REPORT_DETAIL_MAX_EVENTS = 200
 /** How many destructive-operation rows the report's risk section shows. */
 const REPORT_RISK_MAX_ROWS = 50
 
-/** Monotonic suffix so same-millisecond events keep a stable order. */
+/**
+ * Monotonic suffix so same-millisecond events keep a stable order.
+ * Module-level mutable state by exemption: a pure same-millisecond sequence
+ * number — used only to keep event ordering stable, with no cross-instance
+ * correctness impact (an id only needs to be unique and ordered) — so it is
+ * not carried in `ServiceState`.
+ */
 let eventSeq = 0
+
+/**
+ * Whether an event is the instrument observing itself is a question about the
+ * ledger's VOCABULARY, not about storage — so it is answered in
+ * `./vocabulary.ts`, once, and re-exported here. This module keeps exporting
+ * the two names so nothing that imports them from the ledger breaks; what it
+ * no longer does is own a second copy, because two copies of "which actions
+ * count as research" is exactly how the observation filter drifted out of the
+ * derivation in the first place.
+ */
+export { OBSERVATION_ACTIONS, isObservationEvent } from './vocabulary.ts'
 
 /** The actor behind every workbench (Remote) call in v1; session identity arrives with P1 SSE work. */
 export const PANEL_ACTOR: LedgerActor = Object.freeze({ kind: 'user', id: 'panel' })
@@ -147,18 +164,14 @@ function limitOf(filter: ResearchEventFilter): number {
 }
 
 /**
- * Query the ledger: filter by project ref, actor kind, action prefix, and
- * ISO-8601 time bounds (inclusive `since`, exclusive `until`), sort by
- * (ts, id), and cap the result.
- * @param domain - the plugin-owned open research-wiki domain.
- * @param filter - optional filters; see {@link ResearchEventFilter}.
- * @returns the matching events in the requested order.
+ * Every event matching `filter`'s predicates, ascending by (ts, id). The
+ * `limit`/`order`/`anchor` fields are NOT applied here — this is the shared
+ * scan behind both the windowed query and the uncapped count.
  */
-export async function listEvents(
+async function matchingEvents(
   domain: ResearchWikiDomain,
-  filter: ResearchEventFilter = {},
-): Promise<readonly EventRecord[]> {
-  const limit = limitOf(filter)
+  filter: ResearchEventFilter,
+): Promise<EventRecord[]> {
   const sinceMs = filter.since === undefined ? null : Date.parse(filter.since)
   const untilMs = filter.until === undefined ? null : Date.parse(filter.until)
   if (sinceMs !== null && Number.isNaN(sinceMs)) throw new RangeError(`since is not a valid timestamp: ${filter.since}`)
@@ -176,8 +189,55 @@ export async function listEvents(
     events.push(record)
   }
   events.sort((left, right) => left.ts.localeCompare(right.ts) || left.id.localeCompare(right.id))
-  if (filter.order === 'desc') events.reverse()
-  return Object.freeze(events.slice(0, limit))
+  return events
+}
+
+/**
+ * Query the ledger: filter by project ref, actor kind, action prefix, and
+ * ISO-8601 time bounds (inclusive `since`, exclusive `until`), sort by
+ * (ts, id), and cap the result.
+ *
+ * The cap is a sliding window over the **newest** matches (default), not the
+ * oldest: every CBE organ is a pure fold over `listEvents`, so a head-of-
+ * history window would freeze worktree, habits, foraging, eureka, the
+ * evidence model, and the digest at the first `limit` events ever written —
+ * permanently, and with no error. {@link countEvents} reports the uncapped
+ * total so a truncated window can say so.
+ *
+ * @param domain - the plugin-owned open research-wiki domain.
+ * @param filter - optional filters; see {@link ResearchEventFilter}.
+ * @returns the matching events in the requested order (still time-ascending
+ * unless `order: 'desc'`, so downstream folds see a chronological stream).
+ */
+export async function listEvents(
+  domain: ResearchWikiDomain,
+  filter: ResearchEventFilter = {},
+): Promise<readonly EventRecord[]> {
+  const limit = limitOf(filter)
+  const events = await matchingEvents(domain, filter)
+  // `anchor: 'oldest'` is the explicit exception for callers that genuinely
+  // want the head of history (e.g. the digest's "earliest event in the
+  // ledger"); everything else folds the live end of the ledger.
+  const window = filter.anchor === 'oldest' ? events.slice(0, limit) : events.slice(-limit)
+  if (filter.order === 'desc') window.reverse()
+  return Object.freeze(window)
+}
+
+/**
+ * Count every event matching `filter`, ignoring {@link ResearchEventFilter}'s
+ * `limit` — the true total behind a possibly truncated {@link listEvents}
+ * window, so a caller can report truncation instead of passing the capped
+ * length off as the whole story.
+ * @param domain - the plugin-owned open research-wiki domain.
+ * @param filter - optional filters (the `limit` field is not accepted: a
+ * count has no window).
+ * @returns the number of matching events.
+ */
+export async function countEvents(
+  domain: ResearchWikiDomain,
+  filter: Omit<ResearchEventFilter, 'limit' | 'order' | 'anchor'> = {},
+): Promise<number> {
+  return (await matchingEvents(domain, filter)).length
 }
 
 /* ------------------------------------------------------------------------ *

@@ -23,10 +23,11 @@
  */
 
 import { deriveWorktree } from './worktree.ts'
-import { CBE_HALF_LIFE_DAYS, signedWeight } from './cognitive-map.ts'
+import { CBE_HALF_LIFE_DAYS } from './vocabulary.ts'
 import type { CbeWikiSnapshot } from './cognitive-map.ts'
+import { signedWeight } from './vocabulary.ts'
 import type { EventRecord } from './types.ts'
-import { MS_PER_DAY, tsToMs } from './time.ts'
+import { MS_PER_DAY, orderedEvents, tsToMs } from './time.ts'
 
 /** Documented closes before the personal baseline may speak (I2's floor). */
 export const CBE_GUT_BASELINE_MIN_DEPARTURES = 5
@@ -143,7 +144,7 @@ export function deriveTerritories(
     byProject.set(projectId, current)
   }
 
-  const ordered = [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  const ordered = orderedEvents(events)
   for (const event of ordered) {
     const ms = tsToMs(event.ts)
     if (ms === null) continue

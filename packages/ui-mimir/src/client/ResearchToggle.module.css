@@ -11,20 +11,20 @@
   border: none;
   border-radius: 14px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-tertiary, #857d6c);
   font-size: 13px;
   white-space: nowrap;
   cursor: pointer;
 }
 
 .toggle:hover {
-  background: var(--dsw-alias-interactive-bg-hover);
-  color: var(--dsw-alias-label-secondary);
+  background: var(--dsw-alias-interactive-bg-hover, rgb(33 30 25 / 5%));
+  color: var(--dsw-alias-label-secondary, #57503f);
 }
 
 /* The open panel's toggle stays legible without hover, so the signal survives
    a pointer leaving the row. */
 .toggle[aria-pressed='true'] {
-  color: var(--dsw-alias-label-primary);
-  background: var(--dsw-alias-interactive-bg-hover);
+  color: var(--dsw-alias-label-primary, #211e19);
+  background: var(--dsw-alias-interactive-bg-hover, rgb(33 30 25 / 5%));
 }

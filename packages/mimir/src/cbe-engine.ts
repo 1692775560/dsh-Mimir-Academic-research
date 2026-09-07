@@ -24,9 +24,10 @@
  * @module dsh-mimir/src/cbe-engine
  */
 
-import { LINE_WEIGHTS, TERMINAL_ACTIONS } from './cognitive-map.ts'
+import { CBE_HALF_LIFE_DAYS } from './vocabulary.ts'
+import { LINE_WEIGHTS, TERMINAL_ACTIONS, lineOf } from './vocabulary.ts'
 import type { EventRecord } from './types.ts'
-import { MS_PER_DAY, tsToMs } from './time.ts'
+import { MS_PER_DAY, orderedEvents, tsToMs } from './time.ts'
 
 /** α — the learning rate per terminal (share-scaled). */
 export const CBE_ENGINE_ALPHA = 0.3
@@ -86,14 +87,6 @@ export function terminalOutcome(event: EventRecord): -1 | 0 | 1 {
 /** Whether one event is DECISION-grade (a terminal whose outcome folds). */
 export function isTerminalOutcome(event: EventRecord): boolean {
   return TERMINAL_ACTIONS.has(event.action) && terminalOutcome(event) !== 0
-}
-
-/** The line an event attributes to (idea first, then project), or null. */
-function lineOf(event: EventRecord): string | null {
-  const ideaId = event.refs.ideaId
-  if (ideaId !== undefined) return ideaId
-  const projectId = event.refs.projectId
-  return projectId !== undefined ? `project:${projectId}` : null
 }
 
 /** The cold model: empty values — every effective value is its prior. */
@@ -161,7 +154,9 @@ export function updateOnTerminal(
     const ms = tsToMs(event.ts)
     if (ms === null || ms > terminalMs || ms < windowStart) continue
     if (!(event.action in LINE_WEIGHTS)) continue
-    const decay = Math.exp(-Math.LN2 * (terminalMs - ms) / (7 * MS_PER_DAY))
+    // The map's own half-life — not a 7 typed here. A second literal copy of
+    // the decay constant is how the two silently drift apart.
+    const decay = Math.exp(-Math.LN2 * (terminalMs - ms) / (CBE_HALF_LIFE_DAYS * MS_PER_DAY))
     decayed.set(event.action, (decayed.get(event.action) ?? 0) + decay)
     total += decay
   }
@@ -198,7 +193,7 @@ export function updateOnTerminal(
  * @returns the folded model.
  */
 export function evidenceModelAt(events: readonly EventRecord[]): CbeEvidenceModel {
-  const ordered = [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  const ordered = orderedEvents(events)
   const byLine = new Map<string, EventRecord[]>()
   let model = initialModel()
   for (const event of ordered) {

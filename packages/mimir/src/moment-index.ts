@@ -23,21 +23,25 @@
  * @module dsh-mimir/src/moment-index
  */
 
-import { CBE_SESSION_GAP_MINUTES, TERMINAL_ACTIONS } from './cognitive-map.ts'
-import { EUREKA_ACTION } from './eureka.ts'
+import { lineOf } from './vocabulary.ts'
+import {
+  CBE_MOMENT_BURST_MIN_EVENTS,
+  deriveMomentCandidates,
+} from './moment-candidates.ts'
+import type { CbeMomentSource, CbeMomentStats, CbeClosenessVotes } from './moment-candidates.ts'
+import type { CbeEwsReading } from './ledger-ews.ts'
 import type { EventRecord } from './types.ts'
-import { tsToMs } from './time.ts'
-
-const MS_PER_MINUTE = 60_000
+import { orderedEvents, sliceEvents, tsToMs } from './time.ts'
 
 /** The researcher's pin (or unpin) of one moment, anchored to one event. */
 export const MOMENT_PIN_ACTION = 'cbe.moment.pin'
 
-/** How many events a plain work burst needs before it is proposed at all. */
-export const CBE_MOMENT_BURST_MIN_EVENTS = 3
+export { CBE_MOMENT_BURST_MIN_EVENTS }
 
 /** What kind of moment one index entry is. */
-export type CbeMomentKind = 'eureka' | 'terminal' | 'creation' | 'burst' | 'pinned'
+export type CbeMomentKind =
+  | 'eureka' | 'terminal' | 'creation' | 'burst' | 'pinned'
+  | 'return' | 'convergence' | 'long-sitting' | 'milestone'
 
 /** One user pin declaration (last declaration per target wins). */
 export interface CbeMomentPin {
@@ -54,6 +58,8 @@ export interface CbeCuratedMoment {
   /** The line the moment belongs to, or null when unscoped. */
   readonly lineId: string | null
   readonly kind: CbeMomentKind
+  /** Which deterministic sources proposed this moment (S9b; may be several). */
+  readonly sources: readonly CbeMomentSource[]
   /** The anchor event's action name (labels resolve client-side). */
   readonly action: string
   /** The researcher's own words when they pinned it; null otherwise. */
@@ -61,40 +67,33 @@ export interface CbeCuratedMoment {
   /** Events folded into this moment (its magnitude). */
   readonly eventCount: number
   readonly pinned: boolean
+  /**
+   * The researcher has SEEN and REFUSED this candidate: the last pin
+   * declaration is `pinned:false` AND the moment was never canonical.
+   * Distinct from unpin (was canonical, then demoted) — both live in the
+   * stream and fold apart without new event types.
+   */
+  readonly declined: boolean
   /** The event ids backing the moment (the evidence). */
   readonly evidence: readonly string[]
+  /** Structural stats of the backing sitting (S9b; always present). */
+  readonly stats: CbeMomentStats
+  /** The backing window's EWS reading; fields null below their own floor. */
+  readonly ews: CbeEwsReading
+  /** Descriptive closeness votes; null unless the eureka profile speaks. */
+  readonly closeness: CbeClosenessVotes | null
 }
 
 /**
  * Which kind one burst of work is: a declared Eureka outranks a terminal,
  * which outranks a creation, which outranks a plain busy stretch. A burst
  * below {@link CBE_MOMENT_BURST_MIN_EVENTS} with nothing significant in it
- * is not a moment — it is just Tuesday.
+ * is not a moment — it is just Tuesday. The ladder itself lives in
+ * `moment-candidates.ts` (the S9b home of the generator sources); this
+ * re-export is the index's read of it.
  */
-function kindOfBurst(
-  burst: readonly EventRecord[],
-): { readonly kind: CbeMomentKind; readonly action: string } | null {
-  const eureka = burst.find(event => event.action === EUREKA_ACTION)
-  if (eureka !== undefined) return { kind: 'eureka', action: eureka.action }
-  const terminal = burst.find(event => TERMINAL_ACTIONS.has(event.action))
-  if (terminal !== undefined) return { kind: 'terminal', action: terminal.action }
-  const creation = burst.find(event => event.action === 'knowledge.idea.added'
-    || event.action === 'knowledge.claim.added'
-    || event.action === 'experiments.saved')
-  if (creation !== undefined) return { kind: 'creation', action: creation.action }
-  if (burst.length >= CBE_MOMENT_BURST_MIN_EVENTS) {
-    return { kind: 'burst', action: burst[0]?.action ?? '' }
-  }
-  return null
-}
+export { kindOfBurst } from './moment-candidates.ts'
 
-
-/** The line an event attributes to (idea first, then project), or null. */
-function lineOf(event: EventRecord): string | null {
-  if (event.refs.ideaId !== undefined) return event.refs.ideaId
-  if (event.refs.projectId !== undefined) return `project:${event.refs.projectId}`
-  return null
-}
 
 /**
  * Read the researcher's pin declarations: last declaration per target wins,
@@ -105,7 +104,7 @@ function lineOf(event: EventRecord): string | null {
  */
 export function momentPins(events: readonly EventRecord[]): ReadonlyMap<string, CbeMomentPin> {
   const pins = new Map<string, CbeMomentPin>()
-  const ordered = [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  const ordered = orderedEvents(events)
   for (const event of ordered) {
     if (event.action !== MOMENT_PIN_ACTION) continue
     const target = event.payload['targetEventId']
@@ -118,40 +117,18 @@ export function momentPins(events: readonly EventRecord[]): ReadonlyMap<string, 
 }
 
 /**
- * Cut the stream into bursts at the map's own session gap. Unparseable
- * timestamps are skipped (they cannot be placed in time).
- * @param events - events in ascending (ts, id) order.
- * @returns the bursts in time order.
- */
-function burstsOf(events: readonly EventRecord[]): readonly EventRecord[][] {
-  const bursts: EventRecord[][] = []
-  let current: EventRecord[] = []
-  for (const event of events) {
-    const ms = tsToMs(event.ts)
-    if (ms === null) continue
-    const previous = current[current.length - 1]
-    if (previous !== undefined) {
-      const previousMs = tsToMs(previous.ts) ?? 0
-      if (ms - previousMs > CBE_SESSION_GAP_MINUTES * MS_PER_MINUTE) {
-        bursts.push(current)
-        current = []
-      }
-    }
-    current.push(event)
-  }
-  if (current.length > 0) bursts.push(current)
-  return bursts
-}
-
-/**
- * Derive the curated moment index over one window: auto-candidates folded
- * from the stream (bursts carrying a Eureka, a terminal, a creation, or
- * enough plain work), unified with the researcher's pins. A pin on an event
- * inside an existing burst enriches that moment; a pin on a lonely event
- * promotes that event into its own moment. An unpin demotes a burst back to
- * unpinned but never removes it from the stream — the index is a reading of
- * the ledger, not an edit of it.
- * @param events - ledger events, any order.
+ * Derive the curated moment index over one window: the five deterministic
+ * candidate sources (S9b: burst ladder, dormancy returns, cross-line
+ * convergence, long sittings, milestones), unified with the researcher's
+ * pins. A pin on an event inside an existing candidate enriches that
+ * moment; a pin on a lonely event promotes that event into its own moment.
+ * An unpin demotes back to the candidate kind; a DECLINE (a `pinned:false`
+ * on a never-canonical candidate) marks `declined` — the row stays
+ * (append-only readability) but reads as refused, not unseen. Nothing is
+ * ever removed from the fold — the index is a reading of the ledger, not
+ * an edit of it.
+ * @param events - ledger events, any order (observations already stripped
+ * upstream; lookback prefix events may precede `since` and never anchor).
  * @param since - window start, inclusive (ISO-8601); `null` opens the window.
  * @param until - window end, exclusive (ISO-8601); `null` opens the window.
  * @returns the curated moments in time order, pinned ones never dropped.
@@ -163,57 +140,100 @@ export function deriveCuratedMoments(
 ): readonly CbeCuratedMoment[] {
   const sinceMs = since === null ? Number.NEGATIVE_INFINITY : (tsToMs(since) ?? Number.NEGATIVE_INFINITY)
   const untilMs = until === null ? Number.POSITIVE_INFINITY : (tsToMs(until) ?? Number.POSITIVE_INFINITY)
-  const ordered = [...events]
-    .filter(event => {
-      const ms = tsToMs(event.ts)
-      return ms !== null && ms >= sinceMs && ms < untilMs
-    })
-    .sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  // The candidates fold over the full handed stream (so line history and the
+  // eureka profile see their lookback), but anchors are window events only.
+  const candidates = deriveMomentCandidates(events, sinceMs, untilMs)
 
   const pins = momentPins(events)
-  const byId = new Map(ordered.map(event => [event.id, event] as const))
+  // "Ever canonical" folds the pin history: a target whose declarations
+  // ever carried pinned:true. It is what tells a DECLINE (never canonical,
+  // refused on sight) from an UNPIN (was canonical, demoted) — the two
+  // read differently in the index but live in the same append-only stream.
+  const everPinned = new Set<string>()
+  for (const event of orderedEvents(events)) {
+    if (event.action !== MOMENT_PIN_ACTION) continue
+    const target = event.payload['targetEventId']
+    if (typeof target !== 'string') continue
+    if (event.payload['pinned'] !== false) everPinned.add(target)
+  }
+  const windowed = sliceEvents(events, sinceMs, untilMs)
+  const byId = new Map(windowed.map(event => [event.id, event] as const))
   const moments = new Map<string, CbeCuratedMoment>()
 
-  for (const burst of burstsOf(ordered)) {
-    const classified = kindOfBurst(burst)
-    if (classified === null) continue
-    // Anchor on the most significant event of the burst, not the loudest.
-    const anchor = burst.find(event => event.action === classified.action) ?? burst[0]
-    if (anchor === undefined) continue
-    const pin = pins.get(anchor.id)
-    moments.set(anchor.id, Object.freeze({
-      id: anchor.id,
-      at: anchor.ts,
-      lineId: lineOf(anchor),
-      kind: pin === undefined || !pin.pinned ? classified.kind : 'pinned',
-      action: classified.action,
+  for (const candidate of candidates) {
+    const pin = pins.get(candidate.anchorEventId)
+    const declined = pin !== undefined && !pin.pinned && !everPinned.has(candidate.anchorEventId)
+    moments.set(candidate.anchorEventId, Object.freeze({
+      id: candidate.anchorEventId,
+      at: candidate.at,
+      lineId: candidate.lineId,
+      kind: pin !== undefined && pin.pinned ? 'pinned' : candidate.kind,
+      sources: candidate.sources,
+      action: anchorActionOf(windowed, candidate.anchorEventId) ?? candidate.kind,
       note: pin?.note !== undefined && pin.note !== '' ? pin.note : null,
-      eventCount: burst.length,
+      eventCount: candidate.stats.eventCount,
       pinned: pin?.pinned === true,
-      evidence: Object.freeze(burst.map(event => event.id)),
+      declined,
+      evidence: candidate.evidence,
+      stats: candidate.stats,
+      ews: candidate.ews,
+      closeness: candidate.closeness,
     }))
   }
 
-  // Pins on events the burst pass never proposed: the researcher saw
-  // something the heuristics did not, which is the whole point of pinning.
+  // Pins on events the sources never proposed: the researcher saw something
+  // the heuristics did not, which is the whole point of pinning.
   for (const [targetId, pin] of pins) {
     if (!pin.pinned || moments.has(targetId)) continue
     const target = byId.get(targetId)
     if (target === undefined) continue
-    moments.set(targetId, Object.freeze({
-      id: targetId,
-      at: target.ts,
-      lineId: lineOf(target),
-      kind: 'pinned',
-      action: target.action,
-      note: pin.note === '' ? null : pin.note,
-      eventCount: 1,
-      pinned: true,
-      evidence: Object.freeze([targetId]),
-    }))
+    const lone = loneMomentOf(target)
+    moments.set(targetId, lone)
   }
 
   return Object.freeze(
     [...moments.values()].sort((a, b) => a.at.localeCompare(b.at) || a.id.localeCompare(b.id)),
   )
+}
+
+/** The anchor event's own action name, when it is in the windowed stream. */
+function anchorActionOf(windowed: readonly EventRecord[], anchorEventId: string): string | null {
+  return windowed.find(event => event.id === anchorEventId)?.action ?? null
+}
+
+/** A pin-only moment: one event the sources never proposed, promoted by hand. */
+function loneMomentOf(target: EventRecord): CbeCuratedMoment {
+  return Object.freeze({
+    id: target.id,
+    at: target.ts,
+    lineId: lineOf(target),
+    kind: 'pinned',
+    sources: [],
+    action: target.action,
+    note: null,
+    eventCount: 1,
+    pinned: true,
+    declined: false,
+    evidence: Object.freeze([target.id]),
+    stats: Object.freeze({
+      eventCount: 1,
+      creationCount: 0,
+      creationRatio: 0,
+      netSignedWeight: 0,
+      distinctLines: 0,
+      lineCounts: [],
+      spanMinutes: 0,
+      distinctDays: 1,
+    }),
+    ews: Object.freeze({
+      symbols: 1,
+      distinct: 1,
+      unigramEntropy: null,
+      conditionalEntropy: null,
+      order: 0,
+      lag1MutualInformation: null,
+      meanSurprisal: null,
+    }),
+    closeness: null,
+  })
 }

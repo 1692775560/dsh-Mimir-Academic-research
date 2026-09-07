@@ -164,6 +164,7 @@ export function ResearchPanel({
   loadLedger, generateReport, generateBrief, addJournal,
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
   ensureForaging, refreshForaging,
+  ensureMoments, refreshMoments, declineMoment,
   ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
   getSxngConfig, saveSxngConfig,
   exportWiki, importWiki, dismissToast, pruneToasts,
@@ -204,6 +205,7 @@ export function ResearchPanel({
   const brief = useResearch(view => view.brief)
   const worktree = useResearch(view => view.worktree)
   const foraging = useResearch(view => view.foraging)
+  const moments = useResearch(view => view.moments)
   const digest = useResearch(view => view.digest)
   const toasts = useResearch(view => view.toasts)
   const backup = useResearch(view => view.backup)
@@ -650,6 +652,10 @@ export function ResearchPanel({
             ensureForaging={ensureForaging}
             refreshForaging={refreshForaging}
             foraging={foraging}
+            moments={moments}
+            ensureMoments={ensureMoments}
+            refreshMoments={refreshMoments}
+            declineMoment={declineMoment}
             digest={digest}
             ensureDigest={ensureDigest}
             refreshDigest={refreshDigest}

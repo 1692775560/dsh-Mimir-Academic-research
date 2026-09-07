@@ -3,7 +3,7 @@
  * reach an LLM directly, so it hands one assembled prompt to the current
  * session's agent (the same chat-handoff pattern as compile-fix). Pure
  * functions only, so the prompt shape is unit-testable without a host.
- * @module dsh-client-ui-mimir/src/client/venue-format
+ * @module dsh-client-ui-mimir/client/venue-format
  */
 
 /** Everything the venue-format prompt needs. */

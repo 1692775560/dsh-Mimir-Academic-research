@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from 'react'
 import type { EventRecord, ResearchEventFilter, ResearchGenerateBriefOptions, ResearchProgressReportOptions } from 'dsh-mimir/types'
-import type { ResearchBriefView, ResearchDigestSlice, ResearchFailureView, ResearchForagingSlice, ResearchLedgerView, ResearchReportView, ResearchWorktreeSlice } from './controller.ts'
+import type { ResearchBriefView, ResearchDigestSlice, ResearchFailureView, ResearchForagingSlice, ResearchLedgerView, ResearchMomentsSlice, ResearchReportView, ResearchWorktreeSlice } from './controller.ts'
 import type { ResearchKey } from './locales.ts'
 import type { ResearchT } from './view-common.ts'
 import { renderMarkdown } from './MarkdownView.tsx'
@@ -21,6 +21,7 @@ import { CognitiveBriefView } from './CognitiveBriefView.tsx'
 import { WorktreeView } from './WorktreeView.tsx'
 import { ForagingView } from './ForagingView.tsx'
 import { DigestView } from './DigestView.tsx'
+import { MomentsView } from './MomentsView.tsx'
 import {
   ACTOR_KEYS, LEDGER_LIST_LIMIT, LEDGER_WINDOWS,
   ledgerIsDestructive, ledgerPayloadLine, ledgerTimeParts, ledgerWindowFilter,
@@ -73,9 +74,10 @@ function LedgerRow({ event, t }: {
  * @returns the ledger view.
  */
 export function LedgerView({
-  ledger, report, brief, worktree, foraging, digest, selectedProjectId, loadLedger, generateReport, generateBrief, addJournal,
+  ledger, report, brief, worktree, foraging, moments, digest, selectedProjectId, loadLedger, generateReport, generateBrief, addJournal,
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
   ensureForaging, refreshForaging,
+  ensureMoments, refreshMoments, declineMoment,
   ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
   t,
 }: {
@@ -84,6 +86,7 @@ export function LedgerView({
   readonly brief: ResearchBriefView
   readonly worktree: ResearchWorktreeSlice
   readonly foraging: ResearchForagingSlice
+  readonly moments: ResearchMomentsSlice
   readonly digest: ResearchDigestSlice
   readonly selectedProjectId: string | null
   readonly loadLedger: (filter: ResearchEventFilter) => void
@@ -109,6 +112,12 @@ export function LedgerView({
   readonly ensureForaging: () => void
   /** Re-fetch the foraging layer (the card's refresh button). */
   readonly refreshForaging: () => void
+  /** Load the moments timeline once, on the ledger view's first open. */
+  readonly ensureMoments: () => void
+  /** Re-fetch the moments timeline (the card's refresh button). */
+  readonly refreshMoments: () => void
+  /** Decline one moment candidate (seen and refused). */
+  readonly declineMoment: (targetEventId: string) => Promise<ResearchFailureView | null>
   /** Load the digest once, on the ledger view's first open (active push). */
   readonly ensureDigest: () => void
   /** Re-fetch the digest at its current tier/lang. */
@@ -144,6 +153,10 @@ export function LedgerView({
   useEffect(() => {
     ensureForaging()
   }, [ensureForaging])
+  // The moments timeline (S9b) loads once on the view's first open.
+  useEffect(() => {
+    ensureMoments()
+  }, [ensureMoments])
   // The digest (B–F) pushes on the ledger view's first open.
   useEffect(() => {
     ensureDigest()
@@ -250,6 +263,16 @@ export function LedgerView({
       <ForagingView
         foraging={foraging}
         refreshForaging={refreshForaging}
+        t={t}
+      />
+
+      {/* The moments timeline (S9b): five-source candidates + pins/declines,
+          pull-only, zero verbs, no ranking. */}
+      <MomentsView
+        moments={moments}
+        refreshMoments={refreshMoments}
+        pinMoment={pinMoment}
+        declineMoment={declineMoment}
         t={t}
       />
 

@@ -583,6 +583,20 @@ export interface ResearchPanelInjected {
    */
   refreshForaging: () => void
   /**
+   * Load the moments timeline (S9b) once, on the ledger view's first open.
+   */
+  ensureMoments: () => void
+  /**
+   * Re-fetch the moments timeline (the card's refresh button).
+   */
+  refreshMoments: () => void
+  /**
+   * Decline one moment candidate — seen and refused (a `pinned:false`
+   * declaration on a never-canonical candidate).
+   * @returns null on success, the settled failure view otherwise.
+   */
+  declineMoment: (targetEventId: string) => Promise<ResearchFailureView | null>
+  /**
    * Load the digest (B–F) once, on the ledger view's first open (active push).
    */
   ensureDigest: () => void

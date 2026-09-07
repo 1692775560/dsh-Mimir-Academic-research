@@ -179,9 +179,11 @@ export const eventRecord = z.object({
  * empty, while a bump would make the storage-json backend reject every
  * existing file (`version-mismatch`) with no migration path. `jobs` holds
  * runtime state rather than research data, so the wiki export/import
- * snapshot (seven tables) deliberately excludes it; `events` is excluded
- * for the same reason — the ledger is an audit trail, not research state to
- * migrate between workspaces (the audit report is the export surface).
+ * snapshot deliberately excludes it. `events` used to be excluded on the
+ * same reasoning, but that is reversed as of snapshot v3: the ledger is the
+ * CBE engine's single source of truth (every cognitive organ is a pure fold
+ * over it and persists nothing), so a snapshot without it restores the
+ * library and silently zeroes the researcher's whole cognitive layer.
  */
 export const researchWikiDomainSpec = defineDomain({
   name: 'research_wiki',

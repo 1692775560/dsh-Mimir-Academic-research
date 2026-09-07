@@ -176,6 +176,12 @@ polish round every few iterations.
 - [ ] Submit a remote job over SSH (run a training command) + poll job status
       — needs a real server address from the user, otherwise demo-only
 
+### Planned hardening
+
+- [ ] File-locked ledger record+event commit (P2 hardening): commit a ledger
+      record and its event under one file lock so the append-only guarantee
+      is hard, as self-noted in `packages/mimir/src/ledger.ts`
+
 ### UI/UX polish rounds
 
 ## Blocked (needs user input)

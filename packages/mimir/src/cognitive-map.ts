@@ -30,12 +30,34 @@ import type {
   LedgerJsonValue,
   ProjectRecord,
 } from './types.ts'
-import { MS_PER_DAY, tsToMs } from './time.ts'
+import { MS_PER_DAY, orderedEvents, sessionize, sliceEvents, tsToMs } from './time.ts'
+import {
+  CREATION_ACTIONS,
+  CBE_SESSION_GAP_MINUTES,
+  CBE_HALF_LIFE_DAYS,
+  TERMINAL_ACTIONS,
+  isDecisionEvent,
+  isObservationEvent,
+  signedWeight,
+} from './vocabulary.ts'
 
-/** Half-life (days) of the drift decay: a week-old investment weighs half. */
-export const CBE_HALF_LIFE_DAYS = 7
-/** Minutes of inactivity that split one session from the next. */
-export const CBE_SESSION_GAP_MINUTES = 30
+/**
+ * The L0 vocabulary (action weights, action classes, the session gap) lives in
+ * `./vocabulary.ts` so that the six folds which need it do not have to import
+ * this module — a *view* — merely to read a constant. These names are
+ * re-exported here so the public surface (`index.ts`, and any external
+ * import) is unchanged by the move.
+ */
+export {
+  CREATION_ACTIONS,
+  CBE_SESSION_GAP_MINUTES,
+  CBE_HALF_LIFE_DAYS,
+  LINE_WEIGHTS,
+  TERMINAL_ACTIONS,
+  isDecisionEvent,
+  signedWeight,
+} from './vocabulary.ts'
+
 /** Drift at/above which a line is the dominant direction (main road). */
 export const CBE_DOMINANT_DRIFT = 4
 /** Drift at/below which a line is stalled (negated). */
@@ -66,50 +88,6 @@ export const CBE_TIER_E1_LINE_EVENTS = 20
 /** Window events required before E1 comparative language may appear (I2). */
 export const CBE_TIER_E1_USER_EVENTS = 100
 
-/**
- * The signed weight of one action on its line, over the REAL ledger
- * vocabulary (all 25 decision-grade actions). Outcomes that sign by payload
- * (`compute.job.settled`, `knowledge.claim.set`) resolve in
- * {@link signedWeight}. Actions absent here weigh 0 (meta events like
- * `data.wiki.*` never move a line — and neither does the journal: `journal.*`
- * is the L2 layer, read by the map as the user's own words, never signed as
- * evidence).
- */
-export const LINE_WEIGHTS: Readonly<Record<string, number>> = {
-  'knowledge.idea.added': 2,
-  'experiments.saved': 1.5,
-  'compute.job.settled': 1,
-  'literature.paper.imported': 1,
-  'literature.pdf.fetched': 0.5,
-  'writing.paper.reordered': 0.5,
-  'writing.bib.saved': 0.5,
-  'writing.bib.imported': 0.5,
-  'literature.paper.removed': -1,
-  'experiments.server.relinked': -0.5,
-  'figures.deleted': -0.5,
-  'compute.server.deleted': -0.5,
-  'experiments.deleted': -1.5,
-  'knowledge.idea.failed': -2.5,
-  'knowledge.idea.adopted': 2.5, // the merge: the positive terminal, symmetric weight of the close
-}
-
-/** The boundary-crossing actions: the research's own decision institutions. */
-export const TERMINAL_ACTIONS: ReadonlySet<string> = new Set([
-  'knowledge.idea.failed',
-  'knowledge.idea.adopted',
-  'knowledge.claim.set',
-])
-
-/** Creation-class actions: the eureka detector requires at least one per session. */
-export const CREATION_ACTIONS: ReadonlySet<string> = new Set([
-  'knowledge.idea.added',
-  'knowledge.claim.added',
-  'literature.paper.imported',
-  'experiments.saved',
-  'figures.saved',
-  'writing.paper.reordered',
-])
-
 /** The one L2 action: a user-written journal line. It is the ONLY write path
  * the cognitive layer reads as narrative — never as evidence.
  */
@@ -123,22 +101,6 @@ export const JOURNAL_ACTION = 'journal.entry.added'
  */
 export const QUESTION_SHOWED_ACTION = 'cbe.question.showed'
 export const QUESTION_ANSWERED_ACTION = 'cbe.question.answered'
-
-/** The signed weight of one event on its line (outcome-aware). */
-export function signedWeight(event: EventRecord): number {
-  switch (event.action) {
-    case 'compute.job.settled': {
-      const status = typeof event.payload.status === 'string' ? event.payload.status : ''
-      return status === 'succeeded' ? 1 : status === 'failed' ? -1 : 0
-    }
-    case 'knowledge.claim.set': {
-      const status = typeof event.payload.status === 'string' ? event.payload.status : ''
-      return status === 'supported' ? 2 : status === 'invalidated' ? -2 : 0
-    }
-    default:
-      return LINE_WEIGHTS[event.action] ?? 0
-  }
-}
 
 /**
  * The evidence tier one line's words may wear (constitution I2): below the
@@ -306,6 +268,8 @@ interface Attributed {
   readonly id: string
   readonly weight: number
   readonly isTerminal: boolean
+  /** Whether the event may move the line at all (see `isDecisionEvent`). */
+  readonly isDecision: boolean
   readonly tsMs: number
   readonly sessionId: number
 }
@@ -316,20 +280,21 @@ function r3(value: number): number {
 }
 
 /**
- * Cut an ASCENDING event stream into sessions (gap > {@link CBE_SESSION_GAP_MINUTES}
- * splits). Returns one session index per event id.
+ * One session index per event id, cut at the vocabulary's own session gap.
+ *
+ * The cut itself is the shared {@link sessionize} primitive; this adapts its
+ * groups to the index map this module's callers want. Events with an
+ * unparseable timestamp get no index at all (they belong to no sitting), so
+ * callers that look one up and find `undefined` drop the event — the same
+ * behaviour the previous hand-rolled cut had.
+ * @param events - ledger events, any order.
+ * @returns event id → session index (0-based), sessions in time order.
  */
-function sessionize(events: readonly EventRecord[]): ReadonlyMap<string, number> {
+function sessionIndexById(events: readonly EventRecord[]): ReadonlyMap<string, number> {
   const out = new Map<string, number>()
-  let current = 0
-  let previous: number | null = null
-  for (const event of events) {
-    const ms = tsToMs(event.ts)
-    if (ms === null) continue
-    if (previous !== null && ms - previous > CBE_SESSION_GAP_MINUTES * 60_000) current += 1
-    out.set(event.id, current)
-    previous = ms
-  }
+  sessionize(events, CBE_SESSION_GAP_MINUTES).forEach((group, index) => {
+    for (const event of group) out.set(event.id, index)
+  })
   return out
 }
 
@@ -351,6 +316,31 @@ function weightIsOutcomeTerminal(event: EventRecord): boolean {
 }
 
 /**
+ * The events inside one brief window (ISO bounds + optional project scope), in
+ * the canonical (ts, id) order.
+ *
+ * Every windowed read in this module goes through here, so `deriveLines` and
+ * `detectMoments` can never disagree about what the window contains — the
+ * shared {@link sliceEvents} does the cutting in epoch ms rather than by
+ * comparing ISO strings, which silently mis-slices any timestamp carrying a
+ * non-UTC offset. An unparseable bound leaves that side of the window open
+ * rather than collapsing the window to nothing.
+ * @param events - ledger events, any order.
+ * @param window - the ISO bounds and the project scope.
+ * @returns the in-window events, ordered.
+ */
+function briefWindowEvents(events: readonly EventRecord[], window: CbeBriefWindow): EventRecord[] {
+  const windowed = sliceEvents(
+    events,
+    tsToMs(window.since) ?? Number.NEGATIVE_INFINITY,
+    tsToMs(window.until) ?? Number.POSITIVE_INFINITY,
+  )
+  return window.projectId === null
+    ? windowed
+    : windowed.filter(event => event.refs.projectId === window.projectId)
+}
+
+/**
  * Derive the lines' DDM-lite states from the window's events.
  * @param events - ledger events, ANY order (sorted internally by ts, then id).
  * @param wiki - the wiki tables the labels and idea birthdates come from.
@@ -367,16 +357,18 @@ export function deriveLines(
   const ideaLabel = new Map(wiki.ideas.map(idea => [idea.id, idea.title]))
   const projectLabel = new Map(wiki.projects.map(project => [project.id, project.title]))
 
-  const ordered = events
-    .filter(event => {
-      if (window.projectId !== null && event.refs.projectId !== window.projectId) return false
-      return event.ts >= window.since && event.ts < window.until
-    })
-    .sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
-  const sessions = sessionize(ordered)
+  const ordered = briefWindowEvents(events, window)
+  const sessions = sessionIndexById(ordered)
   // The window's total mass feeds the I2 tier: comparative language needs
   // both enough line events and enough window events.
-  const userEventCount = ordered.length
+  //
+  // The mass counts research activity only. The read path writes the
+  // instrument's own ticks every time the panel is opened, so counting them
+  // let a researcher lift a line from e0 to e0+e1 by repeatedly looking at it
+  // — an evidence tier earned by observation instead of by work. The contract
+  // is enforced HERE rather than at the callers: `deriveLines` is exported,
+  // and a caller that forgets the filter would silently forge a tier.
+  const userEventCount = ordered.filter(event => !isObservationEvent(event)).length
 
   const lineEvents = new Map<string, Attributed[]>()
   for (const event of ordered) {
@@ -392,6 +384,7 @@ export function deriveLines(
       id: event.id,
       weight: signedWeight(event),
       isTerminal: TERMINAL_ACTIONS.has(event.action) && weightIsOutcomeTerminal(event),
+      isDecision: isDecisionEvent(event),
       tsMs: ms,
       sessionId: session,
     })
@@ -409,15 +402,23 @@ export function deriveLines(
     if (first === undefined || last === undefined) continue
     const firstMs = first.tsMs
     const lastMs = last.tsMs
+    // A line is MOVED only by decision-grade events. A zero-weight touch — a
+    // journal entry, a structural `cbe.*` declaration — still registers on the
+    // line (it is visible in `eventCount`, in the evidence, and in the
+    // first/last-seen bounds), but it is not evidence: counting it let five
+    // diary entries push a one-event line over the evidence floor, diluted
+    // this line's dispersion toward zero, and inflated the touched-session
+    // count enough to rewrite `state` outright.
+    const decisions = attributed.filter(item => item.isDecision)
     const drift = attributed.reduce(
       (sum, item) => sum + item.weight * Math.exp(-Math.LN2 * (nowMs - item.tsMs) / (CBE_HALF_LIFE_DAYS * MS_PER_DAY)),
       0,
     )
-    const mean = attributed.reduce((sum, item) => sum + item.weight, 0) / attributed.length
-    const dispersion = Math.sqrt(
-      attributed.reduce((sum, item) => sum + (item.weight - mean) ** 2, 0) / attributed.length,
+    const mean = decisions.reduce((sum, item) => sum + item.weight, 0) / decisions.length
+    const dispersion = decisions.length === 0 ? 0 : Math.sqrt(
+      decisions.reduce((sum, item) => sum + (item.weight - mean) ** 2, 0) / decisions.length,
     )
-    const sessionsTouched = new Set(attributed.map(item => item.sessionId)).size
+    const sessionsTouched = new Set(decisions.map(item => item.sessionId)).size
     const terminal = attributed.find(item => item.isTerminal) ?? null
 
     const birthIso = wiki.ideas.find(idea => idea.id === lineId)?.createdAt
@@ -443,6 +444,8 @@ export function deriveLines(
       label,
       firstSeen: new Date(firstMs).toISOString(),
       lastSeen: new Date(lastMs).toISOString(),
+      // Every attributed event is visible; only the decision-grade ones decide
+      // what the line is allowed to SAY about itself.
       eventCount: attributed.length,
       drift: r3(drift),
       dispersion: r3(dispersion),
@@ -450,7 +453,7 @@ export function deriveLines(
       decisionDays: decisionDays === null ? null : r3(decisionDays),
       settledBy: terminal === null ? null : terminal.id,
       state,
-      tier: claimsOf(attributed.length, userEventCount),
+      tier: claimsOf(decisions.length, userEventCount),
       evidence: Object.freeze(evidence),
     }))
   }
@@ -471,26 +474,10 @@ export function detectMoments(
   events: readonly EventRecord[],
   window: CbeBriefWindow,
 ): readonly CbeMoment[] {
-  const inWindow = events
-    .filter(event => {
-      if (window.projectId !== null && event.refs.projectId !== window.projectId) return false
-      return event.ts >= window.since && event.ts < window.until
-    })
-    .sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
-  const sessions = sessionize(inWindow)
-
-  const bySession = new Map<number, EventRecord[]>()
-  for (const event of inWindow) {
-    const index = sessions.get(event.id)
-    if (index === undefined) continue
-    const list = bySession.get(index) ?? []
-    list.push(event)
-    bySession.set(index, list)
-  }
-
-  const baseline = median([...bySession.values()].map(list => list.length))
+  const groups = sessionize(briefWindowEvents(events, window), CBE_SESSION_GAP_MINUTES)
+  const baseline = median(groups.map(group => group.length))
   const moments: CbeMoment[] = []
-  for (const [, list] of [...bySession.entries()].sort((a, b) => a[0] - b[0])) {
+  for (const list of groups) {
     if (list.length < 2 * baseline + 1) continue
     const creationCount = list.filter(event => CREATION_ACTIONS.has(event.action)).length
     if (creationCount < 1) continue
@@ -512,7 +499,7 @@ export function detectMoments(
 /** Read the status transitions (the Yes that emerged from the No's). */
 export function deriveTransitions(events: readonly EventRecord[]): readonly CbeTransition[] {
   const transitions: CbeTransition[] = []
-  for (const event of [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))) {
+  for (const event of orderedEvents(events)) {
     if (event.action === 'knowledge.idea.failed' && event.refs.ideaId !== undefined) {
       transitions.push(Object.freeze({
         kind: 'idea' as const,
@@ -543,7 +530,7 @@ export function deriveTransitions(events: readonly EventRecord[]): readonly CbeT
  * carries issues.
  */
 export function deriveOpenLoops(events: readonly EventRecord[]): readonly CbeOpenLoop[] {
-  const ordered = [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  const ordered = orderedEvents(events)
   const settledJobs = new Set(
     ordered
       .filter(event => event.action === 'compute.job.settled' && event.refs.jobId !== undefined)
@@ -633,9 +620,7 @@ function moodRating(value: LedgerJsonValue | undefined): number | undefined {
  * @returns the narrative entries, oldest first, frozen.
  */
 export function deriveNarrative(events: readonly EventRecord[]): readonly CbeNarrative[] {
-  const entries = [...events]
-    .sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
-    .filter(event => event.action === JOURNAL_ACTION)
+  const entries = orderedEvents(events).filter(event => event.action === JOURNAL_ACTION)
     .flatMap(event => {
       const text = event.payload.text
       if (typeof text !== 'string' || text.trim() === '') return []

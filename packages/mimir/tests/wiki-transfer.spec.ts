@@ -18,8 +18,10 @@ import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
 import {
-  snapshotEnvelopeError, tableRowsError, WIKI_SNAPSHOT_FORMAT, WIKI_SNAPSHOT_VERSION,
+  snapshotEnvelopeError, snapshotTables, tableRowsError,
+  WIKI_SNAPSHOT_FORMAT, WIKI_SNAPSHOT_VERSION, WIKI_SNAPSHOT_MIN_VERSION,
 } from '../src/wiki-snapshot.ts'
+import { appendEvent, PANEL_ACTOR } from '../src/ledger.ts'
 import type {
   ExperimentRecord, FigureRecord, PaperRecord, ProjectRecord, ResearchWikiSnapshot, ServerRecord,
 } from '../src/types.ts'
@@ -136,6 +138,22 @@ describe('exportWiki', () => {
     const parsed: unknown = JSON.parse(JSON.stringify(snapshot))
     expect(snapshotEnvelopeError(parsed)).toBeNull()
   })
+
+  it('carries the whole ledger — the CBE layer’s single source of truth', async () => {
+    const { domain, service } = await harness()
+    await seed(domain)
+    await appendEvent(domain, {
+      actor: PANEL_ACTOR,
+      action: 'knowledge.claim.set',
+      refs: { claimId: 'c1' },
+      payload: { status: 'supported' },
+    })
+    const snapshot = await exportOk(service)
+    // Without the events table a restore would bring the library back and
+    // silently zero worktree / habits / foraging / eureka / digest.
+    expect(snapshot.tables.events).toHaveLength(1)
+    expect(snapshotTables(snapshot)).toContain('events')
+  })
 })
 
 describe('importWiki merge', () => {
@@ -153,8 +171,8 @@ describe('importWiki merge', () => {
     expect(outcome).toEqual({
       ok: true,
       value: {
-        imported: { papers: 1, ideas: 0, claims: 0, projects: 0, experiments: 0, servers: 0, figures: 0 },
-        skipped: { papers: 1, ideas: 0, claims: 0, projects: 1, experiments: 1, servers: 1, figures: 1 },
+        imported: { papers: 1, ideas: 0, claims: 0, projects: 0, experiments: 0, servers: 0, figures: 0, events: 0 },
+        skipped: { papers: 1, ideas: 0, claims: 0, projects: 1, experiments: 1, servers: 1, figures: 1, events: 0 },
       },
     })
     expect(domain.table('papers').get(PAPER.arxivId)).toEqual(PAPER)
@@ -187,14 +205,71 @@ describe('importWiki replace', () => {
     expect(outcome).toEqual({
       ok: true,
       value: {
-        imported: { papers: 0, ideas: 0, claims: 0, projects: 1, experiments: 0, servers: 1, figures: 1 },
-        skipped: { papers: 0, ideas: 0, claims: 0, projects: 0, experiments: 0, servers: 0, figures: 0 },
+        imported: { papers: 0, ideas: 0, claims: 0, projects: 1, experiments: 0, servers: 1, figures: 1, events: 0 },
+        skipped: { papers: 0, ideas: 0, claims: 0, projects: 0, experiments: 0, servers: 0, figures: 0, events: 0 },
       },
     })
     expect(domain.table('papers').get(PAPER.arxivId)).toBeUndefined()
     expect(domain.table('experiments').get(EXPERIMENT.id)).toBeUndefined()
     expect(domain.table('projects').get(PROJECT.id)).toEqual(PROJECT)
     expect(domain.table('figures').get(FIGURE.id)).toEqual(FIGURE)
+  })
+})
+
+describe('importWiki ledger restore', () => {
+  it('restores the events table from a v3 snapshot', async () => {
+    const source = await harness()
+    await seed(source.domain)
+    await appendEvent(source.domain, {
+      actor: PANEL_ACTOR,
+      action: 'knowledge.claim.set',
+      refs: { claimId: 'c1' },
+      payload: { status: 'supported' },
+    })
+    const snapshot = await exportOk(source.service)
+    const carried = snapshot.tables.events[0]
+    expect(carried).toBeDefined()
+
+    const target = await harness()
+    const outcome = await target.service.importWiki({
+      snapshot: JSON.parse(JSON.stringify(snapshot)) as ResearchWikiSnapshot,
+      mode: 'merge',
+    })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('unreachable')
+    expect(outcome.value.imported.events).toBe(1)
+    // (exportWiki/importWiki ledger their own audit events afterwards, so the
+    // count is checked through the carried id rather than the table length.)
+    expect(target.domain.table('events').get(carried?.id ?? '')).toEqual(carried)
+  })
+
+  it('still restores a legacy v2 snapshot that carries no events', async () => {
+    const { domain, service } = await harness()
+    // A live ledger the v2 snapshot cannot know about.
+    const live = await appendEvent(domain, {
+      actor: PANEL_ACTOR,
+      action: 'knowledge.claim.set',
+      refs: { claimId: 'c1' },
+      payload: { status: 'supported' },
+    })
+    const legacy = {
+      format: WIKI_SNAPSHOT_FORMAT,
+      version: WIKI_SNAPSHOT_MIN_VERSION,
+      exportedAt: '2026-08-20T00:00:00.000Z',
+      tables: {
+        papers: [PAPER], ideas: [], claims: [], projects: [PROJECT],
+        experiments: [EXPERIMENT], servers: [SERVER], figures: [FIGURE],
+      },
+    } as unknown as ResearchWikiSnapshot
+
+    expect(snapshotEnvelopeError(legacy)).toBeNull()
+    const outcome = await service.importWiki({ snapshot: legacy, mode: 'replace', confirmReplace: true })
+    expect(outcome.ok).toBe(true)
+    if (!outcome.ok) throw new Error('unreachable')
+    expect(outcome.value.imported.papers).toBe(1)
+    expect(outcome.value.imported.events).toBe(0)
+    // A v2 snapshot says nothing about the ledger, so it must not wipe it.
+    expect(domain.table('events').get(live.id)).toEqual(live)
   })
 })
 
@@ -210,7 +285,7 @@ describe('importWiki validation', () => {
     const { service } = await harness()
     const snapshot = { format: WIKI_SNAPSHOT_FORMAT, version: 1, exportedAt: 'x', tables: {} } as unknown as ResearchWikiSnapshot
     const outcome = await service.importWiki({ snapshot, mode: 'merge' })
-    expect(outcome).toEqual({ ok: false, error: { code: 'invalid-input', message: 'version must be 2' } })
+    expect(outcome).toEqual({ ok: false, error: { code: 'invalid-input', message: 'version must be 2 or 3' } })
   })
 
   it('rejects an unknown mode', async () => {

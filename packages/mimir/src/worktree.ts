@@ -30,10 +30,11 @@
  * @module dsh-mimir/src/worktree
  */
 
-import { deriveLines, CREATION_ACTIONS, LINE_WEIGHTS } from './cognitive-map.ts'
+import { deriveLines } from './cognitive-map.ts'
 import type { CbeLineState, CbeWikiSnapshot } from './cognitive-map.ts'
+import { CREATION_ACTIONS, LINE_WEIGHTS } from './vocabulary.ts'
 import type { EventRecord } from './types.ts'
-import { MS_PER_DAY, tsToMs } from './time.ts'
+import { MS_PER_DAY, orderedEvents, tsToMs } from './time.ts'
 
 /** The mainline-ref move: one append-only declaration of the current mainline. */
 export const MAINLINE_ACTION = 'cbe.mainline.set'
@@ -146,7 +147,7 @@ function r3(value: number): number {
  */
 export function ideaParentEdges(events: readonly EventRecord[]): ReadonlyMap<string, string> {
   const edges = new Map<string, string>()
-  const ordered = [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  const ordered = orderedEvents(events)
   for (const event of ordered) {
     if (event.action !== IDEA_PARENT_ACTION || event.refs.ideaId === undefined) continue
     const parent = event.payload['parentIdeaId']
@@ -159,7 +160,7 @@ export function ideaParentEdges(events: readonly EventRecord[]): ReadonlyMap<str
 /** The mainline declarations in order (the reflog); malformed events skip. */
 function mainlineDeclarations(events: readonly EventRecord[]): CbeMainlineDeclaration[] {
   const declarations: CbeMainlineDeclaration[] = []
-  const ordered = [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  const ordered = orderedEvents(events)
   for (const event of ordered) {
     if (event.action !== MAINLINE_ACTION) continue
     const ideaId = event.refs.ideaId
@@ -203,7 +204,7 @@ export function deriveWorktree(
 
   // First failure event per idea: the close timestamp (the record is the
   // state, the event is the trail — the timestamp comes from the trail).
-  const ordered = [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  const ordered = orderedEvents(events)
   const failedAtMs = new Map<string, { ms: number; ts: string }>()
   for (const event of ordered) {
     if (event.action !== 'knowledge.idea.failed' || event.refs.ideaId === undefined) continue

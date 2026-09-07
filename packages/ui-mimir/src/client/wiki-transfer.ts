@@ -46,7 +46,9 @@ export function wikiSnapshotSummary(raw: unknown): WikiSnapshotSummary | null {
     exportedAt?: unknown
     tables?: unknown
   }
-  if (snapshot.format !== 'mimir-wiki' || snapshot.version !== 2) return null
+  // v2 (seven tables) is still importable; v3 adds the `events` ledger.
+  if (snapshot.format !== 'mimir-wiki') return null
+  if (snapshot.version !== 2 && snapshot.version !== 3) return null
   if (typeof snapshot.exportedAt !== 'string') return null
   if (typeof snapshot.tables !== 'object' || snapshot.tables === null) return null
   const tables = snapshot.tables as Record<string, unknown>
