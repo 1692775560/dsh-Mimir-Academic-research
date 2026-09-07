@@ -81,11 +81,16 @@ async function settleJob(service: ResearchService, id: string): Promise<JobRecor
     const listed = await service.listJobs({})
     if (listed.ok) {
       const job = listed.value.jobs.find(record => record.id === id)
-      if (job !== undefined && (job.status === 'succeeded' || job.status === 'failed')) return job
+      if (job !== undefined && !isActiveJob(job)) return job
     }
     await new Promise(resolve => setTimeout(resolve, 25))
   }
   throw new Error(`job ${id} did not settle`)
+}
+
+/** A queued/running job still owns an in-process SSH session. */
+function isActiveJob(job: JobRecord): boolean {
+  return job.status === 'queued' || job.status === 'running'
 }
 
 afterEach(() => { vi.unstubAllEnvs() })
@@ -357,7 +362,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'server-not-found', id: 'srv-missing' } })
   })
 
-  it('cancels an active job instead of deleting its record while SSH continues', async () => {
+  it('cancels an active job instead of deleting an unowned remote command', async () => {
     const { service } = await harness()
     await stubFakeSsh()
     const created = await service.saveServer({ server: SERVER_INPUT })
@@ -377,21 +382,32 @@ describe('ResearchService.listJobs / deleteJob', () => {
       ok: true,
       value: { id: submitted.value.job.id },
     })
-    for (let attempt = 0; attempt < 200; attempt += 1) {
-      const listed = await service.listJobs({})
-      if (listed.ok) {
-        const job = listed.value.jobs.find(record => record.id === submitted.value.job.id)
-        if (job?.status === 'cancelled') {
-          expect(job).toMatchObject({
-            exitCode: null,
-            stderrTail: expect.stringContaining('remote process outcome is unknown'),
-          })
-          return
-        }
-      }
-      await new Promise(resolve => setTimeout(resolve, 25))
-    }
-    throw new Error('cancelled job did not settle')
+    const settled = await settleJob(service, submitted.value.job.id)
+    expect(settled).toMatchObject({
+      status: 'cancelled',
+      exitCode: null,
+      stderrTail: expect.stringContaining('remote process outcome is unknown'),
+    })
+  })
+
+  it('interrupts an active job when its host service is disposed', async () => {
+    const { ctx, service } = await harness()
+    await stubFakeSsh()
+    const created = await service.saveServer({ server: SERVER_INPUT })
+    if (!created.ok) throw new Error('create failed')
+    const submitted = await service.submitJob({
+      serverId: created.value.server.id,
+      command: 'mimir-slow python train.py --epochs 20',
+    })
+    if (!submitted.ok) throw new Error('submit rejected')
+
+    await ctx.fiber.dispose()
+    const settled = await settleJob(service, submitted.value.job.id)
+    expect(settled).toMatchObject({
+      status: 'interrupted',
+      exitCode: null,
+      stderrTail: expect.stringContaining('host stopped'),
+    })
   })
 
   it('deletes a record and reports job-not-found on a repeat', async () => {

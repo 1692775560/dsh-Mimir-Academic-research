@@ -22,6 +22,8 @@ export interface ServiceState {
   jobSeq: number
   /** Abort handles for active SSH sessions owned by this service instance. */
   readonly jobAborts: Map<string, AbortController>
+  /** Intended terminal status for an aborted active job: `cancelled` (user/delete) or `interrupted` (host dispose). Absent → cancelled. */
+  readonly jobStopStatus: Map<string, 'cancelled' | 'interrupted'>
 }
 
 /** Build a frozen success branch. */
