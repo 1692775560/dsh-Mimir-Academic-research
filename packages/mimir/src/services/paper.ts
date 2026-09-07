@@ -13,6 +13,7 @@ import { parseTexOutline, reorderSections, reorderSubsections } from '../outline
 import {
   isNotFound,
   readPaperSource,
+  readPaperSourceUnlocked,
   resolvePaperDir,
   savePaperSourceFile,
   saveTextFileOptimistic,
@@ -413,7 +414,9 @@ export async function appendBibEntries(
   }
   const bibPath = join(dir, 'references.bib')
   return await withFileLock(bibPath, async (): Promise<ResearchImportBibResult> => {
-    const snapshot = await readPaperSource(bibPath)
+    // This callback already holds the bib writer lock; nest the unlocked read
+    // so the merge cannot self-deadlock (the locking reader is not re-entrant).
+    const snapshot = await readPaperSourceUnlocked(bibPath)
     const entries = parseBibtex(snapshot?.content ?? '')
     const present = new Set(entries.map(entry => entry.key))
     const added: string[] = []
