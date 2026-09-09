@@ -111,6 +111,30 @@ describe('research PDF and figure routes', () => {
     expect(figureResponse.statusCode).toBe(400)
   })
 
+  it('no route throws on malformed percent-encoding; every one answers 4xx, never 500 (#211)', async () => {
+    const { routes } = await bootRoutes()
+    // Every route taking a path or query parameter, fed an illegal `%`
+    // sequence in each parameter position. The SSE events route takes no
+    // parameter at all (verified by inspection — it never decodes).
+    const cases: readonly [route: string, url: string, expected: number][] = [
+      ['/research/pdf', '/research/pdf/%zz', 400],
+      ['/research/paper-pdf', '/research/paper-pdf/%zz', 400],
+      ['/research/figure', '/research/figure/%zz', 400],
+      ['/research/meeting', '/research/meeting?project=%zz&file=%zz', 404],
+      ['/research/figure-upload', '/research/figure-upload?project=%zz&name=%zz', 405],
+      ['/research/template-upload', '/research/template-upload?project=%zz&name=%zz', 405],
+    ]
+    for (const [route, url, expected] of cases) {
+      const handler = routes.get(route)
+      expect(handler, `route ${route} registered`).toBeDefined()
+      const response = new ResponseRecorder()
+      await expect(handler!(request(url), response as unknown as ServerResponse), url)
+        .resolves.toBeUndefined()
+      expect(response.statusCode, url).toBe(expected)
+      expect(response.statusCode, url).toBeLessThan(500)
+    }
+  })
+
   it('adds defensive headers to compiled PDF responses', async () => {
     const { routes, domain, workspaceDir } = await bootRoutes()
     await domain.table('projects').put(PROJECT.id, PROJECT)
