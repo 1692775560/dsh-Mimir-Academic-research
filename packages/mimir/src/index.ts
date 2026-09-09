@@ -413,7 +413,7 @@ export type {
   ArxivSubscriptionRecord,
 } from './arxiv-subscriptions.ts'
 export { runReview, renderReviewRound } from './reviewer.ts'
-export type { ReviewerOptions, ReviewRequest } from './reviewer.ts'
+export type { ReviewerOptions, ReviewRequest, ReviewOutcome } from './reviewer.ts'
 export { compileLatex, renderLatexResult, createLatexCompileTool, resolveLatexEngine, parseTectonicErrors } from './tools/latex.ts'
 export type { LatexCompileResult, LatexToolOptions, LatexEngineKind, ResolvedLatexEngine, LatexEngineProbe } from './tools/latex.ts'
 export { createArxivSearchTool, createPaperFetchTool, fetchArxivPdf, fetchArxivSearch, paperPdfFileName, parseArxivFeed, ARXIV_PDF_MAX_BYTES } from './tools/arxiv.ts'
@@ -458,6 +458,8 @@ export interface Config {
     provider?: string
     /** Review-round budget per project (default 3). */
     maxRounds?: number
+    /** Wall-clock budget per reviewer attempt in milliseconds (default 600_000). */
+    timeoutMs?: number
   }
   /** LaTeX compile deployment knobs. */
   latex?: {
@@ -550,7 +552,8 @@ export const Config: z<Config> = z.object({
   reviewer: z.object({
     provider: z.string().default('spawn'),
     maxRounds: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(3),
-  }).default({ provider: 'spawn', maxRounds: 3 }),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(600_000),
+  }).default({ provider: 'spawn', maxRounds: 3, timeoutMs: 600_000 }),
   latex: z.object({
     engine: z.string().default('auto'),
     timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(120_000),
@@ -587,7 +590,7 @@ export const Config: z<Config> = z.object({
 /** Fully defaulted config view used by tools and commands. */
 interface ResolvedConfig {
   readonly workspaceDir: string
-  readonly reviewer: { readonly provider: string; readonly maxRounds: number }
+  readonly reviewer: { readonly provider: string; readonly maxRounds: number; readonly timeoutMs: number }
   readonly latex: { readonly engine: string; readonly timeoutMs: number }
   readonly arxiv: { readonly maxResults: number }
   readonly search: { readonly command: string; readonly timeoutMs: number }
@@ -609,7 +612,7 @@ interface ResolvedConfig {
 /** Validate defaults even when a caller invokes apply() without Loader normalization. */
 function resolveConfig(config: Config): ResolvedConfig {
   const workspaceDir = config.workspaceDir ?? '.research'
-  const reviewer = { provider: config.reviewer?.provider ?? 'spawn', maxRounds: config.reviewer?.maxRounds ?? 3 }
+  const reviewer = { provider: config.reviewer?.provider ?? 'spawn', maxRounds: config.reviewer?.maxRounds ?? 3, timeoutMs: config.reviewer?.timeoutMs ?? 600_000 }
   const latex = { engine: config.latex?.engine ?? 'auto', timeoutMs: config.latex?.timeoutMs ?? 120_000 }
   const arxiv = { maxResults: config.arxiv?.maxResults ?? 10 }
   const search = { command: config.search?.command ?? 'auto', timeoutMs: config.search?.timeoutMs ?? 30_000 }
@@ -629,6 +632,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (workspaceDir.trim().length === 0) throw new TypeError('workspaceDir must be a non-empty path')
   if (reviewer.provider.trim().length === 0) throw new TypeError('reviewer.provider must be a non-empty provider name')
   if (!Number.isSafeInteger(reviewer.maxRounds) || reviewer.maxRounds < 1) throw new TypeError('reviewer.maxRounds must be a positive safe integer')
+  if (!Number.isSafeInteger(reviewer.timeoutMs) || reviewer.timeoutMs < 1) throw new TypeError('reviewer.timeoutMs must be a positive safe integer')
   if (latex.engine.trim().length === 0) throw new TypeError('latex.engine must be a non-empty engine selection')
   if (!Number.isSafeInteger(latex.timeoutMs) || latex.timeoutMs < 1) throw new TypeError('latex.timeoutMs must be a positive safe integer')
   if (!Number.isSafeInteger(arxiv.maxResults) || arxiv.maxResults < 1) throw new TypeError('arxiv.maxResults must be a positive safe integer')

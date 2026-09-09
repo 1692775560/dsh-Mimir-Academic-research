@@ -66,13 +66,30 @@ export function registerReviewCommand(ctx: Context, deps: ResearchCommandDeps): 
       }
 
       const scope = scopeWords.length > 0 ? scopeWords.join(' ') : input
-      const round = await runReview(ctx, deps.domain, deps.reviewer, {
+      const outcome = await runReview(ctx, deps.domain, deps.reviewer, {
         parent: invocation.agent,
         paths,
         scope,
         ...(project === undefined ? {} : { projectId: project.id }),
         signal: invocation.signal,
       })
+      if (outcome.status === 'failed') {
+        // The reviewer crashed (and the fresh retry crashed too): record the
+        // failure so the claim-evidence trail sees it, and report without
+        // touching the project's reviewRounds budget.
+        await emitEvent(deps.domain, {
+          actor: REVIEWER_ACTOR,
+          action: 'review.round.failed',
+          refs: project === undefined ? {} : { projectId: project.id },
+          payload: { reason: outcome.reason, attempts: outcome.attempts, scope },
+        })
+        return {
+          kind: 'error',
+          text: `Independent review of ${scope} failed after ${outcome.attempts} attempts (${outcome.reason}). `
+            + 'Earlier completed rounds are unaffected and no review-round budget was consumed; re-run /research-review to try again.',
+        }
+      }
+      const round = outcome.round
       // The round's verdict joins the ledger as a subagent action — the
       // claim-evidence trail needs to see who graded what and how. Awaited
       // (best-effort inside): the verdict is durable before the command
@@ -85,7 +102,8 @@ export function registerReviewCommand(ctx: Context, deps: ResearchCommandDeps): 
       })
       const counted = project === undefined ? '' : ` Round ${project.reviewRounds + 1}/${deps.reviewer.maxRounds} for project ${project.id}.`
       const followup = round.verdict === 'PASS' ? '' : ' A revision request was handed to the agent.'
-      return { kind: 'success', text: `${renderReviewRound(round)}\n${counted}${followup}` }
+      const retried = outcome.retried ? ' The first reviewer attempt failed; the round was retried with a fresh reviewer.' : ''
+      return { kind: 'success', text: `${renderReviewRound(round)}\n${counted}${followup}${retried}` }
     },
   })
 }

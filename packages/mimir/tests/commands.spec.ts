@@ -41,7 +41,7 @@ async function harness() {
   const deps: ResearchCommandDeps = {
     workspaceDir,
     domain,
-    reviewer: { provider: 'spawn', maxRounds: 3 },
+    reviewer: { provider: 'spawn', maxRounds: 3, timeoutMs: 1000 },
     latex: { engine: 'auto', timeoutMs: 1000 },
   }
   return { ctx, domain, workspaceDir, deps }

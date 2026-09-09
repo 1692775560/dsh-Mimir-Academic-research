@@ -15,6 +15,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
+import { loadVenueCache } from '../src/services/venue-deadlines.ts'
 import type { ProjectRecord } from '../src/types.ts'
 
 /** Boot a service over a memory-backed domain and a fresh temp workspace. */
@@ -146,5 +147,56 @@ describe('clearVenueTemplate', () => {
     const { service } = await harness()
     const result = await service.clearVenueTemplate({ projectId: 'ghost' })
     expect(result).toMatchObject({ ok: false, error: { code: 'project-not-found' } })
+  })
+})
+
+describe('loadVenueCache (#241)', () => {
+  /** One well-formed series record as the cache writer would persist it. */
+  const GOOD_SERIES = {
+    key: 'cvpr',
+    title: 'CVPR',
+    description: 'Computer vision',
+    sub: 'AI',
+    ccfRank: 'A',
+    dblp: 'cvpr',
+    confs: [{
+      year: 2027,
+      id: 'cvpr27',
+      link: 'https://cvpr.example/',
+      timeline: [{ abstractDeadline: null, deadline: '2027-11-14 23:59:59', comment: null }],
+      timezone: 'AoE',
+      date: 'June 2027',
+      place: 'Nashville',
+    }],
+  }
+
+  it('keeps the good records of a mixed cache and drops the bad ones', async () => {
+    const { workspaceDir, service } = await harness()
+    await writeFile(join(workspaceDir, 'venue-deadlines.cache.json'), JSON.stringify({
+      fetchedAt: '2026-09-01T00:00:00.000Z',
+      venues: [
+        GOOD_SERIES,
+        { key: 'broken', title: 'BROKEN' }, // missing sub/ccfRank/confs
+        'not-even-an-object',
+      ],
+    }))
+
+    const cache = await loadVenueCache(workspaceDir)
+    expect(cache?.venues.map(series => series.key)).toEqual(['cvpr'])
+
+    // End to end: the mixed cache still serves the catalog, good records only.
+    const result = await service.listVenueDeadlines({})
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.value.venues.map(venue => venue.key)).toEqual(['cvpr'])
+    expect(result.value.fetchedAt).toBe('2026-09-01T00:00:00.000Z')
+  })
+
+  it('returns null for a corrupt envelope and an unparseable file', async () => {
+    const { workspaceDir } = await harness()
+    await writeFile(join(workspaceDir, 'venue-deadlines.cache.json'), '{"venues": "nope"}')
+    expect(await loadVenueCache(workspaceDir)).toBeNull()
+    await writeFile(join(workspaceDir, 'venue-deadlines.cache.json'), 'not json {')
+    expect(await loadVenueCache(workspaceDir)).toBeNull()
   })
 })

@@ -584,8 +584,8 @@ export class ResearchService extends TypertRemoteService {
     figureRelPaths?: readonly string[] | undefined
     include?: Partial<MeetingInclude> | undefined
     aiIllustrations?: boolean | undefined
-  }): Promise<ResearchGenerateMeetingResult> {
-    return meeting.generateMeetingDeck(this.deps, request)
+  }, signal: AbortSignal): Promise<ResearchGenerateMeetingResult> {
+    return meeting.generateMeetingDeck(this.deps, request, signal)
   }
 
   @Remote('getImageGenConfig')

@@ -58,14 +58,20 @@ for i in range(n):
 doc.close()
 `
 
-/** Injectable process runner; defaults to a timed execFile. */
-export type ExtractRunner = (executable: string, args: readonly string[], timeoutMs: number) => Promise<void>
+/** Injectable process runner; defaults to a timed, cancellable execFile. */
+export type ExtractRunner = (executable: string, args: readonly string[], timeoutMs: number, signal?: AbortSignal) => Promise<void>
 
-function runProcess(executable: string, args: readonly string[], timeoutMs: number): Promise<void> {
+function runProcess(executable: string, args: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(executable, [...args], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, _stdout, stderr) => {
+    execFile(executable, [...args], { timeout: timeoutMs, signal, maxBuffer: 4 * 1024 * 1024 }, (error, _stdout, stderr) => {
       if (error === null) {
         resolve()
+        return
+      }
+      // A caller abort kills the child via the signal option; name it so the
+      // caller can tell cancellation apart from a pipeline failure.
+      if (signal?.aborted === true) {
+        reject(new Error('figure extraction was cancelled', { cause: error }))
         return
       }
       const detail = typeof stderr === 'string' && stderr.trim() !== '' ? stderr.trim() : error.message
@@ -80,6 +86,8 @@ export interface PaperFigureExtractDeps {
   readonly skillsDir?: string
   /** Process runner; defaults to a timed execFile. */
   readonly run?: ExtractRunner
+  /** Caller cancellation; kills the extractor child process. */
+  readonly signal?: AbortSignal
 }
 
 const CLONE_TIMEOUT_MS = 120_000
@@ -138,7 +146,9 @@ interface ExtractManifestFigure {
  * cached PDF, or any pipeline failure, resolve to an empty list.
  * @param workspaceDir - research workspace root.
  * @param arxivId - the paper's bare arXiv id.
- * @param deps - injectable seams (skills root, process runner).
+ * @param deps - injectable seams (skills root, process runner, cancellation).
+ *   When `deps.signal` aborts, the extractor child is killed and the abort
+ *   propagates rather than degrading to an empty list.
  * @returns the paper's deck-ready figure assets, possibly empty.
  */
 export async function extractPaperFigures(
@@ -162,9 +172,10 @@ export async function extractPaperFigures(
   const scratch = await mkdtemp(join(tmpdir(), 'mimir-paperfig-'))
 
   try {
+    deps.signal?.throwIfAborted()
     if ((await stat(script).catch(() => undefined))?.isFile() !== true) {
       await mkdir(skillsDir, { recursive: true })
-      await run('git', ['clone', '--depth', '1', GROUP_MEETING_SKILLS_REPO, repoDir], CLONE_TIMEOUT_MS)
+      await run('git', ['clone', '--depth', '1', GROUP_MEETING_SKILLS_REPO, repoDir], CLONE_TIMEOUT_MS, deps.signal)
     }
     if ((await stat(shim).catch(() => undefined))?.isFile() !== true) {
       await mkdir(skillsDir, { recursive: true })
@@ -175,7 +186,7 @@ export async function extractPaperFigures(
     await run('uv', [
       'run', '--with', 'pdfplumber', '--with', 'pillow', '--with', 'python-pptx',
       'python', script, 'extract', '--pdf', pdf, '--workdir', scratch, '--pdftoppm', shim,
-    ], EXTRACT_TIMEOUT_MS)
+    ], EXTRACT_TIMEOUT_MS, deps.signal)
 
     const manifest = JSON.parse(await readFile(join(scratch, 'manifest.json'), 'utf8')) as {
       figures?: ExtractManifestFigure[]
@@ -202,7 +213,10 @@ export async function extractPaperFigures(
     if (entries.length === 0) return []
     await writeFile(join(dest, 'manifest.json'), `${JSON.stringify(entries, null, 2)}\n`, 'utf8')
     return await loadPaperFigures(workspaceDir, arxivId)
-  } catch {
+  } catch (error) {
+    // Cancellation is not a best-effort failure: the caller asked to stop, so
+    // it propagates instead of degrading to "no figures".
+    if (deps.signal?.aborted === true) throw error
     // Extraction is best-effort: a missing tool, a failed clone, or a broken
     // PDF must never break deck generation.
     return []
