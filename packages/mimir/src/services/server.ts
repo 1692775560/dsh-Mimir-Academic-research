@@ -488,6 +488,11 @@ export async function deleteJob(
   }
   const abort = state.jobAborts.get(request.id)
   if (abort !== undefined && (existing.status === 'queued' || existing.status === 'running')) {
+    // Deleting an active row is a cancel request: the local SSH session is
+    // aborted and the record settles `cancelled` (the remote process outcome
+    // is unknowable once the session drops). The row stays visible until that
+    // terminal flip, so the user can see what was cancelled.
+    state.jobStopStatus.set(request.id, 'cancelled')
     abort.abort()
     return success({ id: request.id })
   }
@@ -517,10 +522,11 @@ async function runJob(
   const queued = table.get(id)
   if (queued === undefined) {
     state.jobAborts.delete(id)
+    state.jobStopStatus.delete(id)
     return
   }
   if (signal.aborted) {
-    await settleCancelledJob(deps, state, queued)
+    await settleStoppedJob(deps, state, queued, state.jobStopStatus.get(id) ?? 'cancelled')
     return
   }
   const server = deps.domain.table('servers').get(queued.serverId)
@@ -531,12 +537,14 @@ async function runJob(
       stderrTail: 'server record deleted before the job started',
       finishedAt: new Date().toISOString(),
     })
+    state.jobAborts.delete(id)
+    state.jobStopStatus.delete(id)
     return
   }
   const running: JobRecord = { ...queued, status: 'running', startedAt: new Date().toISOString() }
   await table.put(id, running)
   if (signal.aborted) {
-    await settleCancelledJob(deps, state, running)
+    await settleStoppedJob(deps, state, running, state.jobStopStatus.get(id) ?? 'cancelled')
     return
   }
   let settled: JobRecord
@@ -560,7 +568,7 @@ async function runJob(
     }
   } catch (error) {
     if (signal.aborted) {
-      await settleCancelledJob(deps, state, running, error)
+      await settleStoppedJob(deps, state, running, state.jobStopStatus.get(id) ?? 'cancelled', error)
       return
     }
     // execFile failures carry the child's exit code and captured output;
@@ -580,11 +588,69 @@ async function runJob(
       finishedAt: new Date().toISOString(),
     }
   }
-  // A delete during the run already dropped the record: the remote
-  // command still finished, but nothing is written back.
-  if (table.get(id) === undefined) return
-  await table.put(id, settled)
-  state.jobAborts.delete(id)
+  await finishJob(deps, state, settled)
+}
+
+/** Abort every active SSH session this service owns (host dispose path). */
+export function stopOwnedJobs(state: ServiceState): void {
+  for (const [id, controller] of state.jobAborts) {
+    // Set the intended terminal status before aborting so the settle races
+    // can distinguish host stop (`interrupted`) from a user cancel.
+    state.jobStopStatus.set(id, 'interrupted')
+    controller.abort()
+  }
+}
+
+/**
+ * Settle an aborted SSH session without claiming a remote process outcome:
+ * `cancelled` for a user/delete cancel, `interrupted` for host dispose.
+ * The preserved output tails ride any stderr the child captured before the
+ * abort; a fabricated success/failure is never written for a session whose
+ * remote outcome is unknowable.
+ */
+async function settleStoppedJob(
+  deps: ServerDeps,
+  state: ServiceState,
+  job: JobRecord,
+  status: 'cancelled' | 'interrupted',
+  error?: unknown,
+): Promise<void> {
+  const current = deps.domain.table('jobs').get(job.id)
+  if (current === undefined) {
+    state.jobAborts.delete(job.id)
+    state.jobStopStatus.delete(job.id)
+    return
+  }
+  const carrier = error as { stdout?: unknown; stderr?: unknown } | undefined
+  const stdout = typeof carrier?.stdout === 'string' ? carrier.stdout : ''
+  const note = status === 'cancelled'
+    ? 'cancelled locally; remote process outcome is unknown'
+    : 'host stopped before the job outcome was known'
+  const stderr = typeof carrier?.stderr === 'string' && carrier.stderr.trim() !== ''
+    ? `${carrier.stderr}\n${note}`
+    : note
+  await finishJob(deps, state, {
+    ...current,
+    status,
+    exitCode: null,
+    stdoutTail: tailOf(stdout),
+    stderrTail: tailOf(stderr),
+    finishedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Persist one terminal job, emit its settle event, write back the linked
+ * experiment, and release the local SSH ownership for the job id.
+ */
+async function finishJob(deps: ServerDeps, state: ServiceState, settled: JobRecord): Promise<void> {
+  state.jobAborts.delete(settled.id)
+  state.jobStopStatus.delete(settled.id)
+  const table = deps.domain.table('jobs')
+  // A delete during the run already dropped the record: the remote command
+  // still finished, but nothing is written back.
+  if (table.get(settled.id) === undefined) return
+  await table.put(settled.id, settled)
   const startedMs = settled.startedAt === undefined ? null : Date.parse(settled.startedAt)
   const finishedMs = settled.finishedAt === undefined ? null : Date.parse(settled.finishedAt)
   await emitEvent(deps.domain, {
@@ -605,32 +671,6 @@ async function runJob(
       summary: jobSummaryOf(settled),
     },
   })
-  await writeBackExperiment(deps, settled)
-}
-
-async function settleCancelledJob(
-  deps: ServerDeps,
-  state: ServiceState,
-  job: JobRecord,
-  error?: unknown,
-): Promise<void> {
-  const table = deps.domain.table('jobs')
-  if (table.get(job.id) === undefined) return
-  const carrier = error as { stdout?: unknown; stderr?: unknown } | undefined
-  const stdout = typeof carrier?.stdout === 'string' ? carrier.stdout : ''
-  const stderr = typeof carrier?.stderr === 'string' && carrier.stderr.trim() !== ''
-    ? `${carrier.stderr}\ncancelled locally; remote process outcome is unknown`
-    : 'cancelled locally; remote process outcome is unknown'
-  const settled: JobRecord = {
-    ...job,
-    status: 'cancelled',
-    exitCode: null,
-    stdoutTail: tailOf(stdout),
-    stderrTail: tailOf(stderr),
-    finishedAt: new Date().toISOString(),
-  }
-  await table.put(job.id, settled)
-  state.jobAborts.delete(job.id)
   await writeBackExperiment(deps, settled)
 }
 

@@ -229,7 +229,16 @@ export class ResearchService extends TypertRemoteService {
       compileStatus: new Map(),
       jobSeq: 0,
       jobAborts: new Map(),
+      jobStopStatus: new Map(),
     }
+    // The service owns the SSH sessions it spawns: when the fiber is torn
+    // down (host restart / plugin unload / dispose), abort every active job
+    // so a stale child process cannot outlive the service. The abort rides
+    // the job's own signal; each settle marks the record `interrupted`
+    // (never a fabricated succeed/fail for a disconnected session).
+    ctx.fiber.effect(() => () => {
+      void server.stopOwnedJobs(this.state)
+    }, 'research.jobsStopOnDispose')
   }
 
   /** Broadcast a file-side wiki write to subscribed panels (a no-op unwired). */

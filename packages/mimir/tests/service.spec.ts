@@ -16,6 +16,7 @@ import { createServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -1600,6 +1601,40 @@ describe('ResearchService.renameFigure', () => {
     await scaffoldPaper(workspaceDir)
     await expect(service.renameFigure({ projectId: 'p1', relPath: 'figures/plot.png', newName: 'plot.png' }))
       .resolves.toEqual({ ok: true, value: { relPath: 'figures/plot.png', references: 0 } })
+  })
+
+  it('runs the reference rewrite under the body lock: a draft landed mid-rename survives (R23)', async () => {
+    const { domain, workspaceDir, service } = await harness()
+    await domain.table('projects').put(PROJECT.id, PROJECT)
+    await scaffoldWithReference(workspaceDir)
+    const texPath = join(workspaceDir, 'paper', 'main.tex')
+    // A body edit lands (the agent's file tools, or a panel save) while the
+    // rename is in flight: it keeps the figure block and adds a paragraph. The
+    // edit is a raw write that does NOT take the body lock — exactly the writer
+    // a lock-free rename rewrite would clobber by rewriting a body it read
+    // before the edit landed.
+    const draft = '\\documentclass{article}\n\\begin{document}\n\\section{Draft paragraph kept}\n\\includegraphics[width=\\linewidth]{figures/plot.png}\n\\end{document}\n'
+    // Hold main.tex's writer lock (the same lock a rename rewrite now waits
+    // on), THEN fire the rename: it moves the figure file and must block on
+    // this lock before rewriting the body.
+    let releaseRename = (): void => {}
+    const renameMayRun = new Promise<void>(resolve => { releaseRename = resolve })
+    const renaming = (async () => {
+      await renameMayRun
+      return service.renameFigure({ projectId: 'p1', relPath: 'figures/plot.png', newName: 'loss-curve.png' })
+    })()
+    await withFileLock(texPath, async () => {
+      releaseRename()
+      await writeFileAtomic(texPath, draft, { mode: 0o666 })
+      // Returning releases the lock; the rename's rewrite then re-reads the
+      // NEW body and rewrites only the figure reference onto it.
+    })
+    const outcome = await renaming
+    expect(outcome).toEqual({ ok: true, value: { relPath: 'figures/loss-curve.png', references: 2 } })
+    // Both edits survive: the draft's paragraph and the renamed reference.
+    const body = await readFile(texPath, 'utf8')
+    expect(body).toContain('\\section{Draft paragraph kept}')
+    expect(body).toContain('\\includegraphics[width=\\linewidth]{figures/loss-curve.png}')
   })
 })
 
