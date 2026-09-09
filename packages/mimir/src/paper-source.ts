@@ -12,8 +12,8 @@
  * @module dsh-mimir/src/paper-source
  */
 
-import { readFile, stat } from 'node:fs/promises'
-import { isAbsolute, resolve, sep } from 'node:path'
+import { readFile, realpath, stat } from 'node:fs/promises'
+import { dirname, isAbsolute, resolve, sep } from 'node:path'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 
 /** Paper directory used when neither the request nor the project names one. */
@@ -40,6 +40,41 @@ export function resolvePaperDir(
   const root = resolve(workspaceDir)
   const resolved = resolve(root, candidate)
   return resolved === root || resolved.startsWith(root + sep) ? resolved : undefined
+}
+
+/**
+ * Realpath-backed variant of {@link resolvePaperDir} (#213): the lexical
+ * check first, then the nearest existing ancestor of the resolved directory
+ * must realpath INSIDE the workspace's realpath — a symlinked paper
+ * directory (or a symlink anywhere along the path) cannot smuggle reads and
+ * writes outside the workspace. A directory that does not exist yet passes
+ * when its ancestor chain is clean; the caller's mkdir then creates a real
+ * directory. Returns undefined for a violating path (`invalid-dir`).
+ * @param workspaceDir - absolute research workspace root.
+ * @param requestDir - directory the caller explicitly asked for, if any.
+ * @param projectPaperDir - the project record's `paperDir`, if any.
+ * @returns the absolute paper directory, or undefined for a violating path.
+ */
+export async function resolvePaperDirReal(
+  workspaceDir: string,
+  requestDir?: string,
+  projectPaperDir?: string,
+): Promise<string | undefined> {
+  const resolved = resolvePaperDir(workspaceDir, requestDir, projectPaperDir)
+  if (resolved === undefined) return undefined
+  const rootReal = await realpath(resolve(workspaceDir)).catch(() => undefined)
+  if (rootReal === undefined) return undefined
+  // realpath rejects on ENOENT; walk up to the nearest existing ancestor.
+  let probe = resolved
+  for (;;) {
+    const probeReal = await realpath(probe).catch(() => undefined)
+    if (probeReal !== undefined) {
+      return probeReal === rootReal || probeReal.startsWith(rootReal + sep) ? resolved : undefined
+    }
+    const parent = dirname(probe)
+    if (parent === probe) return undefined
+    probe = parent
+  }
 }
 
 /** Content of `main.tex` plus the mtime it was read from. */

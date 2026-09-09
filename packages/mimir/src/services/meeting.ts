@@ -22,7 +22,7 @@ import type {
   ResearchGenerateMeetingResult,
   ResearchMeetingDecksResult,
 } from '../types.ts'
-import { resolvePaperDir } from '../paper-source.ts'
+import { resolvePaperDir, resolvePaperDirReal, DEFAULT_PAPER_DIR } from '../paper-source.ts'
 import { listPaperFigures, type FigureFile } from '../artifacts.ts'
 import { isValidArxivId } from '../arxiv-id.ts'
 import { isValidProjectId } from '../project-id.ts'
@@ -570,10 +570,17 @@ export async function generateMeetingDeck(
   let coverArt: string | undefined
   const paperArt: Record<string, string> = {}
   let illustrations = 0
-  if (request.aiIllustrations === true && dir !== undefined) {
+  if (request.aiIllustrations === true) {
+    // Validate the target directory BEFORE any external image-generation
+    // call: an escaping or symlinked paperDir is rejected as `invalid-dir`
+    // up front, never carried into the API call or the file write (#213).
+    const realDir = await resolvePaperDirReal(deps.workspaceDir, undefined, project.paperDir)
+    if (realDir === undefined) {
+      return rejected({ code: 'invalid-dir', dir: project.paperDir ?? DEFAULT_PAPER_DIR })
+    }
     const imageGen = await readImageGenConfig(deps.workspaceDir)
     if (imageGen.apiKey !== '') {
-      const paperDir = project.paperDir ?? 'paper'
+      const paperDir = project.paperDir ?? DEFAULT_PAPER_DIR
       const illustrate = async (stem: string, caption: string, prompt: string): Promise<string | undefined> => {
         try {
           const image = await generateImage(imageGen, prompt)

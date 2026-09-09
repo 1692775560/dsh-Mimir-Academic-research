@@ -1082,7 +1082,8 @@ describe('ResearchService bibliography remotes', () => {
     const text = await readFile(join(workspaceDir, 'paper', 'references.bib'), 'utf8')
     expect(text).toContain('@misc{210300020v2,')
     expect(text).toContain('eprint = {2103.00020v2}')
-    expect(text).toContain('note = {baseline notes}')
+    // Reading notes are workbench-private; they never enter the citation (#219).
+    expect(text).not.toContain('baseline notes')
     // url falls back to the arXiv abs page when the record carries none.
     expect(text).toContain('url = {https://arxiv.org/abs/1812.01187v1}')
     // A repeat import skips both; a mix adds only the new one.

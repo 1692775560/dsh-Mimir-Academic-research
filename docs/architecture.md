@@ -69,6 +69,22 @@ Additive-only changes: optional fields with `.default(...)`, new tables
 open empty on old snapshots. `events` is the append-only ledger that powers
 the ledger view and the cognitive engine.
 
+## HTTP route permission model
+
+The `/research/*` routes split in two (`http-write-boundary.ts`, #210).
+**Write routes** (figure upload, template upload) require an `Origin` header
+matching `Host` exactly (`isSameOriginWrite`). **Read/download routes**
+(compiled PDF, paper PDF, figure, meeting deck, SSE events) are
+loopback-panel-only (`isTrustedRead`): the `Host` header must name the
+loopback listener (`localhost`/`127.0.0.1`/`[::1]`, any port), and an
+`Origin`, when present (cross-origin fetches always carry one), must match
+it exactly. The panel's `<img>`/`<iframe>`/`<a>` navigations carry no
+`Origin` and pass on the Host check alone. Under DNS rebinding the rebound
+request carries the attacker's host name and is refused. Deployment
+boundary: when dsh is exposed through a reverse proxy or LAN bind, these
+routes stay loopback-only by design; expose them remotely only behind an
+authenticating proxy that rewrites `Host`.
+
 ## Agent surface
 
 - **Tools (9)**: `arxiv_search`, `web_search`, `wiki_note`, `figure_save`,

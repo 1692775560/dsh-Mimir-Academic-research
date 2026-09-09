@@ -40,6 +40,10 @@ export const paperRecord = z.object({
     at: z.string(),
   })).optional(),
   addedAt: z.string(),
+  // Added WITHOUT a version bump: `.optional()` leaves the fields absent on
+  // records that predate them, so existing v2 JSON stores keep loading.
+  published: z.string().optional(),
+  doi: z.string().optional(),
 })
 
 /** Durable shape of one idea, including the never-deleted failed ideas. */

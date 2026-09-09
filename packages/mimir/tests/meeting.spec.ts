@@ -6,7 +6,7 @@
  * mocks.
  */
 
-import { mkdtemp, mkdir, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -239,6 +239,22 @@ describe('generateMeetingDeck', () => {
     const { service } = await harness()
     const result = await service.generateMeetingDeck({ projectId: 'nope' })
     expect(result).toMatchObject({ ok: false, error: { code: 'project-not-found' } })
+  })
+
+  it('rejects an escaping/symlinked paperDir as invalid-dir BEFORE any external image call (#213)', async () => {
+    const { domain, workspaceDir, service } = await harness()
+    // Lexical escape: the AI-illustration request must fail fast.
+    await domain.table('projects').put('p-escape', { ...PROJECT, id: 'p-escape', paperDir: '../outside' })
+    const lexical = await service.generateMeetingDeck({ projectId: 'p-escape', aiIllustrations: true })
+    expect(lexical).toMatchObject({ ok: false, error: { code: 'invalid-dir', dir: '../outside' } })
+
+    // Symlink escape: workspace/paper is a symlink to a directory outside
+    // the workspace — lexically fine, realpath-confined invalid.
+    const outside = await mkdtemp(join(tmpdir(), 'mimir-meeting-outside-'))
+    await symlink(outside, join(workspaceDir, 'paper'), 'dir')
+    await domain.table('projects').put(PROJECT.id, PROJECT)
+    const linked = await service.generateMeetingDeck({ projectId: 'p1', aiIllustrations: true })
+    expect(linked).toMatchObject({ ok: false, error: { code: 'invalid-dir' } })
   })
 
   it('renders a real pptx from the wiki and lists it afterwards', async () => {

@@ -31,7 +31,7 @@ import { registerPaperCommands } from './commands/paper.ts'
 import { registerSkillSyncCommand } from './commands/skill-sync.ts'
 import type { ResearchCommandDeps } from './commands/common.ts'
 import { resolvePaperDir } from './paper-source.ts'
-import { isSameOriginWrite, projectPaperDir } from './http-write-boundary.ts'
+import { isSameOriginWrite, isTrustedRead, projectPaperDir } from './http-write-boundary.ts'
 import type { ResearchServiceConfig } from './service.ts'
 import { isFigureFile } from './artifacts.ts'
 import { TEMPLATE_DIR_NAME } from './services/venue.ts'
@@ -650,7 +650,8 @@ function resolveConfig(config: Config): ResolvedConfig {
  * resolves per request — a `?dir=` query override, else the project record's
  * `paperDir`, else `paper` — always confined inside the workspace (a
  * violating `dir` is a 400), so the project id only selects WHICH project's
- * panel may read it: an unknown id is a 404.
+ * panel may read it: an unknown id is a 404. Reads are loopback-panel-only
+ * (`isTrustedRead`, #210).
  * @param deps - Shared command dependencies (workspace root and open domain).
  * @returns the route handler owning the full response lifecycle.
  */
@@ -661,6 +662,11 @@ function createPdfHandler(
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -720,7 +726,8 @@ function createPdfHandler(
  * an unknown id is a 404, as is a paper whose PDF was never fetched. The
  * stored `pdfPath` is workspace-relative; a path escaping the workspace is a
  * 400 (the fetch writer only ever produces `papers/<id>.pdf`, so a violating
- * value means a hand-edited store).
+ * value means a hand-edited store). Reads are loopback-panel-only
+ * (`isTrustedRead`, #210).
  * @param deps - Shared command dependencies (workspace root and open domain).
  * @returns the route handler owning the full response lifecycle.
  */
@@ -731,6 +738,11 @@ function createPaperPdfHandler(
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -834,6 +846,7 @@ function commandOnPath(command: string): Promise<boolean> {
  * directory resolves like the PDF route (`?dir=` override, record
  * `paperDir`, default); `?path=` is relative to it — an absolute path, a
  * `..` escape, or a non-figure extension is a 400, a missing file a 404.
+ * Reads are loopback-panel-only (`isTrustedRead`, #210).
  * @param deps - Shared command dependencies (workspace root and open domain).
  * @returns the route handler owning the full response lifecycle.
  */
@@ -844,6 +857,11 @@ function createFigureHandler(
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -1051,7 +1069,8 @@ function createTemplateUploadHandler(
  * (an unknown id is a 404) and `?file=` (reduced to its basename and confined
  * to `meetings/<projectId>/` by {@link meetingDeckPath}, so no traversal is
  * expressible; a non-.pptx name is a 400). Streams the pptx as an attachment,
- * so the panel's `<a href>` forces a download.
+ * so the panel's `<a href>` forces a download. Reads are loopback-panel-only
+ * (`isTrustedRead`, #210).
  * @param deps - Shared command dependencies (workspace root and open domain).
  * @returns the route handler owning the full response lifecycle.
  */
@@ -1062,6 +1081,11 @@ function createMeetingDeckHandler(
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -1098,7 +1122,6 @@ function createMeetingDeckHandler(
     createReadStream(deckPath).pipe(res)
   }
 }
-
 
 /**
  * Mount the research suite: open the wiki domain, register the four tools and

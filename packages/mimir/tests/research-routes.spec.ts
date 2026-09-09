@@ -92,8 +92,12 @@ async function bootRoutes(): Promise<{
   return { routes, domain, workspaceDir }
 }
 
-function request(url: string): IncomingMessage {
-  return { method: 'HEAD', url } as IncomingMessage
+function request(
+  url: string,
+  headers: Record<string, string> = { host: 'localhost:3080' },
+  method = 'HEAD',
+): IncomingMessage {
+  return { method, url, headers } as IncomingMessage
 }
 
 describe('research PDF and figure routes', () => {
@@ -111,6 +115,30 @@ describe('research PDF and figure routes', () => {
     expect(figureResponse.statusCode).toBe(400)
   })
 
+  it('no route throws on malformed percent-encoding; every one answers 4xx, never 500 (#211)', async () => {
+    const { routes } = await bootRoutes()
+    // Every route taking a path or query parameter, fed an illegal `%`
+    // sequence in each parameter position. The SSE events route takes no
+    // parameter at all (verified by inspection — it never decodes).
+    const cases: readonly [route: string, url: string, expected: number][] = [
+      ['/research/pdf', '/research/pdf/%zz', 400],
+      ['/research/paper-pdf', '/research/paper-pdf/%zz', 400],
+      ['/research/figure', '/research/figure/%zz', 400],
+      ['/research/meeting', '/research/meeting?project=%zz&file=%zz', 404],
+      ['/research/figure-upload', '/research/figure-upload?project=%zz&name=%zz', 405],
+      ['/research/template-upload', '/research/template-upload?project=%zz&name=%zz', 405],
+    ]
+    for (const [route, url, expected] of cases) {
+      const handler = routes.get(route)
+      expect(handler, `route ${route} registered`).toBeDefined()
+      const response = new ResponseRecorder()
+      await expect(handler!(request(url), response as unknown as ServerResponse), url)
+        .resolves.toBeUndefined()
+      expect(response.statusCode, url).toBe(expected)
+      expect(response.statusCode, url).toBeLessThan(500)
+    }
+  })
+
   it('adds defensive headers to compiled PDF responses', async () => {
     const { routes, domain, workspaceDir } = await bootRoutes()
     await domain.table('projects').put(PROJECT.id, PROJECT)
@@ -125,5 +153,61 @@ describe('research PDF and figure routes', () => {
       'X-Content-Type-Options': 'nosniff',
       'Content-Security-Policy': "default-src 'none'; sandbox",
     })
+  })
+})
+
+describe('loopback-panel-only download routes (#210)', () => {
+  const READ_ROUTES = ['/research/pdf', '/research/paper-pdf', '/research/figure', '/research/meeting'] as const
+
+  it('rejects requests without a Host header and requests naming a non-loopback host', async () => {
+    const { routes } = await bootRoutes()
+    for (const route of READ_ROUTES) {
+      const handler = routes.get(route)!
+      const noHost = new ResponseRecorder()
+      await handler(request(`${route}/p1`, {}), noHost as unknown as ServerResponse)
+      expect(noHost.statusCode, `${route} without Host`).toBe(403)
+      // DNS rebinding: the rebound request carries the attacker's host name.
+      const rebound = new ResponseRecorder()
+      await handler(request(`${route}/p1`, { host: 'evil.com' }), rebound as unknown as ServerResponse)
+      expect(rebound.statusCode, `${route} with attacker Host`).toBe(403)
+    }
+  })
+
+  it('rejects cross-origin reads but allows a matching Origin', async () => {
+    const { routes } = await bootRoutes()
+    const handler = routes.get('/research/pdf')!
+    const crossOrigin = new ResponseRecorder()
+    await handler(
+      request('/research/pdf/p1', { host: 'localhost:3080', origin: 'http://evil.com' }),
+      crossOrigin as unknown as ServerResponse,
+    )
+    expect(crossOrigin.statusCode).toBe(403)
+    const sameOrigin = new ResponseRecorder()
+    await handler(
+      request('/research/pdf/p1', { host: 'localhost:3080', origin: 'http://localhost:3080' }),
+      sameOrigin as unknown as ServerResponse,
+    )
+    expect(sameOrigin.statusCode).not.toBe(403)
+  })
+
+  it('admits loopback hosts on any port past the permission gate', async () => {
+    const { routes } = await bootRoutes()
+    const handler = routes.get('/research/pdf')!
+    for (const host of ['localhost:3080', '127.0.0.1:9999', '[::1]:3080']) {
+      const response = new ResponseRecorder()
+      // Unknown project ids fail past the gate (404), proving the read was authorized.
+      await handler(request('/research/pdf/nope', { host }), response as unknown as ServerResponse)
+      expect(response.statusCode, host).not.toBe(403)
+    }
+  })
+
+  it('rejects non-loopback access to the SSE events route before subscribing', async () => {
+    const { routes } = await bootRoutes()
+    const response = new ResponseRecorder()
+    await routes.get('/research/events')!(
+      request('/research/events', { host: 'evil.com' }, 'GET'),
+      response as unknown as ServerResponse,
+    )
+    expect(response.statusCode).toBe(403)
   })
 })
