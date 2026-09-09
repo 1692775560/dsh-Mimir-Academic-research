@@ -48,6 +48,35 @@ interface VenueCache {
 /** In-flight cache refreshes keyed by workspace, so timer and manual calls share one fetch. */
 const activeVenueRefreshes = new Map<string, Promise<VenueCache>>()
 
+/**
+ * Whether one cached record is a well-formed series. The cache is validated
+ * per record rather than per file: one malformed entry (a hand edit, a write
+ * cut short mid-array) must not take the whole catalog down with it (#241).
+ * Checks exactly the fields the folds dereference.
+ */
+function isVenueSeriesRecord(value: unknown): value is VenueSeries {
+  if (typeof value !== 'object' || value === null) return false
+  const series = value as Record<string, unknown>
+  if (typeof series['key'] !== 'string' || series['key'] === '') return false
+  if (typeof series['title'] !== 'string') return false
+  if (typeof series['description'] !== 'string') return false
+  if (typeof series['sub'] !== 'string') return false
+  if (!['A', 'B', 'C', 'N'].includes(series['ccfRank'] as string)) return false
+  if (typeof series['dblp'] !== 'string' && series['dblp'] !== null) return false
+  if (!Array.isArray(series['confs'])) return false
+  return series['confs'].every((conf: unknown) => {
+    if (typeof conf !== 'object' || conf === null) return false
+    const entry = conf as Record<string, unknown>
+    if (typeof entry['year'] !== 'number') return false
+    if (typeof entry['id'] !== 'string') return false
+    if (typeof entry['link'] !== 'string') return false
+    if (typeof entry['timezone'] !== 'string') return false
+    if (typeof entry['date'] !== 'string') return false
+    if (typeof entry['place'] !== 'string') return false
+    return Array.isArray(entry['timeline'])
+  })
+}
+
 /** Deps of the venue-deadline handlers: workspace root plus the wiki domain. */
 export type VenueDeadlineDeps = WikiAdminDeps & { readonly workspaceDir: string }
 
@@ -68,7 +97,9 @@ export async function loadVenueCache(workspaceDir: string): Promise<VenueCache |
     if (typeof parsed !== 'object' || parsed === null) return null
     const cache = parsed as Partial<VenueCache>
     if (typeof cache.fetchedAt !== 'string' || !Array.isArray(cache.venues)) return null
-    return { fetchedAt: cache.fetchedAt, venues: cache.venues }
+    // Per-record, not per-file: keep the good series, drop the bad ones
+    // instead of failing the whole batch (#241).
+    return { fetchedAt: cache.fetchedAt, venues: cache.venues.filter(isVenueSeriesRecord) }
   } catch {
     return null
   }
