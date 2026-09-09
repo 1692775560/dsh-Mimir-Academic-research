@@ -63,6 +63,18 @@ remote face 调用它。
 `figures`、`events`、`venue_watches`。只许增量变更：可选字段带 `.default(...)`，
 新表对旧快照空开。`events` 是只追加的账本，驱动记录视图和认知引擎。
 
+## HTTP 路由权限模型
+
+`/research/*` 路由分两类（`http-write-boundary.ts`，#210）。**写路由**（图上传、
+模板上传）要求 `Origin` 头与 `Host` 精确同源（`isSameOriginWrite`）。**读/下载
+路由**（编译 PDF、论文 PDF、图、组会 deck、SSE events）只对 loopback 面板开放
+（`isTrustedRead`）：`Host` 必须指向 loopback 监听（`localhost`/`127.0.0.1`/
+`[::1]`，任意端口）；若带 `Origin`（跨源 fetch 必带）则必须与 `Host` 精确一致。
+面板的 `<img>`/`<iframe>`/`<a>` 导航不带 `Origin`，仅靠 Host 校验即可通过。
+DNS rebinding 下反弹请求带的是攻击者域名，天然被拒。部署边界：dsh 经反代或
+LAN 暴露时这些路由仍按设计只认 loopback，远程暴露只能放在会改写 `Host` 的
+认证代理之后。
+
 ## Agent 能力面
 
 - **工具（9 个）**：`arxiv_search`、`web_search`、`wiki_note`、`figure_save`、

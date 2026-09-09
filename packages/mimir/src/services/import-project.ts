@@ -8,9 +8,9 @@
  * @module dsh-mimir/src/services/import-project
  */
 
-import { cp, mkdir, readdir, readFile, stat } from 'node:fs/promises'
+import { cp, mkdir, readdir, readFile, realpath, rm, stat } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, isAbsolute, join } from 'node:path'
+import { basename, isAbsolute, join, relative, sep } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
@@ -126,14 +126,46 @@ async function countFigures(dir: string): Promise<number> {
 }
 
 /**
+ * Collect every symlink under `root` (the source tree's realpath). Each must
+ * resolve to a live target INSIDE the source tree: `cp` preserves links
+ * rather than dereferencing them, so an escaping or dangling symlink would
+ * smuggle out-of-tree content into the import or leave the workspace copy
+ * holding a link that later defeats paperDir confinement (#213).
+ * @param root - the source tree's realpath.
+ * @returns the clean tree's symlink paths, or the first offending symlink.
+ */
+export async function collectInTreeSymlinks(
+  root: string,
+): Promise<{ readonly symlinks: string[] } | { readonly offending: string }> {
+  const symlinks: string[] = []
+  const walk = async (dir: string): Promise<string | undefined> => {
+    for (const entry of await readdir(dir, { withFileTypes: true })) {
+      const path = join(dir, entry.name)
+      if (entry.isSymbolicLink()) {
+        const real = await realpath(path).catch(() => undefined)
+        if (real === undefined || (real !== root && !real.startsWith(root + sep))) return path
+        symlinks.push(path)
+      } else if (entry.isDirectory() && !EXCLUDED_DIRS.has(entry.name)) {
+        const hit = await walk(path)
+        if (hit !== undefined) return hit
+      }
+    }
+    return undefined
+  }
+  const offending = await walk(root)
+  return offending === undefined ? { symlinks } : { offending }
+}
+
+/**
  * Import one existing local LaTeX project into the research workspace.
  * Validation (path exists and is a directory, an entry .tex with
- * `\documentclass` exists) runs BEFORE anything is copied or recorded, so a
- * rejected import changes nothing. The copy excludes `.git` and
- * `node_modules`; a slug collision gains a `-2`/`-3`… suffix. The title is
- * the explicit request title, else the entry file's `\title{...}`, else the
- * source directory name. The created record starts at the `writing` stage
- * with `paperDir` pointing at the copy, and the import lands in the ledger.
+ * `\documentclass` exists, no symlink dangles or escapes the source tree)
+ * runs BEFORE anything is copied or recorded, so a rejected import changes
+ * nothing. The copy excludes `.git` and `node_modules`; a slug collision
+ * gains a `-2`/`-3`… suffix. The title is the explicit request title, else
+ * the entry file's `\title{...}`, else the source directory name. The
+ * created record starts at the `writing` stage with `paperDir` pointing at
+ * the copy, and the import lands in the ledger.
  * @param deps - workspace root plus the open wiki domain.
  * @param request - the source path and the optional explicit title.
  * @returns the imported project's summary, or the settled failure.
@@ -155,6 +187,17 @@ export async function importProject(
   }
   if (!stats.isDirectory()) {
     return rejected({ code: 'invalid-input', message: `not a directory: ${source}` })
+  }
+
+  // Symlink confinement before anything is read in bulk or copied: every
+  // symlink in the tree must resolve inside the source (#213).
+  const sourceReal = await realpath(source)
+  const scan = await collectInTreeSymlinks(sourceReal)
+  if ('offending' in scan) {
+    return rejected({
+      code: 'invalid-input',
+      message: `symlink dangling or escaping the source tree: ${scan.offending}; remove it before importing`,
+    })
   }
 
   const entryTex = await findEntryTex(source)
@@ -183,6 +226,16 @@ export async function importProject(
     // to be NAMED like an excluded one.
     filter: path => path === source || !EXCLUDED_DIRS.has(basename(path)),
   })
+  // cp preserves links as links; replace each verified in-tree symlink with
+  // a real copy of its target so the workspace tree holds NO symlink at all.
+  for (const link of scan.symlinks) {
+    const real = await realpath(link)
+    const copiedPath = join(target, relative(sourceReal, link))
+    await rm(copiedPath, { force: true, recursive: true })
+    // A target the copy filter excluded (.git/node_modules) stays excluded.
+    if (relative(sourceReal, real).split(sep).some(part => EXCLUDED_DIRS.has(part))) continue
+    await cp(real, copiedPath, { recursive: (await stat(real)).isDirectory() })
+  }
 
   const title = request.title?.trim() ?? ''
   const resolvedTitle = title !== '' ? title : extractTexTitle(entrySource) ?? sourceName

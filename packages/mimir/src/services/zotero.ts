@@ -205,6 +205,9 @@ export async function importZoteroItem(
       ...(request.projectId === undefined ? [] : [request.projectId]),
     ])],
     addedAt: existing?.addedAt ?? new Date().toISOString(),
+    // Source publication metadata rides the re-import refresh, like title.
+    ...(item.year === '' ? {} : { published: item.year }),
+    ...(item.doi === '' ? {} : { doi: item.doi }),
   }
   await table.put(paperId, record)
   return success({ imported: existing === undefined, paperId })

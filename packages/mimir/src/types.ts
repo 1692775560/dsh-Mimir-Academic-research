@@ -78,6 +78,16 @@ export interface PaperRecord {
   readonly relevance?: Record<string, PaperRelevance> | undefined
   /** ISO-8601 timestamp of the record's first write. */
   readonly addedAt: string
+  /**
+   * Publication date the source supplied (arXiv feed ISO date, Zotero year);
+   * absent until an import knows it (records predating the field read as
+   * absent). The BibTeX projection reads the publication year ONLY from here.
+   */
+  readonly published?: string | undefined
+  /**
+   * DOI the source supplied (Zotero import); absent when the item has none.
+   */
+  readonly doi?: string | undefined
 }
 
 /**
