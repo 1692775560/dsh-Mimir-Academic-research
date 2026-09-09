@@ -647,6 +647,55 @@ describe('ResearchService.fetchPaperPdf', () => {
     expect(domain.table('papers').get(ARXIV_ENTRY.id)?.pdfPath).toBe('papers/2103.00020v2.pdf')
   })
 
+  it('merges a completed download with paper fields updated while it was in flight', async () => {
+    let releaseDownload!: (response: Response) => void
+    const download = new Promise<Response>(resolve => { releaseDownload = resolve })
+    vi.stubGlobal('fetch', async () => download)
+    const { domain, service } = await harness()
+    await service.importPaper({ entry: ARXIV_ENTRY })
+    const pending = service.fetchPaperPdf({ arxivId: ARXIV_ENTRY.id })
+
+    await service.updatePaper({ arxivId: ARXIV_ENTRY.id, notes: 'written during download', tags: ['important'] })
+    releaseDownload(new Response(PDF_BYTES, { status: 200 }))
+
+    await expect(pending).resolves.toMatchObject({ ok: true, value: { paper: { pdfPath: 'papers/2103.00020v2.pdf' } } })
+    expect(domain.table('papers').get(ARXIV_ENTRY.id)).toMatchObject({
+      notes: 'written during download',
+      tags: ['important'],
+      pdfPath: 'papers/2103.00020v2.pdf',
+    })
+  })
+
+  it('keeps a repeated PDF download idempotent', async () => {
+    vi.stubGlobal('fetch', async () => new Response(PDF_BYTES, { status: 200 }))
+    const { domain, service } = await harness()
+    await service.importPaper({ entry: ARXIV_ENTRY })
+    await service.updatePaper({ arxivId: ARXIV_ENTRY.id, notes: 'keep this note' })
+
+    await expect(service.fetchPaperPdf({ arxivId: ARXIV_ENTRY.id })).resolves.toMatchObject({ ok: true })
+    await expect(service.fetchPaperPdf({ arxivId: ARXIV_ENTRY.id })).resolves.toMatchObject({ ok: true })
+    expect(domain.table('papers').get(ARXIV_ENTRY.id)).toMatchObject({
+      notes: 'keep this note',
+      pdfPath: 'papers/2103.00020v2.pdf',
+    })
+  })
+
+  it('does not resurrect a paper deleted while its PDF was downloading', async () => {
+    let releaseDownload!: (response: Response) => void
+    const download = new Promise<Response>(resolve => { releaseDownload = resolve })
+    vi.stubGlobal('fetch', async () => download)
+    const { domain, workspaceDir, service } = await harness()
+    await service.importPaper({ entry: ARXIV_ENTRY })
+    const pending = service.fetchPaperPdf({ arxivId: ARXIV_ENTRY.id })
+
+    await service.removePaper({ arxivId: ARXIV_ENTRY.id })
+    releaseDownload(new Response(PDF_BYTES, { status: 200 }))
+
+    await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'paper-not-found' } })
+    expect(domain.table('papers').get(ARXIV_ENTRY.id)).toBeUndefined()
+    await expect(stat(join(workspaceDir, 'papers', '2103.00020v2.pdf'))).rejects.toThrow()
+  })
+
   it('reports paper-not-found for an unknown id and never fetches', async () => {
     let fetches = 0
     vi.stubGlobal('fetch', async () => {
