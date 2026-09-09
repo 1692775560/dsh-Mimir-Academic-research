@@ -4,11 +4,11 @@
  * and the atomic commit preserving content and permission bits.
  */
 
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { readPaperSource, resolvePaperDir, savePaperSourceFile } from '../src/paper-source.ts'
+import { readPaperSource, resolvePaperDir, resolvePaperDirReal, savePaperSourceFile } from '../src/paper-source.ts'
 
 describe('resolvePaperDir', () => {
   const root = join(tmpdir(), 'research-ws')
@@ -37,6 +37,47 @@ describe('resolvePaperDir', () => {
   it('rejects an empty candidate', () => {
     expect(resolvePaperDir(root, '')).toBeUndefined()
     expect(resolvePaperDir(root, '   ')).toBeUndefined()
+  })
+})
+
+describe('resolvePaperDirReal (#213)', () => {
+  let workspace: string
+  let outside: string
+
+  beforeEach(async () => {
+    workspace = await mkdtemp(join(tmpdir(), 'mimir-realpath-ws-'))
+    outside = await mkdtemp(join(tmpdir(), 'mimir-realpath-out-'))
+  })
+
+  afterEach(async () => {
+    await rm(workspace, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  })
+
+  it('resolves a real in-workspace directory', async () => {
+    await mkdir(join(workspace, 'paper'))
+    expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBe(join(workspace, 'paper'))
+  })
+
+  it('rejects a symlinked directory escaping the workspace', async () => {
+    // Lexically 'paper' is fine, but workspace/paper → outside must fail.
+    await symlink(outside, join(workspace, 'paper'), 'dir')
+    expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBeUndefined()
+  })
+
+  it('accepts a symlink staying inside the workspace', async () => {
+    await mkdir(join(workspace, 'real-paper'))
+    await symlink(join(workspace, 'real-paper'), join(workspace, 'paper'), 'dir')
+    expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBe(join(workspace, 'paper'))
+  })
+
+  it('accepts a directory that does not exist yet when the parent chain is clean', async () => {
+    expect(await resolvePaperDirReal(workspace, undefined, 'fresh-paper')).toBe(join(workspace, 'fresh-paper'))
+  })
+
+  it('still rejects lexical escapes', async () => {
+    expect(await resolvePaperDirReal(workspace, '../outside')).toBeUndefined()
+    expect(await resolvePaperDirReal(workspace, '/etc')).toBeUndefined()
   })
 })
 

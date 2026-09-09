@@ -213,6 +213,9 @@ export async function importPaper(
   return withPaperMutationLock(arxivId, async () => {
     const table = deps.domain.table('papers')
     const existing = table.get(arxivId)
+    // The publication date is source metadata; a re-import without one keeps
+    // the previously recorded value rather than dropping it.
+    const published = entry.published !== '' ? entry.published : existing?.published
     const record: PaperRecord = {
       arxivId,
       title: entry.title,
@@ -229,6 +232,8 @@ export async function importPaper(
       ])],
       ...(existing?.relevance === undefined ? {} : { relevance: existing.relevance }),
       addedAt: existing?.addedAt ?? new Date().toISOString(),
+      ...(published === undefined ? {} : { published }),
+      ...(existing?.doi === undefined ? {} : { doi: existing.doi }),
     }
     await table.put(arxivId, record)
     await emitEvent(deps.domain, {

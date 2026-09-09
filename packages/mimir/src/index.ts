@@ -31,7 +31,7 @@ import { registerPaperCommands } from './commands/paper.ts'
 import { registerSkillSyncCommand } from './commands/skill-sync.ts'
 import type { ResearchCommandDeps } from './commands/common.ts'
 import { resolvePaperDir } from './paper-source.ts'
-import { isSameOriginWrite, projectPaperDir } from './http-write-boundary.ts'
+import { isSameOriginWrite, isTrustedRead, projectPaperDir } from './http-write-boundary.ts'
 import type { ResearchServiceConfig } from './service.ts'
 import { isFigureFile } from './artifacts.ts'
 import { TEMPLATE_DIR_NAME } from './services/venue.ts'
@@ -413,7 +413,7 @@ export type {
   ArxivSubscriptionRecord,
 } from './arxiv-subscriptions.ts'
 export { runReview, renderReviewRound } from './reviewer.ts'
-export type { ReviewerOptions, ReviewRequest } from './reviewer.ts'
+export type { ReviewerOptions, ReviewRequest, ReviewOutcome } from './reviewer.ts'
 export { compileLatex, renderLatexResult, createLatexCompileTool, resolveLatexEngine, parseTectonicErrors } from './tools/latex.ts'
 export type { LatexCompileResult, LatexToolOptions, LatexEngineKind, ResolvedLatexEngine, LatexEngineProbe } from './tools/latex.ts'
 export { createArxivSearchTool, createPaperFetchTool, fetchArxivPdf, fetchArxivSearch, paperPdfFileName, parseArxivFeed, ARXIV_PDF_MAX_BYTES } from './tools/arxiv.ts'
@@ -458,6 +458,8 @@ export interface Config {
     provider?: string
     /** Review-round budget per project (default 3). */
     maxRounds?: number
+    /** Wall-clock budget per reviewer attempt in milliseconds (default 600_000). */
+    timeoutMs?: number
   }
   /** LaTeX compile deployment knobs. */
   latex?: {
@@ -550,7 +552,8 @@ export const Config: z<Config> = z.object({
   reviewer: z.object({
     provider: z.string().default('spawn'),
     maxRounds: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(3),
-  }).default({ provider: 'spawn', maxRounds: 3 }),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(600_000),
+  }).default({ provider: 'spawn', maxRounds: 3, timeoutMs: 600_000 }),
   latex: z.object({
     engine: z.string().default('auto'),
     timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(120_000),
@@ -587,7 +590,7 @@ export const Config: z<Config> = z.object({
 /** Fully defaulted config view used by tools and commands. */
 interface ResolvedConfig {
   readonly workspaceDir: string
-  readonly reviewer: { readonly provider: string; readonly maxRounds: number }
+  readonly reviewer: { readonly provider: string; readonly maxRounds: number; readonly timeoutMs: number }
   readonly latex: { readonly engine: string; readonly timeoutMs: number }
   readonly arxiv: { readonly maxResults: number }
   readonly search: { readonly command: string; readonly timeoutMs: number }
@@ -609,7 +612,7 @@ interface ResolvedConfig {
 /** Validate defaults even when a caller invokes apply() without Loader normalization. */
 function resolveConfig(config: Config): ResolvedConfig {
   const workspaceDir = config.workspaceDir ?? '.research'
-  const reviewer = { provider: config.reviewer?.provider ?? 'spawn', maxRounds: config.reviewer?.maxRounds ?? 3 }
+  const reviewer = { provider: config.reviewer?.provider ?? 'spawn', maxRounds: config.reviewer?.maxRounds ?? 3, timeoutMs: config.reviewer?.timeoutMs ?? 600_000 }
   const latex = { engine: config.latex?.engine ?? 'auto', timeoutMs: config.latex?.timeoutMs ?? 120_000 }
   const arxiv = { maxResults: config.arxiv?.maxResults ?? 10 }
   const search = { command: config.search?.command ?? 'auto', timeoutMs: config.search?.timeoutMs ?? 30_000 }
@@ -629,6 +632,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (workspaceDir.trim().length === 0) throw new TypeError('workspaceDir must be a non-empty path')
   if (reviewer.provider.trim().length === 0) throw new TypeError('reviewer.provider must be a non-empty provider name')
   if (!Number.isSafeInteger(reviewer.maxRounds) || reviewer.maxRounds < 1) throw new TypeError('reviewer.maxRounds must be a positive safe integer')
+  if (!Number.isSafeInteger(reviewer.timeoutMs) || reviewer.timeoutMs < 1) throw new TypeError('reviewer.timeoutMs must be a positive safe integer')
   if (latex.engine.trim().length === 0) throw new TypeError('latex.engine must be a non-empty engine selection')
   if (!Number.isSafeInteger(latex.timeoutMs) || latex.timeoutMs < 1) throw new TypeError('latex.timeoutMs must be a positive safe integer')
   if (!Number.isSafeInteger(arxiv.maxResults) || arxiv.maxResults < 1) throw new TypeError('arxiv.maxResults must be a positive safe integer')
@@ -646,7 +650,8 @@ function resolveConfig(config: Config): ResolvedConfig {
  * resolves per request — a `?dir=` query override, else the project record's
  * `paperDir`, else `paper` — always confined inside the workspace (a
  * violating `dir` is a 400), so the project id only selects WHICH project's
- * panel may read it: an unknown id is a 404.
+ * panel may read it: an unknown id is a 404. Reads are loopback-panel-only
+ * (`isTrustedRead`, #210).
  * @param deps - Shared command dependencies (workspace root and open domain).
  * @returns the route handler owning the full response lifecycle.
  */
@@ -657,6 +662,11 @@ function createPdfHandler(
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -716,7 +726,8 @@ function createPdfHandler(
  * an unknown id is a 404, as is a paper whose PDF was never fetched. The
  * stored `pdfPath` is workspace-relative; a path escaping the workspace is a
  * 400 (the fetch writer only ever produces `papers/<id>.pdf`, so a violating
- * value means a hand-edited store).
+ * value means a hand-edited store). Reads are loopback-panel-only
+ * (`isTrustedRead`, #210).
  * @param deps - Shared command dependencies (workspace root and open domain).
  * @returns the route handler owning the full response lifecycle.
  */
@@ -727,6 +738,11 @@ function createPaperPdfHandler(
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -830,6 +846,7 @@ function commandOnPath(command: string): Promise<boolean> {
  * directory resolves like the PDF route (`?dir=` override, record
  * `paperDir`, default); `?path=` is relative to it — an absolute path, a
  * `..` escape, or a non-figure extension is a 400, a missing file a 404.
+ * Reads are loopback-panel-only (`isTrustedRead`, #210).
  * @param deps - Shared command dependencies (workspace root and open domain).
  * @returns the route handler owning the full response lifecycle.
  */
@@ -840,6 +857,11 @@ function createFigureHandler(
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -1047,7 +1069,8 @@ function createTemplateUploadHandler(
  * (an unknown id is a 404) and `?file=` (reduced to its basename and confined
  * to `meetings/<projectId>/` by {@link meetingDeckPath}, so no traversal is
  * expressible; a non-.pptx name is a 400). Streams the pptx as an attachment,
- * so the panel's `<a href>` forces a download.
+ * so the panel's `<a href>` forces a download. Reads are loopback-panel-only
+ * (`isTrustedRead`, #210).
  * @param deps - Shared command dependencies (workspace root and open domain).
  * @returns the route handler owning the full response lifecycle.
  */
@@ -1058,6 +1081,11 @@ function createMeetingDeckHandler(
   return async (req, res) => {
     if (req.method !== 'GET' && req.method !== 'HEAD') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
     const url = new URL(req.url ?? '/', 'http://research.local')
@@ -1094,7 +1122,6 @@ function createMeetingDeckHandler(
     createReadStream(deckPath).pipe(res)
   }
 }
-
 
 /**
  * Mount the research suite: open the wiki domain, register the four tools and

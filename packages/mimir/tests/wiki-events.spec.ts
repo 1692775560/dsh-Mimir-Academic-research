@@ -17,6 +17,8 @@ const CHANGE: ResearchWikiChangeEvent = { table: 'papers', key: '2608.00001v1', 
 function fakeReq(method = 'GET'): IncomingMessage {
   const req = new EventEmitter() as IncomingMessage
   req.method = method
+  // The route is loopback-panel-only (#210): fake the panel's own request.
+  req.headers = { host: 'localhost:3080' }
   return req
 }
 

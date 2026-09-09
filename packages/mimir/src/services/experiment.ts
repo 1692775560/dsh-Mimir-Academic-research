@@ -6,11 +6,11 @@
  * @module dsh-mimir/src/services/experiment
  */
 
-import { mkdir, readdir, readFile, rename, stat, unlink } from 'node:fs/promises'
+import { mkdir, readdir, rename, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
-import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { isArtifactName, isFigureFile, listPaperFigures, readWorkspaceArtifact } from '../artifacts.ts'
-import { isNotFound, resolvePaperDir } from '../paper-source.ts'
+import { isNotFound, readPaperSourceUnlocked, resolvePaperDir } from '../paper-source.ts'
 import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
 import { convertSvgFigure, svgConverterNames } from '../svg-convert.ts'
 import type { SvgConversionDeps } from '../svg-convert.ts'
@@ -533,8 +533,12 @@ async function texFilesOf(dir: string): Promise<string[]> {
 /**
  * Rewrite one figure's references in every `.tex` file of the paper
  * directory: exact `figures/foo.png` occurrences plus the extensionless
- * `\includegraphics{figures/foo}` form. Only changed files are rewritten
- * (atomically).
+ * `\includegraphics{figures/foo}` form. Each file's read-rewrite-write runs
+ * inside the file's cross-process writer lock — the same lock a panel
+ * `savePaperSource`/`saveBibliography` commit holds — with the content re-read
+ * under the lock, so a rename never overwrites a concurrent save's text it
+ * never saw (the draft survives) and the rewrite always lands on the live
+ * body. Only changed files are rewritten (atomically).
  * @param dir - absolute paper directory.
  * @param oldRelPath - the figure's previous paper-directory-relative path.
  * @param newRelPath - the figure's new paper-directory-relative path.
@@ -545,12 +549,19 @@ async function rewriteFigureReferences(dir: string, oldRelPath: string, newRelPa
   const newStem = newRelPath.replace(/\.[^.]+$/, '')
   let rewritten = 0
   for (const file of await texFilesOf(dir)) {
-    const content = await readFile(file, 'utf8')
-    let next = content.split(oldRelPath).join(newRelPath)
-    if (oldStem !== oldRelPath) next = next.split(`{${oldStem}}`).join(`{${newStem}}`)
-    if (next === content) continue
-    await writeFileAtomic(file, next, { mode: 0o666 })
-    rewritten += 1
+    // The callback already holds the file's writer lock; nest the unlocked
+    // read so the rewrite cannot self-deadlock (the locking reader is not
+    // re-entrant), as `appendBibEntries` does for `references.bib`.
+    const changed = await withFileLock(file, async (): Promise<boolean> => {
+      const snapshot = await readPaperSourceUnlocked(file)
+      if (snapshot === undefined) return false
+      let next = snapshot.content.split(oldRelPath).join(newRelPath)
+      if (oldStem !== oldRelPath) next = next.split(`{${oldStem}}`).join(`{${newStem}}`)
+      if (next === snapshot.content) return false
+      await writeFileAtomic(file, next, { mode: 0o666 })
+      return true
+    })
+    if (changed) rewritten += 1
   }
   return rewritten
 }

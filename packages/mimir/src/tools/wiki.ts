@@ -116,6 +116,10 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
         projectIds: [...(existing?.projectIds ?? [])],
         ...(existing?.relevance === undefined ? {} : { relevance: existing.relevance }),
         addedAt: new Date().toISOString(),
+        // The agent tool carries no publication metadata; a re-add preserves
+        // what an earlier arXiv/Zotero import recorded.
+        ...(existing?.published === undefined ? {} : { published: existing.published }),
+        ...(existing?.doi === undefined ? {} : { doi: existing.doi }),
       }
       await domain.table('papers').put(arxivId, record)
       await emit(domain, 'literature.paper.imported', { paperId: arxivId }, { title: record.title, imported: existing === undefined })

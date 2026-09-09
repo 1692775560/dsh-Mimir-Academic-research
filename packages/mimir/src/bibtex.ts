@@ -165,23 +165,39 @@ export function bibKeyOf(arxivId: string): string {
 }
 
 /**
+ * A real arXiv id: new-style `YYMM.NNNNN(vN)` or old-style
+ * `archive/YYMMNNN(vN)`. Stricter than the path-safety predicate — a
+ * Zotero-only record keyed `zotero-<item key>` is path-safe but is NOT an
+ * arXiv paper, and the projection must not fabricate an arXiv identity for
+ * it (#219).
+ */
+const ARXIV_ID_SHAPE = /^(\d{4}\.\d{4,5}(v\d+)?|[a-z-]+(\.[a-z]{2})?\/\d{7}(v\d+)?)$/
+
+/**
  * Project one remembered literature paper into an `@misc` BibTeX entry.
- * `year` comes from the record's `addedAt` (the only dated field) and is
- * omitted when it does not parse; `note` carries the workbench reading notes
- * when present.
+ * Fields come from source metadata only: the year reads the record's
+ * `published` (never `addedAt` — the wiki's first-sight day is not the
+ * publication year), arXiv `eprint`/`archivePrefix` appear only for records
+ * carrying a real arXiv id, `url` is the record's own link (the canonical
+ * arXiv abstract URL only for arXiv records), and `doi` appears only when
+ * the source supplied one. Reading notes stay in the workbench — they are
+ * not publication metadata and never enter the exported citation (#219).
  * @param paper - the wiki paper record.
  * @returns the entry to append to `references.bib`.
  */
 export function entryFromPaper(paper: PaperRecord): BibEntry {
-  const fields: Record<string, string> = {
-    author: paper.authors.join(' and '),
-    title: paper.title,
+  const fields: Record<string, string> = {}
+  if (paper.authors.length > 0) fields.author = paper.authors.join(' and ')
+  fields.title = paper.title
+  const year = /\d{4}/.exec(paper.published ?? '')
+  if (year !== null) fields.year = year[0]
+  if (ARXIV_ID_SHAPE.test(paper.arxivId)) {
+    fields.eprint = paper.arxivId
+    fields.archivePrefix = 'arXiv'
+    fields.url = paper.url === '' ? `https://arxiv.org/abs/${paper.arxivId}` : paper.url
+  } else if (paper.url !== '') {
+    fields.url = paper.url
   }
-  const year = Number(paper.addedAt.slice(0, 4))
-  if (Number.isInteger(year) && year > 1900 && year < 3000) fields.year = String(year)
-  fields.eprint = paper.arxivId
-  fields.archivePrefix = 'arXiv'
-  fields.url = paper.url === '' ? `https://arxiv.org/abs/${paper.arxivId}` : paper.url
-  if (paper.notes.trim() !== '') fields.note = paper.notes.trim()
+  if (paper.doi !== undefined && paper.doi !== '') fields.doi = paper.doi
   return { key: bibKeyOf(paper.arxivId), type: 'misc', fields }
 }

@@ -6,7 +6,7 @@
  * memory-backed domain and real temp directories — no mocks.
  */
 
-import { mkdtemp, mkdir, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readdir, readFile, rm, lstat, stat, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
@@ -187,6 +187,43 @@ describe('importProject', () => {
 
     expect(value.paperDir).toBe('imported/tilde-project')
     await stat(join(workspaceDir, 'imported', 'tilde-project', 'main.tex'))
+  })
+
+  it('rejects a source tree whose symlink escapes the tree or dangles (#213)', async () => {
+    const { domain, workspaceDir } = await harness()
+    const deps = { workspaceDir, domain }
+
+    const outside = await mkdtemp(join(tmpdir(), 'mimir-import-outside-'))
+    await writeFile(join(outside, 'secret.tex'), 'outside content\n')
+    const escaping = await fakeLatexProject('escaping-link', MAIN_TEX)
+    await symlink(join(outside, 'secret.tex'), join(escaping, 'figures', 'leaked.tex'))
+    const escaped = await importProject(deps, { path: escaping })
+    expect(escaped).toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    expect(escaped.ok === false && escaped.error.message.includes('symlink')).toBe(true)
+
+    const danglingProject = await fakeLatexProject('dangling-link', MAIN_TEX)
+    await symlink(join(danglingProject, 'no-such-target'), join(danglingProject, 'figures', 'ghost.png'))
+    const dangling = await importProject(deps, { path: danglingProject })
+    expect(dangling).toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+
+    // Rejected imports record nothing and copy nothing.
+    expect([...domain.table('projects').entries()]).toEqual([])
+    await expect(stat(join(workspaceDir, 'imported'))).rejects.toThrow()
+  })
+
+  it('dereferences an in-tree symlink into a plain copied file (#213)', async () => {
+    const { domain, workspaceDir } = await harness()
+    const source = await fakeLatexProject('internal-link', MAIN_TEX)
+    await writeFile(join(source, 'macros.tex'), '\\newcommand{\\x}{1}\n')
+    await symlink(join(source, 'macros.tex'), join(source, 'figures', 'macros-link.tex'))
+
+    const value = imported(await importProject({ workspaceDir, domain }, { path: source }))
+
+    const copied = join(workspaceDir, value.paperDir, 'figures', 'macros-link.tex')
+    // The copy holds a REAL file with the target's content — no symlink
+    // survives into the workspace to defeat paperDir confinement later.
+    expect((await lstat(copied)).isSymbolicLink()).toBe(false)
+    expect(await readFile(copied, 'utf8')).toBe('\\newcommand{\\x}{1}\n')
   })
 })
 
