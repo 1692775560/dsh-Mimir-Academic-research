@@ -471,11 +471,14 @@ export async function loadPaperFigures(
  * An unknown project is `project-not-found`.
  * @param deps - workspace root and open domain.
  * @param request - the deck options.
+ * @param signal - caller cancellation; aborts figure extraction and stops the
+ * deck promptly (a cancelled generation rejects instead of returning).
  * @returns the produced file.
  */
 export async function generateMeetingDeck(
   deps: WikiAdminDeps & { readonly workspaceDir: string; readonly meetings?: MeetingDeps },
   request: GenerateMeetingRequest,
+  signal?: AbortSignal,
 ): Promise<ResearchGenerateMeetingResult> {
   const project = deps.domain.table('projects').get(request.projectId)
   if (project === undefined) return rejected({ code: 'project-not-found', projectId: request.projectId })
@@ -552,10 +555,11 @@ export async function generateMeetingDeck(
     const warmPdf = deps.meetings?.fetchPdf
       ?? (async (arxivId: string) => { await fetchPaperPdf(deps, { arxivId }) })
     for (const paper of papers) {
+      signal?.throwIfAborted()
       if ((await resolvePaperPdf(deps.workspaceDir, paper.arxivId)) === undefined) {
         await warmPdf(paper.arxivId).catch(() => undefined)
       }
-      const assets = await extractPaperFigures(deps.workspaceDir, paper.arxivId)
+      const assets = await extractPaperFigures(deps.workspaceDir, paper.arxivId, { ...(signal === undefined ? {} : { signal }) })
       if (assets.length > 0) paperFigures[paper.arxivId] = assets
     }
   }
