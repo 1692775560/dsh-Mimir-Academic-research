@@ -51,6 +51,26 @@ const ARXIV_SEARCH_DEFAULT_MAX_RESULTS = 10
 /** Hard result cap of one panel-driven arXiv search. */
 const ARXIV_SEARCH_MAX_RESULTS = 50
 
+/**
+ * Serialize paper read-modify-write commits within this host process.
+ * ponytail: process-wide per-id lock; split by domain only if contention is measurable.
+ */
+const paperMutationTails = new Map<string, Promise<void>>()
+
+async function withPaperMutationLock<T>(arxivId: string, mutation: () => Promise<T>): Promise<T> {
+  const previous = paperMutationTails.get(arxivId) ?? Promise.resolve()
+  let release!: () => void
+  const current = new Promise<void>(resolve => { release = resolve })
+  paperMutationTails.set(arxivId, current)
+  await previous
+  try {
+    return await mutation()
+  } finally {
+    release()
+    if (paperMutationTails.get(arxivId) === current) paperMutationTails.delete(arxivId)
+  }
+}
+
 /** Atomically replace one binary file through a unique same-directory sibling. */
 async function writeBytesAtomic(filePath: string, bytes: Uint8Array): Promise<void> {
   const tempPath = `${filePath}.${randomUUID()}.tmp`
@@ -190,33 +210,35 @@ export async function importPaper(
     && deps.domain.table('projects').get(request.projectId) === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const table = deps.domain.table('papers')
-  const existing = table.get(arxivId)
-  const record: PaperRecord = {
-    arxivId,
-    title: entry.title,
-    authors: [...entry.authors],
-    summary: entry.summary,
-    url: entry.url === '' ? `https://arxiv.org/abs/${arxivId}` : entry.url,
-    notes: existing?.notes ?? '',
-    // A re-import refreshes the arXiv metadata but never wipes the
-    // workbench-curated organization fields.
-    tags: [...(existing?.tags ?? [])],
-    projectIds: [...new Set([
-      ...(existing?.projectIds ?? []),
-      ...(request.projectId === undefined ? [] : [request.projectId]),
-    ])],
-    ...(existing?.relevance === undefined ? {} : { relevance: existing.relevance }),
-    addedAt: existing?.addedAt ?? new Date().toISOString(),
-  }
-  await table.put(arxivId, record)
-  await emitEvent(deps.domain, {
-    actor: PANEL_ACTOR,
-    action: 'literature.paper.imported',
-    refs: { paperId: arxivId },
-    payload: { title: entry.title, imported: existing === undefined },
+  return withPaperMutationLock(arxivId, async () => {
+    const table = deps.domain.table('papers')
+    const existing = table.get(arxivId)
+    const record: PaperRecord = {
+      arxivId,
+      title: entry.title,
+      authors: [...entry.authors],
+      summary: entry.summary,
+      url: entry.url === '' ? `https://arxiv.org/abs/${arxivId}` : entry.url,
+      notes: existing?.notes ?? '',
+      // A re-import refreshes the arXiv metadata but never wipes the
+      // workbench-curated organization fields.
+      tags: [...(existing?.tags ?? [])],
+      projectIds: [...new Set([
+        ...(existing?.projectIds ?? []),
+        ...(request.projectId === undefined ? [] : [request.projectId]),
+      ])],
+      ...(existing?.relevance === undefined ? {} : { relevance: existing.relevance }),
+      addedAt: existing?.addedAt ?? new Date().toISOString(),
+    }
+    await table.put(arxivId, record)
+    await emitEvent(deps.domain, {
+      actor: PANEL_ACTOR,
+      action: 'literature.paper.imported',
+      refs: { paperId: arxivId },
+      payload: { title: entry.title, imported: existing === undefined },
+    })
+    return success({ imported: existing === undefined })
   })
-  return success({ imported: existing === undefined })
 }
 
 /**
@@ -229,19 +251,21 @@ export async function removePaper(
   deps: LibraryDeps,
   request: { arxivId: string },
 ): Promise<ResearchRemovePaperResult> {
-  const table = deps.domain.table('papers')
-  const removed = table.get(request.arxivId)
-  if (removed === undefined) {
-    return rejected({ code: 'paper-not-found' })
-  }
-  await table.delete(request.arxivId)
-  await emitEvent(deps.domain, {
-    actor: PANEL_ACTOR,
-    action: 'literature.paper.removed',
-    refs: { paperId: request.arxivId },
-    payload: { title: removed.title, destructive: true },
+  return withPaperMutationLock(request.arxivId, async () => {
+    const table = deps.domain.table('papers')
+    const removed = table.get(request.arxivId)
+    if (removed === undefined) {
+      return rejected({ code: 'paper-not-found' })
+    }
+    await table.delete(request.arxivId)
+    await emitEvent(deps.domain, {
+      actor: PANEL_ACTOR,
+      action: 'literature.paper.removed',
+      refs: { paperId: request.arxivId },
+      payload: { title: removed.title, destructive: true },
+    })
+    return success({ arxivId: request.arxivId })
   })
-  return success({ arxivId: request.arxivId })
 }
 
 /**
@@ -285,33 +309,37 @@ export async function updatePaper(
       return rejected({ code: 'invalid-input', message: 'relevance score must be a finite number between 0 and 10' })
     }
   }
-  const next: PaperRecord = {
-    ...existing,
-    tags: request.tags === undefined
-      ? existing.tags
-      : [...new Set(request.tags.map(tag => tag.trim()).filter(tag => tag !== ''))],
-    projectIds: request.projectIds ?? existing.projectIds,
-    notes: request.notes ?? existing.notes,
-    ...(request.relevance === undefined ? {} : {
-      relevance: {
-        ...existing.relevance,
-        [request.relevance.projectId]: {
-          score: request.relevance.score,
-          reason: request.relevance.reason,
-          at: new Date().toISOString(),
+  return withPaperMutationLock(request.arxivId, async () => {
+    const current = table.get(request.arxivId)
+    if (current === undefined) return rejected({ code: 'paper-not-found' })
+    const next: PaperRecord = {
+      ...current,
+      tags: request.tags === undefined
+        ? current.tags
+        : [...new Set(request.tags.map(tag => tag.trim()).filter(tag => tag !== ''))],
+      projectIds: request.projectIds ?? current.projectIds,
+      notes: request.notes ?? current.notes,
+      ...(request.relevance === undefined ? {} : {
+        relevance: {
+          ...current.relevance,
+          [request.relevance.projectId]: {
+            score: request.relevance.score,
+            reason: request.relevance.reason,
+            at: new Date().toISOString(),
+          },
         },
-      },
-    }),
-  }
-  await table.put(request.arxivId, next)
-  const changed = (['tags', 'projectIds', 'notes', 'relevance'] as const).filter(field => request[field] !== undefined)
-  await emitEvent(deps.domain, {
-    actor: PANEL_ACTOR,
-    action: 'literature.paper.updated',
-    refs: { paperId: request.arxivId },
-    payload: { changed: [...changed] },
+      }),
+    }
+    await table.put(request.arxivId, next)
+    const changed = (['tags', 'projectIds', 'notes', 'relevance'] as const).filter(field => request[field] !== undefined)
+    await emitEvent(deps.domain, {
+      actor: PANEL_ACTOR,
+      action: 'literature.paper.updated',
+      refs: { paperId: request.arxivId },
+      payload: { changed: [...changed] },
+    })
+    return success({ paper: next })
   })
-  return success({ paper: next })
 }
 
 /**
@@ -350,14 +378,24 @@ export async function fetchPaperPdf(
   const relPath = `${PAPER_PDF_DIR}/${paperPdfFileName(request.arxivId)}`
   const dir = join(deps.workspaceDir, PAPER_PDF_DIR)
   await mkdir(dir, { recursive: true })
-  await writeBytesAtomic(join(dir, paperPdfFileName(request.arxivId)), bytes)
-  const next: PaperRecord = { ...existing, pdfPath: relPath }
-  await table.put(request.arxivId, next)
-  await emitEvent(deps.domain, {
-    actor: PANEL_ACTOR,
-    action: 'literature.pdf.fetched',
-    refs: { paperId: request.arxivId },
-    payload: { pdfPath: relPath },
+  const pdfPath = join(dir, paperPdfFileName(request.arxivId))
+  await writeBytesAtomic(pdfPath, bytes)
+  // The download is asynchronous: refresh the record before committing so
+  // concurrent notes/tags edits survive. A delete wins over a late download.
+  return withPaperMutationLock(request.arxivId, async () => {
+    const current = table.get(request.arxivId)
+    if (current === undefined || current.addedAt !== existing.addedAt) {
+      await unlink(pdfPath).catch(() => {})
+      return rejected({ code: 'paper-not-found' })
+    }
+    const next: PaperRecord = { ...current, pdfPath: relPath }
+    await table.put(request.arxivId, next)
+    await emitEvent(deps.domain, {
+      actor: PANEL_ACTOR,
+      action: 'literature.pdf.fetched',
+      refs: { paperId: request.arxivId },
+      payload: { pdfPath: relPath },
+    })
+    return success({ paper: next })
   })
-  return success({ paper: next })
 }
