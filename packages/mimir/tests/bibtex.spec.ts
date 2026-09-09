@@ -92,6 +92,7 @@ describe('entryFromPaper', () => {
     tags: [],
     projectIds: [],
     addedAt: '2026-08-20T00:00:00.000Z',
+    published: '2021-03-01T00:00:00.000Z',
   }
 
   it('builds an @misc entry keyed by the dot-free arXiv id', () => {
@@ -101,18 +102,83 @@ describe('entryFromPaper', () => {
     expect(entry.fields).toEqual({
       author: 'Alice Zhang and Bob Li',
       title: 'EgoSync',
-      year: '2026',
+      year: '2021',
       eprint: '2103.00020v2',
       archivePrefix: 'arXiv',
       url: 'https://arxiv.org/abs/2103.00020v2',
-      note: '直接对标',
     })
+  })
+
+  it('reads the publication year from published, never from addedAt (#219)', () => {
+    // addedAt says 2026 (the day the wiki first saw the paper); the paper
+    // was published in 2021 — the citation must say 2021.
+    expect(entryFromPaper(PAPER).fields.year).toBe('2021')
+    // No source publication date → no year at all, never the addedAt year.
+    const { published: _dropped, ...undated } = PAPER
+    expect(entryFromPaper(undated).fields.year).toBeUndefined()
+  })
+
+  it('never exports reading notes into the citation (#219)', () => {
+    expect(entryFromPaper(PAPER).fields.note).toBeUndefined()
+  })
+
+  it('does not fabricate an arXiv identity or URL for Zotero-only records (#219)', () => {
+    const zoteroOnly: PaperRecord = {
+      arxivId: 'zotero-AB12CD34',
+      title: 'A journal article',
+      authors: ['Carol Wang'],
+      summary: '',
+      url: 'https://doi.org/10.1000/xyz123',
+      notes: 'Imported from Zotero (item AB12CD34). DOI: 10.1000/xyz123.',
+      tags: [],
+      projectIds: [],
+      addedAt: '2026-08-20T00:00:00.000Z',
+      published: '2019',
+      doi: '10.1000/xyz123',
+    }
+    const entry = entryFromPaper(zoteroOnly)
+    expect(entry.fields.eprint).toBeUndefined()
+    expect(entry.fields.archivePrefix).toBeUndefined()
+    expect(entry.fields.url).toBe('https://doi.org/10.1000/xyz123')
+    expect(entry.fields.doi).toBe('10.1000/xyz123')
+    expect(entry.fields.year).toBe('2019')
+  })
+
+  it('omits fields the record does not know instead of inventing them (#219)', () => {
+    const sparse: PaperRecord = {
+      arxivId: 'zotero-WXYZ9999',
+      title: 'Mystery preprint',
+      authors: [],
+      summary: '',
+      url: '',
+      notes: '',
+      tags: [],
+      projectIds: [],
+      addedAt: '2026-08-20T00:00:00.000Z',
+    }
+    expect(entryFromPaper(sparse).fields).toEqual({ title: 'Mystery preprint' })
   })
 
   it('omits year when addedAt does not parse and note when empty', () => {
     const entry = entryFromPaper({ ...PAPER, addedAt: 'not-a-date', notes: ' ' })
-    expect(entry.fields.year).toBeUndefined()
     expect(entry.fields.note).toBeUndefined()
+    // published still supplies the year even when addedAt is garbage.
+    expect(entry.fields.year).toBe('2021')
+  })
+
+  it('round-trips a real-world entry through parse and serialize (#219)', () => {
+    const text = `@article{vaswani2017attention,
+  author = {Vaswani, Ashish and Shazeer, Noam},
+  title = {Attention Is All You Need},
+  year = {2017},
+  journal = {Advances in Neural Information Processing Systems},
+  doi = {10.48550/arXiv.1706.03762},
+}`
+    const entries = parseBibtex(text)
+    expect(entries).toHaveLength(1)
+    expect(entries[0]?.fields.year).toBe('2017')
+    expect(entries[0]?.fields.doi).toBe('10.48550/arXiv.1706.03762')
+    expect(parseBibtex(serializeBibtex(entries))).toEqual(entries)
   })
 
   it('bibKeyOf strips every BibTeX-hostile character', () => {
