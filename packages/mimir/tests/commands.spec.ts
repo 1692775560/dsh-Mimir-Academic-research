@@ -6,7 +6,7 @@
  * guidance. Real memory-backed domain, real temp workspace, no mocks.
  */
 
-import { mkdtemp, stat } from 'node:fs/promises'
+import { mkdtemp, stat, symlink, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
@@ -24,6 +24,7 @@ import { createProject } from '../src/commands/common.ts'
 import type { ResearchCommandDeps } from '../src/commands/common.ts'
 import { registerPlanCommand } from '../src/commands/plan.ts'
 import { registerPaperCommands } from '../src/commands/paper.ts'
+import { ALLOW_EXTERNAL_FLAG, registerReviewCommand, reviewPathsOutsideWorkspace } from '../src/commands/review.ts'
 
 /** Boot the command registry over a memory-backed domain and a fresh temp workspace. */
 async function harness() {
@@ -134,5 +135,48 @@ describe('/paper-write argument resolution', () => {
     expect(followupText(followups[0]!)).toContain('The user adds this direction for the draft: 重点写实验部分')
     await stat(join(workspaceDir, 'paper', 'main.tex'))
     expect((await domain.table('projects').get(project.id))?.stage).toBe('writing')
+  })
+})
+
+describe('/research-review path confinement (#212)', () => {
+  it('rejects out-of-workspace absolute paths before any reviewer starts', async () => {
+    const { ctx, deps } = await harness()
+    registerReviewCommand(ctx, deps)
+    const { agent } = fakeAgent(ctx, 'review-outside')
+
+    const execution = await ctx.commands.execute(agent, '/research-review audit /etc/passwd', [], new AbortController().signal)
+
+    expect(execution?.result.kind).toBe('error')
+    expect(execution?.result.text).toContain('inside the research workspace')
+    expect(execution?.result.text).toContain(ALLOW_EXTERNAL_FLAG)
+    expect(execution?.result.text).toContain('/etc/passwd')
+  })
+
+  it('rejects an in-workspace symlink whose target escapes', async () => {
+    const { ctx, workspaceDir, deps } = await harness()
+    registerReviewCommand(ctx, deps)
+    await symlink('/etc/passwd', join(workspaceDir, 'leaked.md'))
+    const { agent } = fakeAgent(ctx, 'review-symlink')
+
+    const execution = await ctx.commands.execute(agent, '/research-review audit leaked.md', [], new AbortController().signal)
+
+    expect(execution?.result.kind).toBe('error')
+    expect(execution?.result.text).toContain('inside the research workspace')
+  })
+})
+
+describe('reviewPathsOutsideWorkspace (#212)', () => {
+  it('confines in-workspace files and flags everything else', async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'mimir-review-confine-'))
+    await writeFile(join(workspaceDir, 'main.tex'), '\\documentclass{article}\n')
+    await symlink('/etc/hosts', join(workspaceDir, 'hosts-link'))
+
+    expect(await reviewPathsOutsideWorkspace(workspaceDir, [join(workspaceDir, 'main.tex')])).toEqual([])
+    expect(await reviewPathsOutsideWorkspace(workspaceDir, ['/etc/passwd'])).toEqual(['/etc/passwd'])
+    expect(await reviewPathsOutsideWorkspace(workspaceDir, [join(workspaceDir, 'hosts-link')]))
+      .toEqual([join(workspaceDir, 'hosts-link')])
+    // An unreadable path counts as outside (defense in depth).
+    expect(await reviewPathsOutsideWorkspace(workspaceDir, [join(workspaceDir, 'gone.md')]))
+      .toEqual([join(workspaceDir, 'gone.md')])
   })
 })
