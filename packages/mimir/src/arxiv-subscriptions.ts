@@ -17,6 +17,7 @@ import { join } from 'node:path'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { isNotFound } from './paper-source.ts'
 import { fetchArxivSearch } from './tools/arxiv.ts'
+import { startScheduledLoop, type TaskHealthRegistry } from './task-health.ts'
 import type { ArxivEntry } from './tools/arxiv.ts'
 
 /** The workspace-relative file the subscription list persists in. */
@@ -331,31 +332,31 @@ export interface ArxivSubscriptionLoopOptions {
   readonly intervalMs: number
   /** Delay of the FIRST run (default {@link ARXIV_SUBSCRIPTION_FIRST_DELAY_MS}). */
   readonly firstDelayMs?: number
+  /** Shared scheduled-task health book (#223); every pass is recorded. */
+  readonly health: TaskHealthRegistry
   /** Failure sink: called when a whole run rejects (a per-subscription fetch failure never reaches here); the loop keeps going. */
   readonly onError: (error: unknown) => void
 }
 
+/** Health-book key of the arXiv-subscription loop. */
+export const ARXIV_SUBSCRIPTION_TASK = 'arxiv-subscriptions'
+
 /**
  * Start the scheduled subscription check: the first run after `firstDelayMs`
- * (startup stays fast), then every `intervalMs`. Both timers are unref'd so
- * they never hold the process open. A run over an empty subscription list is
- * one cheap file read — no request ever fires.
+ * (startup stays fast), then every `intervalMs` after the previous run
+ * settles, stretched by the shared backoff after consecutive failures (#223).
+ * The timer is unref'd so it never holds the process open. A run over an
+ * empty subscription list is one cheap file read — no request ever fires.
  * @param options - see {@link ArxivSubscriptionLoopOptions}.
- * @returns dispose: clears the pending timers (an in-flight run finishes).
+ * @returns dispose: clears the pending timer (an in-flight run finishes).
  */
 export function startArxivSubscriptionLoop(options: ArxivSubscriptionLoopOptions): () => void {
-  const run = (): void => {
-    runArxivSubscriptionCheck(options.workspaceDir).catch(options.onError)
-  }
-  let interval: NodeJS.Timeout | undefined
-  const first = setTimeout(() => {
-    run()
-    interval = setInterval(run, options.intervalMs)
-    interval.unref()
-  }, options.firstDelayMs ?? ARXIV_SUBSCRIPTION_FIRST_DELAY_MS)
-  first.unref()
-  return () => {
-    clearTimeout(first)
-    if (interval !== undefined) clearInterval(interval)
-  }
+  return startScheduledLoop({
+    name: ARXIV_SUBSCRIPTION_TASK,
+    health: options.health,
+    intervalMs: options.intervalMs,
+    firstDelayMs: options.firstDelayMs ?? ARXIV_SUBSCRIPTION_FIRST_DELAY_MS,
+    run: () => runArxivSubscriptionCheck(options.workspaceDir),
+    onError: options.onError,
+  })
 }

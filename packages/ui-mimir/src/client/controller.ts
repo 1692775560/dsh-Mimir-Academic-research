@@ -86,6 +86,8 @@ import type {
   ResearchListJobsResult,
   ResearchListProjectsResult,
   ResearchListServersResult,
+  ResearchScheduledTaskView,
+  ResearchTaskHealthResult,
   ResearchVenueTemplatesResult,
   ResearchApplyVenueResult,
   ResearchClearVenueResult,
@@ -335,6 +337,7 @@ export interface ResearchRemote {
     confirmReplace?: boolean
   }) => Promise<RemoteResult<ResearchImportWikiResult>>
   listBackups: () => Promise<RemoteResult<ResearchListBackupsResult>>
+  getTaskHealth: () => Promise<RemoteResult<ResearchTaskHealthResult>>
   listEvents: (request: {
     projectId?: string | undefined
     actorKind?: string | undefined
@@ -819,6 +822,8 @@ export interface ResearchView {
   readonly toasts: readonly ResearchToast[]
   /** Scheduled-backup status for the overview; null until loaded (or on failure). */
   readonly backup: ResearchBackupStatusView | null
+  /** Scheduled-task health snapshot (#223); null until loaded (or on failure). */
+  readonly taskHealth: readonly ResearchScheduledTaskView[] | null
   /** The pending paper-editor jump of a figure insert; null once consumed. */
   readonly paperJump: ResearchPaperJump | null
 }
@@ -873,6 +878,7 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   digest: Object.freeze({ status: 'idle', tier: 'weekly', lang: 'zh', report: null, markdown: '', generatedAt: null, failure: null }),
   toasts: Object.freeze([]),
   backup: null,
+  taskHealth: null,
   paperJump: null,
 })
 
@@ -901,6 +907,7 @@ export class ResearchController implements HostObservable<ResearchView> {
   private readonly listeners = new Set<() => void>()
   private loadPromise: Promise<void> | null = null
   private backupPromise: Promise<void> | null = null
+  private taskHealthPromise: Promise<void> | null = null
   private papersPromise: Promise<void> | null = null
   private subscriptionsPromise: Promise<void> | null = null
   private zoteroPromise: Promise<void> | null = null
@@ -1001,6 +1008,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (this.view.projectsStatus === 'ready' || this.loadPromise !== null) return
     this.loadPromise = this.loadProjects().finally(() => { this.loadPromise = null })
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
+    this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
   }
 
   /** Re-read the project list (the retry entry and the reconnect resync). */
@@ -1008,6 +1016,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (this.view.projectsStatus === 'cold') return
     this.loadPromise ??= this.loadProjects().finally(() => { this.loadPromise = null })
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
+    this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
   }
 
   /**
@@ -1024,6 +1033,23 @@ export class ResearchController implements HostObservable<ResearchView> {
       this.publish({ backup: carried.value.value.backup })
     } catch {
       // Quiet by design: the line simply stays hidden.
+    }
+  }
+
+  /**
+   * Fetch the scheduled-task health snapshot (#223) for the overview's data
+   * section. Informational only: any failure leaves the slice null, hiding
+   * the block instead of surfacing an error.
+   */
+  private async loadTaskHealth(): Promise<void> {
+    try {
+      const carried = await this.remote.getTaskHealth()
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+      if (this.disposed) return
+      if (!carried.ok || !carried.value.ok) return
+      this.publish({ taskHealth: carried.value.value.tasks })
+    } catch {
+      // Quiet by design: the block simply stays hidden.
     }
   }
 

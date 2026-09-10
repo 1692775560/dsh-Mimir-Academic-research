@@ -109,8 +109,10 @@ import type {
   SectionOutlineTitles,
   ServerInput,
   SubsectionMove,
+  ResearchTaskHealthResult,
   ResearchWikiChangeEvent,
 } from './types.ts'
+import type { TaskHealthRegistry } from './task-health.ts'
 import * as paper from './services/paper.ts'
 import * as paperSnapshots from './services/paper-snapshots.ts'
 import * as library from './services/library.ts'
@@ -127,7 +129,7 @@ import * as ledger from './services/ledger.ts'
 import type { MeetingDeps } from './services/meeting.ts'
 import * as imagegen from './services/image-gen.ts'
 import * as sxngConfig from './services/sxng-config.ts'
-import type { ServiceState } from './services/common.ts'
+import { success, type ServiceState } from './services/common.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -192,6 +194,12 @@ export interface ResearchServiceConfig {
    * instead. Absent in tests and direct constructions.
    */
   readonly notifyWikiChange?: ((event: ResearchWikiChangeEvent) => void) | undefined
+  /**
+   * Shared scheduled-task health book (#223) the plugin's timer loops record
+   * into; absent in tests and direct constructions — `getTaskHealth` then
+   * reports an empty list.
+   */
+  readonly taskHealth?: TaskHealthRegistry | undefined
 }
 
 /**
@@ -224,6 +232,7 @@ export class ResearchService extends TypertRemoteService {
       ...(config.zotero === undefined ? {} : { zotero: config.zotero }),
       ...(config.meetings === undefined ? {} : { meetings: config.meetings }),
       ...(config.notifyWikiChange === undefined ? {} : { notifyWikiChange: config.notifyWikiChange }),
+      ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
     }
     this.state = {
       compileStatus: new Map(),
@@ -703,6 +712,16 @@ export class ResearchService extends TypertRemoteService {
   @Remote('listBackups')
   listBackups(): Promise<ResearchListBackupsResult> {
     return wikiAdmin.listBackups(this.deps)
+  }
+
+  /**
+   * Scheduled-task health (#223): the panel-visible snapshot of every timer
+   * loop's recorded passes — last success/failure, the failure streak behind
+   * the backoff, and a short error summary. Empty until a loop has run.
+   */
+  @Remote('getTaskHealth')
+  getTaskHealth(): Promise<ResearchTaskHealthResult> {
+    return Promise.resolve(success({ tasks: this.deps.taskHealth?.snapshot() ?? Object.freeze([]) }))
   }
 
   // ledger domain: the append-only growth record (query + progress report)

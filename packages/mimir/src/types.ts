@@ -969,6 +969,26 @@ export interface ResearchBackupStatusView {
 export type ResearchListBackupsResult = ResearchResult<{ readonly backup: ResearchBackupStatusView }>
 
 /**
+ * Panel-visible health of one scheduled background task (#223): the instants
+ * of the last settled passes, the live failure streak, and a short summary
+ * of the most recent failure. `consecutiveFailures > 0` means the task is
+ * backing off; the loop itself never stops.
+ */
+export interface ResearchScheduledTaskView {
+  readonly name: string
+  /** ISO instant of the last successful pass; null while never succeeded. */
+  readonly lastSuccessAt: string | null
+  /** ISO instant of the last failed pass; null while never failed. */
+  readonly lastFailureAt: string | null
+  readonly consecutiveFailures: number
+  /** Short summary of the last failure; null while healthy. */
+  readonly lastError: string | null
+}
+
+/** `getTaskHealth` result: every scheduled task the plugin has seen a pass of. */
+export type ResearchTaskHealthResult = ResearchResult<{ readonly tasks: readonly ResearchScheduledTaskView[] }>
+
+/**
  * Research-ledger (audit trail) types. The `events` wiki table is
  * append-only by convention in v1 (no remote/UI path deletes rows); the
  * event is the trail, the record it accompanies is the state.
