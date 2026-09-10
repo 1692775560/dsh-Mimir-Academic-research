@@ -86,6 +86,9 @@ import type {
   ResearchListJobsResult,
   ResearchListProjectsResult,
   ResearchListServersResult,
+  MetricDirection,
+  ResearchScheduledTaskView,
+  ResearchTaskHealthResult,
   ResearchVenueTemplatesResult,
   ResearchApplyVenueResult,
   ResearchClearVenueResult,
@@ -335,6 +338,7 @@ export interface ResearchRemote {
     confirmReplace?: boolean
   }) => Promise<RemoteResult<ResearchImportWikiResult>>
   listBackups: () => Promise<RemoteResult<ResearchListBackupsResult>>
+  getTaskHealth: () => Promise<RemoteResult<ResearchTaskHealthResult>>
   listEvents: (request: {
     projectId?: string | undefined
     actorKind?: string | undefined
@@ -819,6 +823,8 @@ export interface ResearchView {
   readonly toasts: readonly ResearchToast[]
   /** Scheduled-backup status for the overview; null until loaded (or on failure). */
   readonly backup: ResearchBackupStatusView | null
+  /** Scheduled-task health snapshot (#223); null until loaded (or on failure). */
+  readonly taskHealth: readonly ResearchScheduledTaskView[] | null
   /** The pending paper-editor jump of a figure insert; null once consumed. */
   readonly paperJump: ResearchPaperJump | null
 }
@@ -828,7 +834,7 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   projectsStatus: 'cold',
   projectsFailure: null,
   outline: null,
-  compile: Object.freeze({ projectId: null, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null }),
+  compile: Object.freeze({ projectId: null, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null, observed: false }),
   source: null,
   papers: Object.freeze({ status: 'cold', list: Object.freeze([]), failure: null }),
   arxivSearch: null,
@@ -873,6 +879,7 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   digest: Object.freeze({ status: 'idle', tier: 'weekly', lang: 'zh', report: null, markdown: '', generatedAt: null, failure: null }),
   toasts: Object.freeze([]),
   backup: null,
+  taskHealth: null,
   paperJump: null,
 })
 
@@ -901,6 +908,7 @@ export class ResearchController implements HostObservable<ResearchView> {
   private readonly listeners = new Set<() => void>()
   private loadPromise: Promise<void> | null = null
   private backupPromise: Promise<void> | null = null
+  private taskHealthPromise: Promise<void> | null = null
   private papersPromise: Promise<void> | null = null
   private subscriptionsPromise: Promise<void> | null = null
   private zoteroPromise: Promise<void> | null = null
@@ -1001,6 +1009,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (this.view.projectsStatus === 'ready' || this.loadPromise !== null) return
     this.loadPromise = this.loadProjects().finally(() => { this.loadPromise = null })
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
+    this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
   }
 
   /** Re-read the project list (the retry entry and the reconnect resync). */
@@ -1008,6 +1017,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (this.view.projectsStatus === 'cold') return
     this.loadPromise ??= this.loadProjects().finally(() => { this.loadPromise = null })
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
+    this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
   }
 
   /**
@@ -1024,6 +1034,23 @@ export class ResearchController implements HostObservable<ResearchView> {
       this.publish({ backup: carried.value.value.backup })
     } catch {
       // Quiet by design: the line simply stays hidden.
+    }
+  }
+
+  /**
+   * Fetch the scheduled-task health snapshot (#223) for the overview's data
+   * section. Informational only: any failure leaves the slice null, hiding
+   * the block instead of surfacing an error.
+   */
+  private async loadTaskHealth(): Promise<void> {
+    try {
+      const carried = await this.remote.getTaskHealth()
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+      if (this.disposed) return
+      if (!carried.ok || !carried.value.ok) return
+      this.publish({ taskHealth: carried.value.value.tasks })
+    } catch {
+      // Quiet by design: the block simply stays hidden.
     }
   }
 
@@ -2727,14 +2754,16 @@ export class ResearchController implements HostObservable<ResearchView> {
    * @param projectId - wiki project id.
    * @param metricKey - the metric the chart compares.
    * @param rows - the chart's rows (runs carrying a finite value, oldest first).
+   * @param direction - the metric's preference direction (#220): the exported
+   * SVG shades the same best run the panel chart does.
    * @returns the 1-based target line for the paper view to jump to, or null
    * when the save or insert failed (a toast already carries the reason).
    */
-  async generateMetricFigure(projectId: string, metricKey: string, rows: readonly MetricChartRow[]): Promise<number | null> {
+  async generateMetricFigure(projectId: string, metricKey: string, rows: readonly MetricChartRow[], direction: MetricDirection): Promise<number | null> {
     if (rows.length === 0) return null
     const name = metricFigureFileName(metricKey)
-    const caption = metricFigureCaption(metricKey, rows)
-    const content = metricFigureSvg(metricKey, rows)
+    const caption = metricFigureCaption(metricKey, rows, direction)
+    const content = metricFigureSvg(metricKey, rows, direction)
     let saved: { relPath: string; caption: string }
     try {
       const carried = await this.remote.saveFigure({ projectId, name, content, caption, dir: this.dirOf(projectId) })
@@ -3845,7 +3874,7 @@ export class ResearchController implements HostObservable<ResearchView> {
         projectId, status: 'loading', content: '', mtimeMs: null, saveState: 'clean', failure: null,
       }),
       experiments: Object.freeze({ projectId, status: 'loading', list: Object.freeze([]), failure: null }),
-      compile: Object.freeze({ projectId, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null }),
+      compile: Object.freeze({ projectId, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null, observed: false }),
       snapshots: null,
       snapshotDetail: null,
     })
@@ -3912,7 +3941,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     this.compileAbort = abort
     this.compileProject = projectId
     this.publish({
-      compile: Object.freeze({ projectId, state: 'running', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null }),
+      compile: Object.freeze({ projectId, state: 'running', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null, observed: false }),
     })
     try {
       const carried = await this.remote.compile({ projectId, dir: this.dirOf(projectId) }, abort.signal)
@@ -4095,6 +4124,7 @@ export class ResearchController implements HostObservable<ResearchView> {
         issues: Object.freeze([{ severity: 'error' as const, message: failure.message }]),
         engine: this.view.compile.engine,
         pdfUpdatedAt: this.view.compile.pdfUpdatedAt,
+        observed: true,
       }),
     })
     this.notify('error', 'toast.compileFailed', failure.message)

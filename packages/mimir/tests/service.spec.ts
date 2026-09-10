@@ -1476,6 +1476,66 @@ describe('ResearchService.saveExperiment', () => {
     if (!updated.ok) throw new Error('unreachable')
     expect(updated.value.experiment.serverId).toBe(serverId)
   })
+
+  it('stores and round-trips metricDirections (#220)', async () => {
+    const h = await harness()
+    await seed(h)
+    const created = await h.service.saveExperiment({
+      experiment: {
+        projectId: PROJECT.id,
+        name: 'run',
+        status: 'running',
+        metrics: { loss: 0.5, acc: 0.9 },
+        metricDirections: { loss: 'min', acc: 'max' },
+      },
+    })
+    if (!created.ok) throw new Error('create failed')
+    expect(created.value.experiment.metricDirections).toEqual({ loss: 'min', acc: 'max' })
+    // An update that omits the field keeps the stored directions.
+    const kept = await h.service.saveExperiment({
+      experiment: {
+        id: created.value.experiment.id,
+        projectId: PROJECT.id,
+        name: 'run',
+        status: 'success',
+        metrics: { loss: 0.4, acc: 0.91 },
+      },
+    })
+    if (!kept.ok) throw new Error('update failed')
+    expect(kept.value.experiment.metricDirections).toEqual({ loss: 'min', acc: 'max' })
+    // An update that provides the field replaces it wholesale.
+    const replaced = await h.service.saveExperiment({
+      experiment: {
+        id: created.value.experiment.id,
+        projectId: PROJECT.id,
+        name: 'run',
+        status: 'success',
+        metrics: { loss: 0.4, acc: 0.91 },
+        metricDirections: { acc: 'max' },
+      },
+    })
+    if (!replaced.ok) throw new Error('replace failed')
+    expect(replaced.value.experiment.metricDirections).toEqual({ acc: 'max' })
+  })
+
+  it('rejects bad metricDirections as invalid-input (#220)', async () => {
+    const h = await harness()
+    await seed(h)
+    // A direction naming no metric.
+    await expect(h.service.saveExperiment({
+      experiment: {
+        projectId: PROJECT.id, name: 'run', status: 'running',
+        metrics: { loss: 0.5 }, metricDirections: { ghost: 'min' },
+      },
+    })).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    // A direction outside the enum.
+    await expect(h.service.saveExperiment({
+      experiment: {
+        projectId: PROJECT.id, name: 'run', status: 'running',
+        metrics: { loss: 0.5 }, metricDirections: { loss: 'up' as 'min' },
+      },
+    })).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+  })
 })
 
 describe('ResearchService arXiv subscriptions (facade)', () => {

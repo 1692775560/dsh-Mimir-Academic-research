@@ -10,7 +10,7 @@
  * @module dsh-client-ui-mimir/client/OverviewView
  */
 
-import type { ResearchBackupStatusView, ResearchImportWikiMode, ResearchProjectView, ResearchWikiSnapshot } from 'dsh-mimir/types'
+import type { ResearchBackupStatusView, ResearchImportWikiMode, ResearchProjectView, ResearchScheduledTaskView, ResearchWikiSnapshot } from 'dsh-mimir/types'
 import type { ResearchKey } from './locales.ts'
 import type { ResearchFailureView, ResearchJobsView, ResearchProjectSlice } from './controller.ts'
 import type { ExperimentRecord } from 'dsh-mimir/types'
@@ -41,11 +41,13 @@ const ACTIVITY_LIMIT = 5
  * export/import verbs, and copy.
  * @returns the overview card, or the no-selection hint.
  */
-export function OverviewView({ project, stats, backup, jobs, experiments, openLedger, exportWiki, importWiki, t }: {
+export function OverviewView({ project, stats, backup, taskHealth, jobs, experiments, openLedger, exportWiki, importWiki, t }: {
   readonly project: ResearchProjectView | undefined
   readonly stats: OverviewStats
   /** Scheduled-backup status line; null hides it (not loaded yet). */
   readonly backup: ResearchBackupStatusView | null
+  /** Scheduled-task health snapshot (#223); null hides the block. */
+  readonly taskHealth: readonly ResearchScheduledTaskView[] | null
   /** Every submitted remote job, most recent first (the activity card's jobs column). */
   readonly jobs: ResearchJobsView
   /** The selected project's experiments slice (the activity card's experiments column). */
@@ -177,7 +179,7 @@ export function OverviewView({ project, stats, backup, jobs, experiments, openLe
           </section>
         </div>
       </div>
-      <DataSection backup={backup} exportWiki={exportWiki} importWiki={importWiki} t={t} />
+      <DataSection backup={backup} taskHealth={taskHealth} exportWiki={exportWiki} importWiki={importWiki} t={t} />
     </div>
   )
 }

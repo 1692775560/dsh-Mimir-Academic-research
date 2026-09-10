@@ -50,6 +50,12 @@ describe('metricFigureCaption', () => {
     )
   })
 
+  it('spells out the metric direction when one is set (#220)', () => {
+    expect(metricFigureCaption('loss', ROWS, 'min')).toContain('. Lower is better.')
+    expect(metricFigureCaption('acc', ROWS, 'max')).toContain('. Higher is better.')
+    expect(metricFigureCaption('note', ROWS, 'none')).not.toContain('is better.')
+  })
+
   it('escapes LaTeX specials in the metric key and the run names', () => {
     const caption = metricFigureCaption('pa_mpjpe', [row('e1', '消融_50%', 61.2)])
     expect(caption).toContain('pa\\_mpjpe')
@@ -74,10 +80,16 @@ describe('metricFigureSvg', () => {
     expect(svg).not.toContain('var(--')
   })
 
-  it('shades the best run darker and normalizes the rest to it', () => {
-    const svg = metricFigureSvg('mpjpe', ROWS)
+  it('shades the best run darker under the metric direction and normalizes the rest to the lane (#220)', () => {
+    const svg = metricFigureSvg('mpjpe', ROWS, 'max')
     expect(svg).toContain('width="330" height="18" rx="2" fill="#3f5f7f"')
     expect(svg).toContain(`width="${String((88.1 / 92.4) * 330)}"`)
+    expect(svg).toContain('>mpjpe (higher is better)</text>')
+    expect(svg).toContain('<title>mpjpe</title>')
+    // Without a direction nothing is "best": every bar keeps the base tone.
+    const plain = metricFigureSvg('mpjpe', ROWS)
+    expect(plain).not.toContain('#3f5f7f')
+    expect(plain).not.toContain('is better')
   })
 
   it('escapes XML specials in run names and metric keys', () => {
@@ -87,7 +99,17 @@ describe('metricFigureSvg', () => {
     expect(svg).not.toContain('R&D')
   })
 
-  it('collapses an all-non-positive chart to zero-width bars and survives an empty list', () => {
+  it('extends negative bars left of a drawn zero line and survives an empty list (#220)', () => {
+    const mixed = metricFigureSvg('loss', [row('e1', 'a', 1), row('e2', 'b', -2)])
+    // The negative bar wears the negative tone, its value anchored left of the bar.
+    expect(mixed).toContain('fill="#b0877f"')
+    expect(mixed).toContain('text-anchor="end" fill="#4a5560">-2</text>')
+    // The zero line sits inside the lane (2/3 of it for values [-2, 1]);
+    // compute through the same percent indirection the renderer uses.
+    const zeroPct = ((0 - -2) / 3) * 100
+    const zeroX = 216 + (zeroPct / 100) * 330
+    expect(mixed).toContain(`<line x1="${zeroX}"`)
+    // A zero value yields a zero-width bar.
     const zero = metricFigureSvg('loss', [row('e1', 'a', 0), row('e2', 'b', -1)])
     expect(zero).toContain('width="0"')
     const empty = metricFigureSvg('loss', [])

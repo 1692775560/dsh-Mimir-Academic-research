@@ -91,15 +91,20 @@ export const experimentRecord = z.object({
   name: z.string(),
   status: z.enum(['running', 'success', 'failed']),
   metrics: z.record(z.string(), z.union([z.number(), z.string()])),
+  // Added WITHOUT a version bump (#220): `.optional()` leaves the field
+  // absent on records that predate it, so existing v2 JSON stores keep loading.
+  metricDirections: z.record(z.string(), z.enum(['min', 'max', 'none'])).optional(),
   logPath: z.string().optional(),
   // Added WITHOUT a version bump: `.optional()` leaves the field absent on
   // records that predate it, so existing v2 JSON stores keep loading.
   serverId: z.string().optional(),
   // Added WITHOUT a version bump: `.optional()` leaves the field absent on
   // records that predate it, so existing v2 JSON stores keep loading.
+  // 'cancelled' added to the enum (#247): writeBackExperiment already wrote
+  // it for user-cancelled linked jobs, and the narrow enum rejected the put.
   lastJob: z.object({
     jobId: z.string(),
-    status: z.enum(['succeeded', 'failed']),
+    status: z.enum(['succeeded', 'failed', 'cancelled']),
     exitCode: z.number().int().nullable(),
     durationMs: z.number().nonnegative().nullable(),
     finishedAt: z.string(),
@@ -129,7 +134,9 @@ export const jobRecord = z.object({
   id: z.string(),
   serverId: z.string(),
   command: z.string(),
-  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted']),
+  // Widened with 'unknown' (#225): additive enum extension, old snapshots
+  // carry only the six earlier values and keep validating.
+  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted', 'unknown']),
   experimentId: z.string().optional(),
   exitCode: z.number().int().nullable(),
   stdoutTail: z.string(),

@@ -119,26 +119,34 @@ export type ImageGenFetch = (url: string, init: {
 /**
  * One image generation against the configured endpoint. Returns the png
  * bytes; throws on any HTTP/protocol failure (callers treat it as
- * "no illustration", never as a deck failure).
+ * "no illustration", never as a deck failure). Each fetch races the
+ * caller's cancellation signal against the per-request timeout (#247).
+ * @param config - the resolved image-gen configuration.
+ * @param prompt - the illustration prompt.
+ * @param fetchImpl - injectable fetch seam for tests.
+ * @param signal - caller cancellation (the deck's linked long-task signal).
  */
 export async function generateImage(
   config: ImageGenConfig,
   prompt: string,
   fetchImpl?: ImageGenFetch,
+  signal?: AbortSignal,
 ): Promise<Buffer> {
   const fetcher = fetchImpl ?? (fetch as unknown as ImageGenFetch)
+  const race = (timeout: AbortSignal): AbortSignal =>
+    signal === undefined ? timeout : AbortSignal.any([timeout, signal])
   const response = await fetcher(`${config.baseUrl.replace(/\/+$/, '')}/images/generations`, {
     method: 'POST',
     headers: { 'content-type': 'application/json', authorization: `Bearer ${config.apiKey}` },
     body: JSON.stringify({ model: config.model, prompt, n: 1, size: config.size, response_format: 'b64_json' }),
-    signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT_MS),
+    signal: race(AbortSignal.timeout(IMAGE_GEN_TIMEOUT_MS)),
   })
   if (!response.ok) throw new Error(`image generation failed: HTTP ${String(response.status)}`)
   const payload = await response.json() as { data?: { b64_json?: string; url?: string }[] }
   const first = payload.data?.[0]
   if (first?.b64_json !== undefined && first.b64_json !== '') return Buffer.from(first.b64_json, 'base64')
   if (first?.url !== undefined && first.url !== '') {
-    const image = await fetch(first.url, { signal: AbortSignal.timeout(IMAGE_GEN_TIMEOUT_MS) })
+    const image = await fetch(first.url, { signal: race(AbortSignal.timeout(IMAGE_GEN_TIMEOUT_MS)) })
     if (!image.ok) throw new Error(`image fetch failed: HTTP ${String(image.status)}`)
     return Buffer.from(await image.arrayBuffer())
   }

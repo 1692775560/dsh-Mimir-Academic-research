@@ -317,8 +317,8 @@ function panelApply(ctx: ClientContext): void {
         if (line !== null) actions.setTab('paper')
       },
       // The metric chart's paper-figure button rides the same insert path.
-      generateMetricFigure: async (projectId, metricKey, rows) => {
-        const line = await controller.generateMetricFigure(projectId, metricKey, rows)
+      generateMetricFigure: async (projectId, metricKey, rows, direction) => {
+        const line = await controller.generateMetricFigure(projectId, metricKey, rows, direction)
         if (line !== null) actions.setTab('paper')
       },
       consumePaperJump: () => { controller.consumePaperJump() },

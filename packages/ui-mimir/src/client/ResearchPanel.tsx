@@ -232,6 +232,7 @@ export function ResearchPanel({
   const digest = useResearch(view => view.digest)
   const toasts = useResearch(view => view.toasts)
   const backup = useResearch(view => view.backup)
+  const taskHealth = useResearch(view => view.taskHealth)
   const paperJump = useResearch(view => view.paperJump)
   const rootRef = useRef<HTMLDivElement>(null)
 
@@ -528,7 +529,7 @@ export function ResearchPanel({
       </aside>
       <main className={css.content} role="tabpanel" aria-label={t(TAB_KEYS[activeTab])}>
         {activeTab === 'overview' && (
-          <OverviewView project={selectedProject} stats={overviewStats} backup={backup} jobs={jobs} experiments={experiments} openLedger={() => { actions.setTab('ledger') }} exportWiki={exportWiki} importWiki={importWiki} t={t} />
+          <OverviewView project={selectedProject} stats={overviewStats} backup={backup} taskHealth={taskHealth} jobs={jobs} experiments={experiments} openLedger={() => { actions.setTab('ledger') }} exportWiki={exportWiki} importWiki={importWiki} t={t} />
         )}
         {activeTab === 'paper' && (
           <PaperView
@@ -616,10 +617,10 @@ export function ResearchPanel({
             deleteExperiment={deleteExperiment}
             updateExperiment={updateExperiment}
             saveExperiment={saveExperiment}
-            generateMetricFigure={(metricKey, rows) =>
+            generateMetricFigure={(metricKey, rows, direction) =>
               selectedProjectId === null
                 ? Promise.resolve()
-                : generateMetricFigure(selectedProjectId, metricKey, rows)
+                : generateMetricFigure(selectedProjectId, metricKey, rows, direction)
             }
             retry={() => { if (selectedProjectId !== null) selectProject(selectedProjectId) }}
             t={t}
