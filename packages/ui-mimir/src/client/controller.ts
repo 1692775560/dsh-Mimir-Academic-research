@@ -828,7 +828,7 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   projectsStatus: 'cold',
   projectsFailure: null,
   outline: null,
-  compile: Object.freeze({ projectId: null, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null }),
+  compile: Object.freeze({ projectId: null, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null, observed: false }),
   source: null,
   papers: Object.freeze({ status: 'cold', list: Object.freeze([]), failure: null }),
   arxivSearch: null,
@@ -3845,7 +3845,7 @@ export class ResearchController implements HostObservable<ResearchView> {
         projectId, status: 'loading', content: '', mtimeMs: null, saveState: 'clean', failure: null,
       }),
       experiments: Object.freeze({ projectId, status: 'loading', list: Object.freeze([]), failure: null }),
-      compile: Object.freeze({ projectId, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null }),
+      compile: Object.freeze({ projectId, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null, observed: false }),
       snapshots: null,
       snapshotDetail: null,
     })
@@ -3912,7 +3912,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     this.compileAbort = abort
     this.compileProject = projectId
     this.publish({
-      compile: Object.freeze({ projectId, state: 'running', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null }),
+      compile: Object.freeze({ projectId, state: 'running', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null, observed: false }),
     })
     try {
       const carried = await this.remote.compile({ projectId, dir: this.dirOf(projectId) }, abort.signal)
@@ -4095,6 +4095,7 @@ export class ResearchController implements HostObservable<ResearchView> {
         issues: Object.freeze([{ severity: 'error' as const, message: failure.message }]),
         engine: this.view.compile.engine,
         pdfUpdatedAt: this.view.compile.pdfUpdatedAt,
+        observed: true,
       }),
     })
     this.notify('error', 'toast.compileFailed', failure.message)

@@ -287,6 +287,13 @@ export interface ResearchCompileStatusView {
   readonly engine: LatexEngineKind | null
   /** mtime (ms) of the produced `main.pdf`; null until a successful compile. */
   readonly pdfUpdatedAt: number | null
+  /**
+   * True once a compile settled in this process lifetime. False means the
+   * view was never observed live: either nothing compiled yet (`idle`), or
+   * the status was backfilled from an on-disk PDF after a restart (#221) —
+   * the UI must not read the backfill as "compiled just now".
+   */
+  readonly observed: boolean
 }
 
 /** Business failure of one `research` Remote call. */

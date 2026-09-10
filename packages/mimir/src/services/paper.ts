@@ -58,6 +58,7 @@ const IDLE_STATUS: ResearchCompileStatusView = Object.freeze({
   issues: Object.freeze([]),
   engine: null,
   pdfUpdatedAt: null,
+  observed: false,
 })
 
 /** mtime (ms) of the compiled PDF, or null when no successful run produced one. */
@@ -520,7 +521,7 @@ export async function compile(
   } catch (error) {
     // Missing engine (ENOENT) or missing paper directory: the run never
     // produced a log, so there are no issues to show — only the message.
-    const settled: ResearchCompileStatusView = { ...previous, state: 'error' }
+    const settled: ResearchCompileStatusView = { ...previous, state: 'error', observed: true }
     state.compileStatus.set(key, settled)
     return rejected({
       code: 'operation-failed',
@@ -535,6 +536,7 @@ export async function compile(
     pdfUpdatedAt: outcome.success
       ? await pdfMtime(join(dir, 'main.pdf'))
       : previous.pdfUpdatedAt,
+    observed: true,
   })
   state.compileStatus.set(key, settled)
   await emitEvent(deps.domain, {
@@ -556,20 +558,43 @@ export async function compile(
 
 /**
  * Read the last known compile status without running anything.
+ *
+ * Restart semantics (#221): the status map is process-local, so on a miss the
+ * project's paper directory is probed for an existing `main.pdf`. A found PDF
+ * backfills an `ok` view from its mtime with `observed: false` (compiled in a
+ * previous session, not witnessed by this process); no PDF stays `idle`. The
+ * backfill is cached so a later compile cleanly overwrites it.
  * @param deps - workspace root and open wiki domain.
- * @param state - the service's mutable compile-status map (read only here).
+ * @param state - the service's mutable compile-status map.
  * @param request - the addressed project; omitted reads the unkeyed slot.
- * @returns the recorded status, `idle` before the first compile.
+ * @returns the recorded or backfilled status, `idle` when nothing compiled.
  */
-export function getCompileStatus(
+export async function getCompileStatus(
   deps: PaperDeps,
   state: ServiceState,
   request: { projectId?: string },
 ): Promise<ResearchCompileStatusResult> {
   const key = request.projectId ?? DEFAULT_KEY
-  if (request.projectId !== undefined
-    && deps.domain.table('projects').get(request.projectId) === undefined) {
-    return Promise.resolve(rejected({ code: 'project-not-found', projectId: request.projectId }))
+  const record = request.projectId === undefined
+    ? undefined
+    : deps.domain.table('projects').get(request.projectId)
+  if (request.projectId !== undefined && record === undefined) {
+    return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  return Promise.resolve(success(state.compileStatus.get(key) ?? IDLE_STATUS))
+  const known = state.compileStatus.get(key)
+  if (known !== undefined) return success(known)
+  const dir = resolvePaperDir(deps.workspaceDir, undefined, record?.paperDir)
+  const mtime = dir === undefined ? null : await pdfMtime(join(dir, 'main.pdf'))
+  if (mtime === null) return success(IDLE_STATUS)
+  // A PDF on disk proves a previous session compiled successfully; the engine
+  // and issue list of that run are lost with the process.
+  const backfilled: ResearchCompileStatusView = Object.freeze({
+    state: 'ok',
+    issues: Object.freeze([]),
+    engine: null,
+    pdfUpdatedAt: mtime,
+    observed: false,
+  })
+  state.compileStatus.set(key, backfilled)
+  return success(backfilled)
 }
