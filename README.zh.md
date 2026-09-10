@@ -46,7 +46,7 @@ dsh plugin --profile web add dsh-mimir@latest   # 安装即自动激活
 dsh web                                          # 然后打开 http://127.0.0.1:3080
 ```
 
-装到了旧版本（比如 0.11.x/0.12.x）？dsh 的插件商店走 pnpm，默认会延迟加载刚发布的新版本。改用精确版本号：`dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.14.1`
+装到了旧版本（比如 0.11.x/0.12.x）？dsh 的插件商店走 pnpm，默认会延迟加载刚发布的新版本。改用精确版本号：`dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.19.0`
 
 版本兼容：**0.18.x 需要 dsh ≥ 0.1.2-alpha.4**（上游有破坏性改动）。旧版 dsh 请钉住上一个版本：`dsh plugin --profile web add dsh-mimir@0.16.0`。
 
@@ -60,6 +60,10 @@ dsh web                                          # 然后打开 http://127.0.0.1
   bash scripts/setup-web-search.sh
   ```
 - **Zotero**——在插件配置里填 `zotero.apiKey` / `zotero.userId`（key 在 zotero.org/settings/keys 免费生成）
+
+## 相关项目
+
+- **[Mimir-Desktop](https://github.com/hxhy00/Mimir-Desktop)**——社区桌面版，由 [@hxhy00](https://github.com/hxhy00) 贡献：同一个工作台重写为独立 Electron 应用，免装 dsh、免自起后端，开箱即用，MIT。
 
 ## 配置
 
@@ -106,7 +110,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 
 从 `main` 拉分支（`feature/<name>` / `fix/<name>`），保持 `pnpm run build && pnpm test && pnpm run typecheck` 全绿，提 PR——见 [CONTRIBUTING.zh.md](CONTRIBUTING.zh.md)。合并 PR 请用 **merge commit**（不要 squash），这样贡献者署名才能进入 contributors 图表。想看全貌，先读已核实的架构文档：[docs/architecture.zh.md](docs/architecture.zh.md)（[EN](docs/architecture.md)）。
 
-现有贡献者：[@EriXPsy](https://github.com/EriXPsy)（记录视图、人本化日志）· [@hkwuks](https://github.com/hkwuks)（SearXNG Web 搜索、[sxng CLI](https://github.com/hkwuks/sxng-cli)、去 AI 味技能）· [@hxhy](https://github.com/huixiaheyu)（web_search 取消修复）
+现有贡献者：[@EriXPsy](https://github.com/EriXPsy)（记录视图、人本化日志）· [@hkwuks](https://github.com/hkwuks)（SearXNG Web 搜索、[sxng CLI](https://github.com/hkwuks/sxng-cli)、去 AI 味技能）· [@hxhy](https://github.com/huixiaheyu)（web_search 取消修复）· [@hxhy00](https://github.com/hxhy00)（[Mimir-Desktop](https://github.com/hxhy00/Mimir-Desktop)，独立桌面版）
 
 ## 交流群
 

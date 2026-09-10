@@ -420,6 +420,24 @@ section { padding: var(--s8) 0; }
   padding: 2px var(--s2); border-radius: 6px; font-size: 13px;
 }
 
+/* ---------- editions（插件版 / 桌面版） ---------- */
+.edition-tag {
+  display: inline-block;
+  font-family: "SF Mono", Menlo, monospace; font-size: 10px; letter-spacing: .14em;
+  color: var(--accent); border: 1px solid rgb(71 96 140 / 30%);
+  padding: 3px 9px; border-radius: 999px; margin-bottom: 12px;
+}
+.step .step-cta {
+  display: inline-flex; align-items: center; margin-top: var(--s2);
+  border: 1px solid var(--line); background: var(--surface);
+  color: var(--ink-2); text-decoration: none;
+  padding: 9px 20px; border-radius: 999px; font-size: var(--fs-14);
+  transition: border-color .15s ease, color .15s ease, transform .15s ease, box-shadow .15s ease;
+}
+.step .step-cta:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-1px); box-shadow: var(--shadow-sm); }
+.step a:not(.step-cta) { color: var(--accent); text-decoration: none; font-weight: 500; }
+.step a:not(.step-cta):hover { text-decoration: underline; text-underline-offset: 3px; }
+
 /* ---------- community ---------- */
 .comm-grid { display: grid; grid-template-columns: auto 1fr; gap: 40px; align-items: center; }
 @media (max-width: 700px) { .comm-grid { grid-template-columns: 1fr; justify-items: center; text-align: center; } .qr-row { justify-content: center; } }
@@ -463,6 +481,7 @@ footer a { color: var(--muted); }
       <a href="#gallery">界面</a>
       <a href="#why">初心</a>
       <a href="#quickstart">快速上手</a>
+      <a href="#desktop">桌面版</a>
       <a href="#community">社区</a>
       <a class="nav-gh" href="https://github.com/1692775560/dsh-Mimir-Academic-research" target="_blank" rel="noopener">
         <svg width="15" height="15" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z"/></svg>
@@ -498,7 +517,7 @@ footer a { color: var(--muted); }
         <button class="term-copy">复制</button>
       </div>
     </div>
-    <p class="hero-stats rise" style="animation-delay:.46s"><b>9</b> 个视图 · <b>1079</b> 项自动化测试 · MIT 开源</p>
+    <p class="hero-stats rise" style="animation-delay:.46s"><b>9</b> 个视图 · <b>1215</b> 项自动化测试 · MIT 开源</p>
     <div class="hero-shot rise" style="animation-delay:.55s">
       <img src="assets/tab-overview.png" alt="Mimir 总览：项目管线、统计与最近动态" loading="lazy">
     </div>
@@ -663,6 +682,30 @@ footer a { color: var(--muted); }
   </div>
 </section>
 
+<section id="desktop">
+  <div class="wrap">
+    <div class="sec-head reveal">
+      <span class="sec-kicker">TWO FLAVORS</span>
+      <h2 class="serif">插件版，或者桌面版</h2>
+      <p>同一个工作台，两种形态——按你的习惯选</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <span class="edition-tag">PLUGIN · 官方</span>
+        <h3>插件版</h3>
+        <p>装进 dsh 生态，和 agent 同屋办公：一条命令安装，随 <code class="mono">dsh web</code> 启停，数据落在你的工作区。已经在用 dsh 的话，从这里开始。</p>
+        <a class="step-cta" href="#quickstart">看快速上手</a>
+      </div>
+      <div class="step reveal">
+        <span class="edition-tag">DESKTOP · 社区贡献</span>
+        <h3>桌面版 Mimir-Desktop</h3>
+        <p>社区共创者 <a href="https://github.com/hxhy00" target="_blank" rel="noopener">@hxhy00</a> 重写的独立 Electron 应用：开箱即用，不用装 dsh、不用自起后端。文献、论文、实验、图表、组会、会议截稿、GPU 服务器、Agent 对话与语音——功能同源，MIT 开源。</p>
+        <a class="step-cta" href="https://github.com/hxhy00/Mimir-Desktop" target="_blank" rel="noopener">GitHub 仓库 ↗</a>
+      </div>
+    </div>
+  </div>
+</section>
+
 <section id="community">
   <div class="wrap">
     <div class="sec-head reveal">
@@ -689,6 +732,7 @@ footer a { color: var(--muted); }
         <li><b>微信交流群</b><br><span class="desc">扫码进群；二维码过期的话，加右侧维护者微信拉你进去</span></li>
         <li><b>赞赏支持</b><br><span class="desc">微信扫码请开发者喝杯咖啡，每一分都会变成维护时间</span></li>
         <li><a href="https://github.com/1692775560/dsh-Mimir-Academic-research" target="_blank" rel="noopener">GitHub 仓库</a><br><span class="desc">提 issue、交 PR，共创者持续招募中</span></li>
+        <li><a href="https://github.com/hxhy00/Mimir-Desktop" target="_blank" rel="noopener">Mimir-Desktop 桌面版</a><br><span class="desc">社区共创者 @hxhy00 的独立 Electron 发行版，开箱即用</span></li>
         <li><a href="https://github.com/Dominic789654/awesome-deepseek-harness" target="_blank" rel="noopener">Awesome DeepSeek Harness</a><br><span class="desc">已被社区精选列表收录</span></li>
         <li><a href="https://github.com/deepseek-ai/deepseek-harness/discussions/4392" target="_blank" rel="noopener">官方插件展示帖</a><br><span class="desc">DeepSeek Harness 官方 Discussions 收录</span></li>
       </ul>

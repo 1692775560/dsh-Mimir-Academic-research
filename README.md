@@ -46,7 +46,7 @@ dsh plugin --profile web add dsh-mimir@latest   # installs and self-activates
 dsh web                                          # then open http://127.0.0.1:3080
 ```
 
-Got an old version (e.g. 0.11.x/0.12.x)? dsh's plugin store uses pnpm, which holds back freshly published releases by default. Pin the exact version instead: `dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.14.1`
+Got an old version (e.g. 0.11.x/0.12.x)? dsh's plugin store uses pnpm, which holds back freshly published releases by default. Pin the exact version instead: `dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.19.0`
 
 Version compatibility: **0.18.x requires dsh ≥ 0.1.2-alpha.4** (upstream breaking changes). On an older dsh, pin the previous release: `dsh plugin --profile web add dsh-mimir@0.16.0`.
 
@@ -60,6 +60,10 @@ Optional capabilities:
   bash scripts/setup-web-search.sh
   ```
 - **Zotero** — set `zotero.apiKey` / `zotero.userId` in the plugin config (keys at zotero.org/settings/keys)
+
+## Related projects
+
+- **[Mimir-Desktop](https://github.com/hxhy00/Mimir-Desktop)** — a standalone Electron desktop edition of the workbench: no dsh install, no backend to run, same feature set. Community-maintained by [@hxhy00](https://github.com/hxhy00), MIT.
 
 ## Configuration
 
@@ -106,7 +110,7 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 
 Branch off `main` (`feature/<name>` / `fix/<name>`), keep `pnpm run build && pnpm test && pnpm run typecheck` green, and open a PR — see [CONTRIBUTING.md](CONTRIBUTING.md). Please merge PRs with a **merge commit** (not squash) so contributor authorship shows up on the contributors graph. For the big picture, start with the verified architecture overview: [docs/architecture.md](docs/architecture.md) ([中文](docs/architecture.zh.md)).
 
-Contributors so far: [@EriXPsy](https://github.com/EriXPsy) (Ledger view, humanized journal) · [@hkwuks](https://github.com/hkwuks) (SearXNG web search, [sxng CLI](https://github.com/hkwuks/sxng-cli), de-AI skill) · [@hxhy](https://github.com/huixiaheyu) (web_search cancellation fix)
+Contributors so far: [@EriXPsy](https://github.com/EriXPsy) (Ledger view, humanized journal) · [@hkwuks](https://github.com/hkwuks) (SearXNG web search, [sxng CLI](https://github.com/hkwuks/sxng-cli), de-AI skill) · [@hxhy](https://github.com/huixiaheyu) (web_search cancellation fix) · [@hxhy00](https://github.com/hxhy00) ([Mimir-Desktop](https://github.com/hxhy00/Mimir-Desktop), the standalone desktop edition)
 
 ## Community
 
