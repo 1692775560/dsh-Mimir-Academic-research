@@ -200,6 +200,14 @@ export interface ResearchServiceConfig {
    * reports an empty list.
    */
   readonly taskHealth?: TaskHealthRegistry | undefined
+  /**
+   * Job-limit overrides (tests): the ssh session kill timeout and the output
+   * capture cap; absent, the documented defaults apply (#225).
+   */
+  readonly jobs?: {
+    readonly timeoutMs?: number | undefined
+    readonly maxBufferBytes?: number | undefined
+  } | undefined
 }
 
 /**
@@ -233,6 +241,7 @@ export class ResearchService extends TypertRemoteService {
       ...(config.meetings === undefined ? {} : { meetings: config.meetings }),
       ...(config.notifyWikiChange === undefined ? {} : { notifyWikiChange: config.notifyWikiChange }),
       ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
+      ...(config.jobs === undefined ? {} : { jobs: config.jobs }),
     }
     this.state = {
       compileStatus: new Map(),

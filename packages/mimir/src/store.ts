@@ -129,7 +129,9 @@ export const jobRecord = z.object({
   id: z.string(),
   serverId: z.string(),
   command: z.string(),
-  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted']),
+  // Widened with 'unknown' (#225): additive enum extension, old snapshots
+  // carry only the six earlier values and keep validating.
+  status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted', 'unknown']),
   experimentId: z.string().optional(),
   exitCode: z.number().int().nullable(),
   stdoutTail: z.string(),

@@ -187,8 +187,13 @@ export interface ExperimentRecord {
   readonly updatedAt: string
 }
 
-/** Lifecycle of one remote job submitted over ssh. */
-export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+/**
+ * Lifecycle of one remote job submitted over ssh. The authoritative contract
+ * (what each state means, which transitions exist, how the linked experiment
+ * maps them) lives in `job-lifecycle.ts` (#225); UI, persistence, and the
+ * ledger all consume this union.
+ */
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | 'unknown'
 
 /** One remote command submitted to a remembered server over ssh. */
 export interface JobRecord {

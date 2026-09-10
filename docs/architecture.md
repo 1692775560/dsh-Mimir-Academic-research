@@ -85,6 +85,20 @@ boundary: when dsh is exposed through a reverse proxy or LAN bind, these
 routes stay loopback-only by design; expose them remotely only behind an
 authenticating proxy that rewrites `Host`.
 
+## Remote-job lifecycle
+
+The single authoritative contract lives in `job-lifecycle.ts` (#225):
+`queued → running → succeeded|failed`, plus three ways a run ends WITHOUT
+an observed outcome — `cancelled` (the user aborted the local session),
+`interrupted` (the host disposed/restarted while the job was active;
+restart recovery settles leftovers here), and `unknown` (the session
+exceeded its 30-minute duration cap and was dropped; the remote process may
+still be alive). Output past the 4 MiB capture cap is an explicit `failed`
+with a note, never a silent truncation. The linked experiment's lifecycle
+stays coarser: only an observed `succeeded` lands as `success`; every other
+terminal state lands as `failed`, with the precise cause kept on the job
+record.
+
 ## Agent surface
 
 - **Tools (9)**: `arxiv_search`, `web_search`, `wiki_note`, `figure_save`,

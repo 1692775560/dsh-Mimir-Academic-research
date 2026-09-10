@@ -3750,6 +3750,15 @@ li.dropIndicator {
   color: var(--dsw-alias-state-error-primary, #d93026);
 }
 
+/* Cancelled / interrupted / unknown: the job ended without an observed
+   outcome — neutral warning tint, never success green or failure red. */
+.jobStatus[data-status='cancelled'],
+.jobStatus[data-status='interrupted'],
+.jobStatus[data-status='unknown'] {
+  background: var(--dsw-alias-state-warning-secondary, rgb(210 153 34 / 12%));
+  color: var(--dsw-alias-state-warning-primary, #9a6700);
+}
+
 .jobExitCode {
   margin-left: 6px;
   color: var(--dsw-alias-label-tertiary, #5b6474);

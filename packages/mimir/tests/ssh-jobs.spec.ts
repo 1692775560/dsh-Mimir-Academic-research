@@ -18,11 +18,12 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { recoverInterruptedJobs } from '../src/services/server.ts'
+import { isActiveJobStatus, isTerminalJobStatus, JOB_ACTIVE_STATUSES, JOB_STATUSES } from '../src/job-lifecycle.ts'
 import { ResearchService } from '../src/service.ts'
 import type { ExperimentRecord, JobRecord } from '../src/types.ts'
 
 /** Boot a service over a memory-backed domain and a fresh temp workspace. */
-async function harness() {
+async function harness(jobs?: { timeoutMs?: number; maxBufferBytes?: number }) {
   const ctx = new Context()
   await ctx.plugin(Storage)
   const backend = new MemoryStorageBackend(new MemoryMediaPool())
@@ -36,6 +37,7 @@ async function harness() {
     workspaceDir,
     domain,
     latex: { engine: 'auto', timeoutMs: 1000 },
+    ...(jobs === undefined ? {} : { jobs }),
   })
   return { ctx, domain, workspaceDir, service }
 }
@@ -54,7 +56,8 @@ const EXPERIMENT: ExperimentRecord = {
 /**
  * Shim a fake `ssh` onto PATH: it echoes the remote command (its last
  * argument) to stdout, writes one stderr line, sleeps a moment when the
- * command contains `mimir-slow`, and exits 3 when the command contains
+ * command contains `mimir-slow`, floods stdout past any small capture cap
+ * when it contains `mimir-flood`, and exits 3 when the command contains
  * `mimir-fail`.
  * @returns the harness cleanup; PATH restores via `vi.unstubAllEnvs`.
  */
@@ -66,6 +69,7 @@ async function stubFakeSsh(): Promise<void> {
     'echo "fake-ssh stdout: $1"',
     'echo "fake-ssh stderr line" >&2',
     'case "$1" in *mimir-fail*) exit 3 ;; esac',
+    'case "$1" in *mimir-flood*) head -c 65536 /dev/zero | tr "\\0" "x" ;; esac',
     'case "$1" in *mimir-slow*) sleep 0.5 ;; esac',
     'exit 0',
     '',
@@ -94,6 +98,29 @@ function isActiveJob(job: JobRecord): boolean {
 }
 
 afterEach(() => { vi.unstubAllEnvs() })
+
+describe('job lifecycle contract (#225)', () => {
+  it('defines exactly the seven statuses, active vs terminal', () => {
+    expect(JOB_STATUSES).toEqual(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted', 'unknown'])
+    expect(JOB_ACTIVE_STATUSES).toEqual(['queued', 'running'])
+    for (const status of JOB_STATUSES) {
+      expect(isActiveJobStatus(status)).toBe(status === 'queued' || status === 'running')
+      expect(isTerminalJobStatus(status)).toBe(!isActiveJobStatus(status))
+    }
+  })
+
+  it('keeps the store schema open for every status of the machine', async () => {
+    const { domain } = await harness()
+    for (const status of JOB_STATUSES) {
+      const record: JobRecord = {
+        id: `job-${status}`, serverId: 'srv-1', command: 'hostname', status,
+        exitCode: null, stdoutTail: '', stderrTail: '', createdAt: '2026-08-20T00:00:00.000Z',
+      }
+      await domain.table('jobs').put(record.id, record)
+      expect(domain.table('jobs').get(record.id)?.status).toBe(status)
+    }
+  })
+})
 
 describe('ResearchService.submitJob validation', () => {
   it('rejects an unknown server, an empty/overlong command, a TCP-only server, and an unknown experiment', async () => {
@@ -408,6 +435,47 @@ describe('ResearchService.listJobs / deleteJob', () => {
       exitCode: null,
       stderrTail: expect.stringContaining('host stopped'),
     })
+  })
+
+  it('settles a duration-cap kill as unknown, never claiming a remote outcome (#225)', async () => {
+    const { domain, service } = await harness({ timeoutMs: 150 })
+    await stubFakeSsh()
+    const created = await service.saveServer({ server: SERVER_INPUT })
+    if (!created.ok) throw new Error('create failed')
+    await domain.table('experiments').put(EXPERIMENT.id, EXPERIMENT)
+    const submitted = await service.submitJob({
+      serverId: created.value.server.id,
+      command: 'mimir-slow python train.py --epochs 20',
+      experimentId: EXPERIMENT.id,
+    })
+    if (!submitted.ok) throw new Error('submit rejected')
+
+    const settled = await settleJob(service, submitted.value.job.id)
+    expect(settled.status).toBe('unknown')
+    expect(settled.exitCode).toBeNull()
+    expect(settled.stderrTail).toContain('may still be running')
+    // The coarser experiment lifecycle maps the unobserved settle to failed.
+    expect(domain.table('experiments').get(EXPERIMENT.id)).toMatchObject({
+      status: 'failed',
+      lastJob: { jobId: settled.id, status: 'failed', exitCode: null },
+    })
+  })
+
+  it('settles output past the capture cap as an explicit failure, never a silent truncation (#225)', async () => {
+    const { service } = await harness({ maxBufferBytes: 512 })
+    await stubFakeSsh()
+    const created = await service.saveServer({ server: SERVER_INPUT })
+    if (!created.ok) throw new Error('create failed')
+    const submitted = await service.submitJob({
+      serverId: created.value.server.id,
+      command: 'mimir-flood python train.py',
+    })
+    if (!submitted.ok) throw new Error('submit rejected')
+
+    const settled = await settleJob(service, submitted.value.job.id)
+    expect(settled.status).toBe('failed')
+    expect(settled.exitCode).toBeNull()
+    expect(settled.stderrTail).toContain('capture limit')
   })
 
   it('deletes a record and reports job-not-found on a repeat', async () => {
