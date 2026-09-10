@@ -19,7 +19,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-sidebar/client'
 // Type-only: pulls this package's LocaleNamespaceMap merge (the 'research' seat).
 import type {} from './locales.ts'
 import type {
-  ArxivEntry, BibEntry, ExperimentInput, FigureEntry, MeetingInclude, ResearchEventFilter,
+  ArxivEntry, BibEntry, ExperimentInput, FigureEntry, MeetingInclude, MetricDirection, ResearchEventFilter,
   ResearchGenerateBriefOptions, ResearchImportWikiMode, ResearchImportedProject, ResearchJournalQuestionRef, ResearchProgressReportOptions,
   ResearchWikiSnapshot, SectionMove, SectionOutlineTitles, ServerInput, SubsectionMove,
 } from 'dsh-mimir/types'
@@ -344,8 +344,9 @@ export interface ResearchPanelInjected {
    * @param projectId - wiki project id.
    * @param metricKey - the metric the chart compares.
    * @param rows - the chart's rows (runs carrying a finite value, oldest first).
+   * @param direction - the metric's preference direction (#220).
    */
-  generateMetricFigure: (projectId: string, metricKey: string, rows: readonly MetricChartRow[]) => Promise<void>
+  generateMetricFigure: (projectId: string, metricKey: string, rows: readonly MetricChartRow[], direction: MetricDirection) => Promise<void>
   /** Clear the paper view's consumed jump ticket. */
   consumePaperJump: () => void
   /**

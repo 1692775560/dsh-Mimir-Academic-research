@@ -43,6 +43,9 @@ export interface ExperimentDeps {
 /** Legal experiment statuses, for the runtime guard (remote callers bypass the type). */
 const EXPERIMENT_STATUSES: readonly string[] = ['running', 'success', 'failed']
 
+/** Legal metric directions, for the runtime guard (#220). */
+const METRIC_DIRECTIONS: readonly string[] = ['min', 'max', 'none']
+
 /** First invalid-input message for one experiment upsert payload, or null when valid. */
 function validateExperimentInput(input: ExperimentInput): string | null {
   if (input.name.trim().length === 0) return 'name must be non-empty'
@@ -55,6 +58,17 @@ function validateExperimentInput(input: ExperimentInput): string | null {
   for (const [key, value] of Object.entries(input.metrics)) {
     if (key.trim().length === 0) return 'metrics keys must be non-empty'
     if (typeof value !== 'number' && typeof value !== 'string') return `metrics.${key} must be a number or a string`
+  }
+  if (input.metricDirections !== undefined) {
+    if (typeof input.metricDirections !== 'object' || input.metricDirections === null
+      || Array.isArray(input.metricDirections)) {
+      return 'metricDirections must be an object keyed by metric name'
+    }
+    for (const [key, direction] of Object.entries(input.metricDirections)) {
+      if (key.trim().length === 0) return 'metricDirections keys must be non-empty'
+      if (!METRIC_DIRECTIONS.includes(direction)) return `metricDirections.${key} must be min, max, or none`
+      if (!(key in input.metrics)) return `metricDirections.${key} has no matching metric`
+    }
   }
   return null
 }
@@ -147,6 +161,9 @@ export async function saveExperiment(
       name: input.name,
       status: input.status,
       metrics: input.metrics,
+      // `...existing` preserves the stored directions; a provided map
+      // replaces (the form always sends the full map, so removals stick) (#220).
+      ...(input.metricDirections === undefined ? {} : { metricDirections: input.metricDirections }),
       ...(input.logPath === undefined ? {} : { logPath: input.logPath }),
       ...(input.serverId === undefined ? {} : { serverId: input.serverId }),
       updatedAt: now,
@@ -169,6 +186,7 @@ export async function saveExperiment(
     name: input.name,
     status: input.status,
     metrics: input.metrics,
+    ...(input.metricDirections === undefined ? {} : { metricDirections: input.metricDirections }),
     ...(input.logPath === undefined ? {} : { logPath: input.logPath }),
     ...(input.serverId === undefined ? {} : { serverId: input.serverId }),
     updatedAt: now,

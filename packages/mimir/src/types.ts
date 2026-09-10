@@ -148,6 +148,13 @@ export interface ProjectRecord {
 export type ExperimentStatus = 'running' | 'success' | 'failed'
 
 /**
+ * Preference direction of one experiment metric (#220): `min` = lower is
+ * better (loss), `max` = higher is better (accuracy), `none` = unordered —
+ * the comparison charts highlight a best run only for `min`/`max`.
+ */
+export type MetricDirection = 'min' | 'max' | 'none'
+
+/**
  * The settled outcome of the remote job most recently linked to one
  * experiment, written back when the job reaches `succeeded`/`failed`.
  */
@@ -174,6 +181,13 @@ export interface ExperimentRecord {
   readonly status: ExperimentStatus
   /** Scalar metrics keyed by name (accuracy, loss, wall-clock minutes…). */
   readonly metrics: Record<string, number | string>
+  /**
+   * Per-metric preference direction (#220): `min` = lower is better (loss),
+   * `max` = higher is better (accuracy), `none` = no preference. Only keys
+   * present in `metrics` are meaningful; absent/omitted reads as `none`.
+   * Drives the comparison chart's best-run highlight and the exported SVG.
+   */
+  readonly metricDirections?: Record<string, MetricDirection> | undefined
   /** Log file path relative to the workspace root, when the run wrote one. */
   readonly logPath?: string | undefined
   /** Remembered server the run executed on, when linked. */
@@ -609,6 +623,8 @@ export interface ExperimentInput {
   readonly status: ExperimentStatus
   /** Scalar metrics keyed by name (numbers or strings). */
   readonly metrics: Record<string, number | string>
+  /** Per-metric preference direction (#220); omitted preserves the stored map on update. */
+  readonly metricDirections?: Record<string, MetricDirection> | undefined
   readonly logPath?: string | undefined
   readonly serverId?: string | undefined
 }

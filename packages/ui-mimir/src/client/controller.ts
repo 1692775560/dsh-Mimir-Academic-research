@@ -86,6 +86,7 @@ import type {
   ResearchListJobsResult,
   ResearchListProjectsResult,
   ResearchListServersResult,
+  MetricDirection,
   ResearchScheduledTaskView,
   ResearchTaskHealthResult,
   ResearchVenueTemplatesResult,
@@ -2753,14 +2754,16 @@ export class ResearchController implements HostObservable<ResearchView> {
    * @param projectId - wiki project id.
    * @param metricKey - the metric the chart compares.
    * @param rows - the chart's rows (runs carrying a finite value, oldest first).
+   * @param direction - the metric's preference direction (#220): the exported
+   * SVG shades the same best run the panel chart does.
    * @returns the 1-based target line for the paper view to jump to, or null
    * when the save or insert failed (a toast already carries the reason).
    */
-  async generateMetricFigure(projectId: string, metricKey: string, rows: readonly MetricChartRow[]): Promise<number | null> {
+  async generateMetricFigure(projectId: string, metricKey: string, rows: readonly MetricChartRow[], direction: MetricDirection): Promise<number | null> {
     if (rows.length === 0) return null
     const name = metricFigureFileName(metricKey)
-    const caption = metricFigureCaption(metricKey, rows)
-    const content = metricFigureSvg(metricKey, rows)
+    const caption = metricFigureCaption(metricKey, rows, direction)
+    const content = metricFigureSvg(metricKey, rows, direction)
     let saved: { relPath: string; caption: string }
     try {
       const carried = await this.remote.saveFigure({ projectId, name, content, caption, dir: this.dirOf(projectId) })

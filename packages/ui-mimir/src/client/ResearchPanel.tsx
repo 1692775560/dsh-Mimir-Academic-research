@@ -617,10 +617,10 @@ export function ResearchPanel({
             deleteExperiment={deleteExperiment}
             updateExperiment={updateExperiment}
             saveExperiment={saveExperiment}
-            generateMetricFigure={(metricKey, rows) =>
+            generateMetricFigure={(metricKey, rows, direction) =>
               selectedProjectId === null
                 ? Promise.resolve()
-                : generateMetricFigure(selectedProjectId, metricKey, rows)
+                : generateMetricFigure(selectedProjectId, metricKey, rows, direction)
             }
             retry={() => { if (selectedProjectId !== null) selectProject(selectedProjectId) }}
             t={t}

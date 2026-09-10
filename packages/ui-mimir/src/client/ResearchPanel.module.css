@@ -2485,6 +2485,24 @@ li.dropIndicator {
   opacity: 0.55;
 }
 
+/* #220: negatives extend left of the zero baseline and get a distinct tone. */
+.metricBar[data-negative] {
+  fill: var(--dsw-alias-state-warning-primary, #b0877f);
+}
+
+/* #220: the best run under the metric's declared direction stands out. */
+.metricBar[data-best] {
+  opacity: 1;
+  stroke: var(--dsw-alias-label-primary, #17233d);
+  stroke-width: 1.5;
+}
+
+.metricZeroLine {
+  stroke: var(--dsw-alias-border-l1, rgb(0 0 0 / 25%));
+  stroke-dasharray: 3 3;
+  stroke-width: 1;
+}
+
 .metricValue {
   fill: var(--dsw-alias-label-primary, #17233d);
   font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);

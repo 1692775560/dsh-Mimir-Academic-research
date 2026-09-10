@@ -91,6 +91,9 @@ export const experimentRecord = z.object({
   name: z.string(),
   status: z.enum(['running', 'success', 'failed']),
   metrics: z.record(z.string(), z.union([z.number(), z.string()])),
+  // Added WITHOUT a version bump (#220): `.optional()` leaves the field
+  // absent on records that predate it, so existing v2 JSON stores keep loading.
+  metricDirections: z.record(z.string(), z.enum(['min', 'max', 'none'])).optional(),
   logPath: z.string().optional(),
   // Added WITHOUT a version bump: `.optional()` leaves the field absent on
   // records that predate it, so existing v2 JSON stores keep loading.

@@ -11,17 +11,20 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { ExperimentInput, ExperimentRecord } from 'dsh-mimir/types'
+import type { ExperimentInput, ExperimentRecord, MetricDirection } from 'dsh-mimir/types'
 import type {
   ResearchArtifactView, ResearchFailureView, ResearchProjectSlice, ResearchServersView,
 } from './controller.ts'
 import {
-  barWidthPercents,
+  barSpans,
+  bestRowIndex,
+  zeroLinePct,
   chartNameLines,
   failureCopy,
   formatDurationMs,
   formatMetricValue,
   metricChartRows,
+  metricDirectionsOf,
   numericMetricKeys,
   relativeTime,
   type MetricChartRow,
@@ -41,13 +44,16 @@ const CHART_ROW_HEIGHT = 26
 
 /**
  * One metric's comparison chart: one horizontal bar per run carrying a finite
- * number for the key, oldest run on top, width normalized to the largest
- * value. Run names wrap to two lines via `chartNameLines`. Pure inline SVG —
+ * value for the key, oldest run on top, bars on a zero baseline so negatives
+ * extend left (#220). The best run under the metric's direction is shaded.
+ * Run names wrap to two lines via `chartNameLines`. Pure inline SVG —
  * no charting dependency.
  */
-function MetricChart({ metricKey, rows, generateLabel, generating, onGenerate }: {
+function MetricChart({ metricKey, rows, direction, generateLabel, generating, onGenerate }: {
   readonly metricKey: string
   readonly rows: readonly MetricChartRow[]
+  /** The metric's preference direction (#220); `none` highlights nothing. */
+  readonly direction: MetricDirection
   /** Localized "generate paper figure" button copy. */
   readonly generateLabel: string
   /** Whether this chart's generate request is in flight. */
@@ -55,7 +61,9 @@ function MetricChart({ metricKey, rows, generateLabel, generating, onGenerate }:
   /** The per-chart "generate paper figure" button. */
   readonly onGenerate: () => void
 }) {
-  const widths = barWidthPercents(rows.map(row => row.value))
+  const spans = barSpans(rows.map(row => row.value))
+  const zeroPct = zeroLinePct(rows.map(row => row.value))
+  const best = bestRowIndex(rows, direction)
   const height = rows.length * CHART_ROW_HEIGHT + 4
   return (
     <div className={css.metricChart}>
@@ -71,8 +79,18 @@ function MetricChart({ metricKey, rows, generateLabel, generating, onGenerate }:
         role="img"
         aria-label={metricKey}
       >
+        {zeroPct !== null && (
+          <line
+            className={css.metricZeroLine}
+            x1={CHART_BAR_X + (zeroPct / 100) * CHART_BAR_MAX_WIDTH}
+            y1={0}
+            x2={CHART_BAR_X + (zeroPct / 100) * CHART_BAR_MAX_WIDTH}
+            y2={height}
+          />
+        )}
         {rows.map((row, index) => {
           const y = 2 + index * CHART_ROW_HEIGHT
+          const span = spans[index] ?? { leftPct: 0, widthPct: 0, negative: false }
           // Long run names wrap to a second line instead of ellipsizing early;
           // the full name rides the <title> tooltip either way.
           const [nameFirst, nameSecond] = chartNameLines(row.name)
@@ -88,9 +106,11 @@ function MetricChart({ metricKey, rows, generateLabel, generating, onGenerate }:
               <rect
                 className={css.metricBar}
                 data-status={row.status}
-                x={CHART_BAR_X}
+                data-negative={span.negative || undefined}
+                data-best={best === index || undefined}
+                x={CHART_BAR_X + (span.leftPct / 100) * CHART_BAR_MAX_WIDTH}
                 y={y + 4}
-                width={(widths[index] ?? 0) / 100 * CHART_BAR_MAX_WIDTH}
+                width={(span.widthPct / 100) * CHART_BAR_MAX_WIDTH}
                 height={14}
                 rx={4}
               />
@@ -124,7 +144,7 @@ export function ExperimentsView({
   readonly updateExperiment: (id: string, serverId: string | null) => Promise<ResearchFailureView | null>
   readonly saveExperiment: (experiment: ExperimentInput) => Promise<ResearchFailureView | null>
   /** The per-chart "generate paper figure" button (failures ride toasts). */
-  readonly generateMetricFigure: (metricKey: string, rows: readonly MetricChartRow[]) => Promise<void>
+  readonly generateMetricFigure: (metricKey: string, rows: readonly MetricChartRow[], direction: MetricDirection) => Promise<void>
   /** Reload the slice after a load failure (re-selects the current project). */
   readonly retry: () => void
   readonly t: ResearchT
@@ -154,6 +174,12 @@ export function ExperimentsView({
   const chartKeys = experiments !== null && experiments.status === 'ready'
     ? numericMetricKeys(experiments.list)
     : []
+  // Per-metric preference directions (#220), merged across the project's
+  // runs (newest record wins) — they drive the best-run shading and ride
+  // the exported SVG figure.
+  const chartDirections = experiments !== null && experiments.status === 'ready'
+    ? metricDirectionsOf(experiments.list)
+    : {}
   return (
     <div className={css.experiments}>
       <ViewHead title={t('tab.experiments')} subtitle={t('view.experiments.subtitle')} />
@@ -199,16 +225,18 @@ export function ExperimentsView({
               <div className={css.metricChartGrid}>
                 {chartKeys.map((key) => {
                   const rows = metricChartRows(experiments.list, key)
+                  const direction = chartDirections[key] ?? 'none'
                   return (
                     <MetricChart
                       key={key}
                       metricKey={key}
                       rows={rows}
+                      direction={direction}
                       generateLabel={t('experiments.genFigure')}
                       generating={generatingKey === key}
                       onGenerate={() => {
                         setGeneratingKey(key)
-                        void generateMetricFigure(key, rows).finally(() => { setGeneratingKey(null) })
+                        void generateMetricFigure(key, rows, direction).finally(() => { setGeneratingKey(null) })
                       }}
                     />
                   )
