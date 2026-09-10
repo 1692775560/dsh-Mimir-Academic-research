@@ -255,6 +255,7 @@ describe('importWiki replace', () => {
     await seedAll(target.domain)
     const before = buildWikiSnapshot(target.domain)
     const incoming = await harness()
+    await seed(incoming.domain)
     const snapshot = await exportOk(incoming.service)
     target.pool.failAfterSuccessfulWrites(writes)
     await expect(target.service.importWiki({ snapshot, mode: 'replace', confirmReplace: true }))
