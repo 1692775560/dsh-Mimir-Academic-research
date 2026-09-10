@@ -18,7 +18,7 @@
  */
 import { readFile } from 'node:fs/promises'
 import { existsSync, readFileSync, globSync } from 'node:fs'
-import { isBuiltin } from 'node:module'
+import { createRequire, isBuiltin } from 'node:module'
 import { basename, relative, resolve as resolvePath, sep, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import type { UserConfig } from 'tsdown'
@@ -278,6 +278,17 @@ function clientConfig(id: string, entry: string): UserConfig {
       'import.meta.env': JSON.stringify({ MODE: process.env.NODE_ENV ?? 'production' }),
     },
     plugins: [{
+      // Generated Remote contributions are browser-safe codec descriptors and
+      // must be embedded in this dynamic bundle.  The normal dependency pass
+      // otherwise leaves an unscoped workspace import such as
+      // `dsh-mimir/remote` as a runtime `require`, but the client module table
+      // only materializes plugin client bundles, not package export subpaths.
+      name: 'dsh-generated-remote-inline',
+      resolveId(source: string, importer: string | undefined) {
+        if (!GENERATED_REMOTE.test(source) || importer === undefined) return null
+        return createRequire(importer).resolve(source)
+      },
+    }, {
       // Bundle purity gate (build-time mirror of the module-edge rules): the
       // baseline and package-specific requests stay external, inline-safe wire layers
       // inline, and every other @deepseek-ai value import is a build error — a
