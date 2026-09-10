@@ -43,9 +43,22 @@ export class MemoryMediaPool {
    * untouched after a durability failure.
    */
   failNextWrites = 0
+  /** One-based write ordinal to reject once; zero disables ordinal injection. */
+  failWriteAt = 0
+  private writeCount = 0
+
+  /** Reject once after the requested number of subsequent writes succeed. */
+  failAfterSuccessfulWrites(count: number): void {
+    this.failWriteAt = this.writeCount + count + 1
+  }
 
   /** Consume one injected failure, throwing in a rejected write's place. */
   consumeInjectedFailure(): void {
+    this.writeCount += 1
+    if (this.writeCount === this.failWriteAt) {
+      this.failWriteAt = 0
+      throw new Error('injected write failure')
+    }
     if (this.failNextWrites > 0) {
       this.failNextWrites -= 1
       throw new Error('injected write failure')

@@ -38,6 +38,7 @@ import { TEMPLATE_DIR_NAME } from './services/venue.ts'
 import { meetingDeckPath } from './services/meeting.ts'
 import { ResearchService } from './service.ts'
 import { recoverInterruptedJobs } from './services/server.ts'
+import { recoverPendingWikiImport } from './services/wiki-admin.ts'
 import { registerResearchSkills } from './skills.ts'
 import { registerSxngSkill } from './sxng-skill.ts'
 import { startWikiBackupLoop } from './backup.ts'
@@ -1137,15 +1138,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const resolved = resolveConfig(config)
   const domain = await ctx.storageDomain.open(researchWikiDomainSpec)
   ctx.effect(() => () => domain.close(), 'mimir.domainClose')
+  const workspaceDir = resolve(process.cwd(), resolved.workspaceDir)
+  await recoverPendingWikiImport({ workspaceDir, domain })
   // Stored paper records with path-unsafe ids predate the whitelist (or were
   // hand-edited); quarantine them before any surface can join them into a
   // filesystem path. The schema stays permissive so their presence can never
   // abort the open itself.
   await quarantineUnsafePaperIds(domain, message => ctx.logger.warn(message))
-  await recoverInterruptedJobs({ workspaceDir: resolve(process.cwd(), resolved.workspaceDir), domain })
+  await recoverInterruptedJobs({ workspaceDir, domain })
 
   const deps: ResearchCommandDeps = {
-    workspaceDir: resolve(process.cwd(), resolved.workspaceDir),
+    workspaceDir,
     domain,
     reviewer: resolved.reviewer,
     latex: resolved.latex,

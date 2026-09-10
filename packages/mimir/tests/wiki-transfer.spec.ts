@@ -7,7 +7,7 @@
  * validators in wiki-snapshot.ts. Memory-backed domain, no mocks.
  */
 
-import { mkdtemp } from 'node:fs/promises'
+import { mkdtemp, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
@@ -18,31 +18,32 @@ import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
 import {
-  snapshotEnvelopeError, snapshotTables, tableRowsError,
+  buildWikiSnapshot, snapshotEnvelopeError, snapshotTables, tableRowsError,
   WIKI_SNAPSHOT_FORMAT, WIKI_SNAPSHOT_VERSION, WIKI_SNAPSHOT_MIN_VERSION,
 } from '../src/wiki-snapshot.ts'
+import { recoverPendingWikiImport, WIKI_IMPORT_RECOVERY_FILE } from '../src/services/wiki-admin.ts'
 import { appendEvent, PANEL_ACTOR } from '../src/ledger.ts'
 import type {
   ExperimentRecord, FigureRecord, PaperRecord, ProjectRecord, ResearchWikiSnapshot, ServerRecord,
 } from '../src/types.ts'
 
 /** Boot a service over a memory-backed domain and a fresh temp workspace. */
-async function harness() {
+async function harness(pool = new MemoryMediaPool(), workspaceDir?: string) {
   const ctx = new Context()
   await ctx.plugin(Storage)
-  const backend = new MemoryStorageBackend(new MemoryMediaPool())
+  const backend = new MemoryStorageBackend(pool)
   ctx.storage.backend.register('memory', backend)
   ctx.provide(storageBackendServiceKey('memory'), backend)
   const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })
   ctx.storage.mount('domain', facility)
   const domain = await facility.open(researchWikiDomainSpec)
-  const workspaceDir = await mkdtemp(join(tmpdir(), 'mimir-wiki-'))
+  workspaceDir ??= await mkdtemp(join(tmpdir(), 'mimir-wiki-'))
   const service = new ResearchService(ctx, {
     workspaceDir,
     domain,
     latex: { engine: 'auto', timeoutMs: 1000 },
   })
-  return { ctx, domain, service }
+  return { ctx, domain, pool, service, workspaceDir }
 }
 
 const PAPER: PaperRecord = {
@@ -96,13 +97,27 @@ const FIGURE: FigureRecord = {
   createdAt: '2026-08-20T00:00:00.000Z',
 }
 
-/** Seed one record into five of the seven tables. */
+const IDEA = {
+  id: 'i1', title: 'Idea', hypothesis: 'It works.', status: 'active', createdAt: '2026-08-01T00:00:00.000Z',
+} as const
+
+const CLAIM = { id: 'c1', text: 'Claim', status: 'supported', evidence: 'Evidence' } as const
+
+/** Seed one record into five snapshot tables. */
 async function seed(domain: Awaited<ReturnType<typeof harness>>['domain']): Promise<void> {
   await domain.table('papers').put(PAPER.arxivId, PAPER)
   await domain.table('projects').put(PROJECT.id, PROJECT)
   await domain.table('experiments').put(EXPERIMENT.id, EXPERIMENT)
   await domain.table('servers').put(SERVER.id, SERVER)
   await domain.table('figures').put(FIGURE.id, FIGURE)
+}
+
+/** Fill the three remaining snapshot tables for all-table recovery checks. */
+async function seedAll(domain: Awaited<ReturnType<typeof harness>>['domain']): Promise<void> {
+  await seed(domain)
+  await domain.table('ideas').put(IDEA.id, IDEA)
+  await domain.table('claims').put(CLAIM.id, CLAIM)
+  await appendEvent(domain, { actor: PANEL_ACTOR, action: 'knowledge.claim.set', refs: { claimId: CLAIM.id }, payload: {} })
 }
 
 /** Export through the service and assert the envelope; returns the snapshot. */
@@ -181,6 +196,12 @@ describe('importWiki merge', () => {
 })
 
 describe('importWiki replace', () => {
+  it('treats an absent recovery journal in a missing workspace as a no-op', async () => {
+    const { domain } = await harness()
+    await expect(recoverPendingWikiImport({ domain, workspaceDir: join(tmpdir(), 'mimir-missing-workspace') }))
+      .resolves.toBeUndefined()
+  })
+
   it('requires confirmReplace: true', async () => {
     const { domain, service } = await harness()
     await seed(domain)
@@ -213,6 +234,59 @@ describe('importWiki replace', () => {
     expect(domain.table('experiments').get(EXPERIMENT.id)).toBeUndefined()
     expect(domain.table('projects').get(PROJECT.id)).toEqual(PROJECT)
     expect(domain.table('figures').get(FIGURE.id)).toEqual(FIGURE)
+  })
+
+  it('round-trips every snapshot table into an empty domain', async () => {
+    const source = await harness()
+    await seedAll(source.domain)
+    const snapshot = await exportOk(source.service)
+    const target = await harness()
+    await target.service.importWiki({ snapshot, mode: 'replace', confirmReplace: true })
+    for (const name of snapshotTables(snapshot)) {
+      for (const row of snapshot.tables[name]) {
+        const key = name === 'papers' ? row.arxivId : row.id
+        expect(target.domain.table(name).get(key)).toEqual(row)
+      }
+    }
+  })
+
+  it.each([0, 4, 8])('restores the complete old state when replace fails after %i writes', async (writes) => {
+    const target = await harness()
+    await seedAll(target.domain)
+    const before = buildWikiSnapshot(target.domain)
+    const incoming = await harness()
+    const snapshot = await exportOk(incoming.service)
+    target.pool.failAfterSuccessfulWrites(writes)
+    await expect(target.service.importWiki({ snapshot, mode: 'replace', confirmReplace: true }))
+      .rejects.toThrow('injected write failure')
+    for (const name of snapshotTables(before)) {
+      expect([...target.domain.table(name).entries()].map(([, row]) => row)).toEqual(before.tables[name])
+    }
+  })
+
+  it('restores a pending replace journal after restart', async () => {
+    const pool = new MemoryMediaPool()
+    const first = await harness(pool)
+    await seed(first.domain)
+    const before = await exportOk(first.service)
+    await writeFile(join(first.workspaceDir, WIKI_IMPORT_RECOVERY_FILE), JSON.stringify(before))
+    await first.domain.table('papers').delete(PAPER.arxivId)
+    await first.domain.close()
+    const restarted = await harness(pool, first.workspaceDir)
+    await recoverPendingWikiImport({ domain: restarted.domain, workspaceDir: restarted.workspaceDir })
+    for (const name of snapshotTables(before)) {
+      expect([...restarted.domain.table(name).entries()].map(([, row]) => row)).toEqual(before.tables[name])
+    }
+  })
+
+  it('still skips path-unsafe paper ids during replacement', async () => {
+    const target = await harness()
+    const snapshot = await exportOk(target.service)
+    const unsafe = { ...PAPER, arxivId: '../escape' }
+    const incoming = { ...snapshot, tables: { ...snapshot.tables, papers: [unsafe] } }
+    const outcome = await target.service.importWiki({ snapshot: incoming, mode: 'replace', confirmReplace: true })
+    expect(outcome.ok).toBe(true)
+    expect(target.domain.table('papers').get(unsafe.arxivId)).toBeUndefined()
   })
 })
 
