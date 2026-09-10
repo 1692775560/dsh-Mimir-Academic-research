@@ -14,6 +14,7 @@ import { connect } from 'node:net'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { emitEvent, PANEL_ACTOR, SERVICE_ACTOR } from '../ledger.ts'
+import { isActiveJobStatus } from '../job-lifecycle.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type {
   ExperimentJobOutcome,
@@ -39,6 +40,15 @@ export interface ServerDeps {
   /** Absolute research workspace root (for the settled-job experiment log append). */
   readonly workspaceDir: string
   readonly domain: ResearchWikiDomain
+  /**
+   * Job-limit overrides (tests); absent, {@link SSH_JOB_TIMEOUT_MS} and
+   * {@link SSH_JOB_MAX_BUFFER_BYTES} apply — see job-lifecycle.ts for how
+   * exceeding either settles the record.
+   */
+  readonly jobs?: {
+    readonly timeoutMs?: number | undefined
+    readonly maxBufferBytes?: number | undefined
+  } | undefined
 }
 
 /** TCP reachability probe timeout; part of the checkServer probe contract. */
@@ -52,9 +62,17 @@ const NVIDIA_SMI_QUERY = 'nvidia-smi --query-gpu=name,utilization.gpu,memory.use
 
 /** Hard cap of one submitted command line (the durable record stores it verbatim). */
 const JOB_COMMAND_MAX_CHARS = 4000
-/** Kill timeout of one remote job's ssh session. */
+/**
+ * Kill timeout of one remote job's ssh session. Hitting it settles the job
+ * `unknown` (#225): the session is dropped, so the remote outcome — including
+ * whether the process still runs — was never observed.
+ */
 const SSH_JOB_TIMEOUT_MS = 30 * 60_000
-/** execFile buffer cap of one job's combined stdout/stderr. */
+/**
+ * execFile buffer cap of one job's combined stdout/stderr. Hitting it kills
+ * the session and settles the job `failed` with an explicit note (#225) —
+ * output capture never silently truncates.
+ */
 const SSH_JOB_MAX_BUFFER_BYTES = 4 * 1024 * 1024
 /** Characters kept of one settled job's stdout/stderr tails. */
 const JOB_OUTPUT_TAIL_CHARS = 8192
@@ -350,7 +368,7 @@ export async function recoverInterruptedJobs(deps: ServerDeps): Promise<void> {
   const experiments = deps.domain.table('experiments')
   const now = new Date().toISOString()
   for (const [, job] of jobs.entries()) {
-    if (job.status !== 'queued' && job.status !== 'running') continue
+    if (!isActiveJobStatus(job.status)) continue
     const recovered: JobRecord = {
       ...job,
       status: 'interrupted',
@@ -487,7 +505,7 @@ export async function deleteJob(
     return rejected({ code: 'job-not-found', id: request.id })
   }
   const abort = state.jobAborts.get(request.id)
-  if (abort !== undefined && (existing.status === 'queued' || existing.status === 'running')) {
+  if (abort !== undefined && isActiveJobStatus(existing.status)) {
     // Deleting an active row is a cancel request: the local SSH session is
     // aborted and the record settles `cancelled` (the remote process outcome
     // is unknowable once the session drops). The row stays visible until that
@@ -502,11 +520,13 @@ export async function deleteJob(
 
 /**
  * Drive one queued job to its terminal state over a batch-mode ssh call:
- * flip the record `running`, wait on the remote command (killed after
- * {@link SSH_JOB_TIMEOUT_MS} or when the caller aborts), then settle
- * `succeeded` (exit 0), `failed` with the output tails, or `cancelled`
- * when the local session was aborted. Never rejects — the record is the
- * panel's only channel.
+ * flip the record `running`, wait on the remote command, then settle per the
+ * lifecycle contract (#225, see job-lifecycle.ts): `succeeded` (exit 0),
+ * `failed` (remote non-zero exit, a pre-command session failure, or the
+ * capture cap hit — with an explicit note), `unknown` (the duration-cap
+ * kill: observation lost, remote possibly alive), or `cancelled` /
+ * `interrupted` when the local session was aborted. Never rejects — the
+ * record is the panel's only channel.
  * @param deps - open wiki domain.
  * @param state - owning service state and SSH abort handles.
  * @param id - the job record id.
@@ -557,8 +577,8 @@ async function runJob(
       `${server.username}@${server.host}`,
       running.command,
     ], {
-      timeout: SSH_JOB_TIMEOUT_MS,
-      maxBuffer: SSH_JOB_MAX_BUFFER_BYTES,
+      timeout: deps.jobs?.timeoutMs ?? SSH_JOB_TIMEOUT_MS,
+      maxBuffer: deps.jobs?.maxBufferBytes ?? SSH_JOB_MAX_BUFFER_BYTES,
       signal,
     })
     settled = {
@@ -576,16 +596,40 @@ async function runJob(
     // own, so a numeric code IS the remote exit code. A non-numeric code
     // means the session itself failed (connect refused, spawn error, or
     // the timeout kill) — then the message stands in for stderr.
-    const carrier = error as { code?: unknown; stdout?: unknown; stderr?: unknown }
-    const exitCode = typeof carrier.code === 'number' ? carrier.code : null
+    const carrier = error as { code?: unknown; killed?: unknown; stdout?: unknown; stderr?: unknown }
     const stdout = typeof carrier.stdout === 'string' ? carrier.stdout : ''
-    const stderr = typeof carrier.stderr === 'string' && carrier.stderr.trim() !== ''
-      ? carrier.stderr
-      : error instanceof Error ? error.message : 'ssh job failed'
-    settled = {
-      ...running, status: 'failed', exitCode,
-      stdoutTail: tailOf(stdout), stderrTail: tailOf(stderr),
-      finishedAt: new Date().toISOString(),
+    const stderrText = typeof carrier.stderr === 'string' ? carrier.stderr : ''
+    // The lifecycle contract (#225) splits unobserved sessions by cause.
+    if (carrier.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      // Output past the capture cap: the session is killed and the record
+      // fails LOUDLY — capture never silently truncates.
+      const capBytes = deps.jobs?.maxBufferBytes ?? SSH_JOB_MAX_BUFFER_BYTES
+      settled = {
+        ...running, status: 'failed', exitCode: null,
+        stdoutTail: tailOf(stdout),
+        stderrTail: tailOf(`${stderrText}\noutput exceeded the ${String(Math.round(capBytes / 1024 / 1024))} MiB capture limit; the session was killed`.trim()),
+        finishedAt: new Date().toISOString(),
+      }
+    } else if (carrier.killed === true && typeof carrier.code !== 'number') {
+      // The duration-cap kill: observation was lost without user intent, so
+      // the job settles `unknown` — the remote process may still be running.
+      const capMs = deps.jobs?.timeoutMs ?? SSH_JOB_TIMEOUT_MS
+      settled = {
+        ...running, status: 'unknown', exitCode: null,
+        stdoutTail: tailOf(stdout),
+        stderrTail: tailOf(`${stderrText}\nsession exceeded the ${String(Math.round(capMs / 60_000))}-minute limit and was dropped; the remote process may still be running (outcome unobserved)`.trim()),
+        finishedAt: new Date().toISOString(),
+      }
+    } else {
+      const exitCode = typeof carrier.code === 'number' ? carrier.code : null
+      const stderr = stderrText.trim() !== ''
+        ? stderrText
+        : error instanceof Error ? error.message : 'ssh job failed'
+      settled = {
+        ...running, status: 'failed', exitCode,
+        stdoutTail: tailOf(stdout), stderrTail: tailOf(stderr),
+        finishedAt: new Date().toISOString(),
+      }
     }
   }
   await finishJob(deps, state, settled)
@@ -681,6 +725,11 @@ async function finishJob(deps: ServerDeps, state: ServiceState, settled: JobReco
  * trailing log excerpt) as the record's `lastJob`, and append one line to
  * the workspace's `EXPERIMENT_LOG.md`. An unlinked or deleted experiment
  * is skipped; the log append is best-effort and never fails the settle.
+ *
+ * The experiment lifecycle is deliberately coarser than the job's (#225):
+ * `cancelled`/`interrupted`/`unknown` all land as `failed` there, because
+ * the run produced no usable result — the job record keeps the precise
+ * cause.
  *
  * Stale-settle guard: when a NEWER job is linked to the same experiment
  * (submitted after this one, in any status), that job owns the

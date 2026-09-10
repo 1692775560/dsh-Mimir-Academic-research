@@ -10,14 +10,22 @@
  */
 
 import { useState } from 'react'
-import type { ExperimentInput, ExperimentRecord, ExperimentStatus } from 'dsh-mimir/types'
+import type { ExperimentInput, ExperimentRecord, ExperimentStatus, MetricDirection } from 'dsh-mimir/types'
 import type { ResearchFailureView, ResearchServersView } from './controller.ts'
-import { metricRowsFromMetrics, metricsFromRows, type MetricRow } from './experiment-form.ts'
+import {
+  directionsFromRows,
+  metricRowsFromMetrics,
+  metricsFromRows,
+  type MetricRow,
+} from './experiment-form.ts'
 import type { ResearchT } from './view-common.ts'
 import css from './ResearchPanel.module.css'
 
 /** Status options of the select, in lifecycle order. */
 const STATUSES: readonly ExperimentStatus[] = ['running', 'success', 'failed']
+
+/** Direction options of each metric row's select (#220), in declaration order. */
+const DIRECTIONS: readonly MetricDirection[] = ['none', 'min', 'max']
 
 /**
  * @param props - the owning project, the record being edited (null =
@@ -36,7 +44,7 @@ export function ExperimentForm({ projectId, editing, servers, saveExperiment, on
   const [name, setName] = useState(editing?.name ?? '')
   const [status, setStatus] = useState<ExperimentStatus>(editing?.status ?? 'running')
   const [rows, setRows] = useState<MetricRow[]>(() =>
-    editing === null ? [] : metricRowsFromMetrics(editing.metrics))
+    editing === null ? [] : metricRowsFromMetrics(editing.metrics, editing.metricDirections))
   const [serverId, setServerId] = useState(editing?.serverId ?? '')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -58,6 +66,7 @@ export function ExperimentForm({ projectId, editing, servers, saveExperiment, on
       name: name.trim(),
       status,
       metrics: metricsFromRows(rows),
+      metricDirections: directionsFromRows(rows),
       serverId: serverId === '' ? undefined : serverId,
     }).then((failure) => {
       setBusy(false)
@@ -126,6 +135,16 @@ export function ExperimentForm({ projectId, editing, servers, saveExperiment, on
                 placeholder={t('experiments.metricValue')}
                 onChange={event => { patchRow(index, { value: event.target.value }) }}
               />
+              <select
+                className={css.input}
+                aria-label={t('experiments.direction')}
+                value={row.direction}
+                onChange={event => { patchRow(index, { direction: event.target.value as MetricDirection }) }}
+              >
+                {DIRECTIONS.map(option => (
+                  <option key={option} value={option}>{t(`metricDirection.${option}`)}</option>
+                ))}
+              </select>
               <button
                 type="button"
                 className={css.btn}
@@ -140,7 +159,7 @@ export function ExperimentForm({ projectId, editing, servers, saveExperiment, on
             <button
               type="button"
               className={css.btn}
-              onClick={() => { setRows(prev => [...prev, { key: '', value: '' }]) }}
+              onClick={() => { setRows(prev => [...prev, { key: '', value: '', direction: 'none' }]) }}
             >
               {t('experiments.addMetricRow')}
             </button>

@@ -148,8 +148,16 @@ export interface ProjectRecord {
 export type ExperimentStatus = 'running' | 'success' | 'failed'
 
 /**
+ * Preference direction of one experiment metric (#220): `min` = lower is
+ * better (loss), `max` = higher is better (accuracy), `none` = unordered —
+ * the comparison charts highlight a best run only for `min`/`max`.
+ */
+export type MetricDirection = 'min' | 'max' | 'none'
+
+/**
  * The settled outcome of the remote job most recently linked to one
- * experiment, written back when the job reaches `succeeded`/`failed`.
+ * experiment, written back when the job reaches `succeeded`/`failed`/
+ * `cancelled` (the schema widened for `cancelled` in #247).
  */
 export interface ExperimentJobOutcome {
   /** The settled job record's id. */
@@ -174,6 +182,13 @@ export interface ExperimentRecord {
   readonly status: ExperimentStatus
   /** Scalar metrics keyed by name (accuracy, loss, wall-clock minutes…). */
   readonly metrics: Record<string, number | string>
+  /**
+   * Per-metric preference direction (#220): `min` = lower is better (loss),
+   * `max` = higher is better (accuracy), `none` = no preference. Only keys
+   * present in `metrics` are meaningful; absent/omitted reads as `none`.
+   * Drives the comparison chart's best-run highlight and the exported SVG.
+   */
+  readonly metricDirections?: Record<string, MetricDirection> | undefined
   /** Log file path relative to the workspace root, when the run wrote one. */
   readonly logPath?: string | undefined
   /** Remembered server the run executed on, when linked. */
@@ -187,8 +202,13 @@ export interface ExperimentRecord {
   readonly updatedAt: string
 }
 
-/** Lifecycle of one remote job submitted over ssh. */
-export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted'
+/**
+ * Lifecycle of one remote job submitted over ssh. The authoritative contract
+ * (what each state means, which transitions exist, how the linked experiment
+ * maps them) lives in `job-lifecycle.ts` (#225); UI, persistence, and the
+ * ledger all consume this union.
+ */
+export type JobStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled' | 'interrupted' | 'unknown'
 
 /** One remote command submitted to a remembered server over ssh. */
 export interface JobRecord {
@@ -287,6 +307,13 @@ export interface ResearchCompileStatusView {
   readonly engine: LatexEngineKind | null
   /** mtime (ms) of the produced `main.pdf`; null until a successful compile. */
   readonly pdfUpdatedAt: number | null
+  /**
+   * True once a compile settled in this process lifetime. False means the
+   * view was never observed live: either nothing compiled yet (`idle`), or
+   * the status was backfilled from an on-disk PDF after a restart (#221) —
+   * the UI must not read the backfill as "compiled just now".
+   */
+  readonly observed: boolean
 }
 
 /** Business failure of one `research` Remote call. */
@@ -597,6 +624,8 @@ export interface ExperimentInput {
   readonly status: ExperimentStatus
   /** Scalar metrics keyed by name (numbers or strings). */
   readonly metrics: Record<string, number | string>
+  /** Per-metric preference direction (#220); omitted preserves the stored map on update. */
+  readonly metricDirections?: Record<string, MetricDirection> | undefined
   readonly logPath?: string | undefined
   readonly serverId?: string | undefined
 }
@@ -960,6 +989,26 @@ export interface ResearchBackupStatusView {
 
 /** `listBackups` result: the backup status line for the overview. */
 export type ResearchListBackupsResult = ResearchResult<{ readonly backup: ResearchBackupStatusView }>
+
+/**
+ * Panel-visible health of one scheduled background task (#223): the instants
+ * of the last settled passes, the live failure streak, and a short summary
+ * of the most recent failure. `consecutiveFailures > 0` means the task is
+ * backing off; the loop itself never stops.
+ */
+export interface ResearchScheduledTaskView {
+  readonly name: string
+  /** ISO instant of the last successful pass; null while never succeeded. */
+  readonly lastSuccessAt: string | null
+  /** ISO instant of the last failed pass; null while never failed. */
+  readonly lastFailureAt: string | null
+  readonly consecutiveFailures: number
+  /** Short summary of the last failure; null while healthy. */
+  readonly lastError: string | null
+}
+
+/** `getTaskHealth` result: every scheduled task the plugin has seen a pass of. */
+export type ResearchTaskHealthResult = ResearchResult<{ readonly tasks: readonly ResearchScheduledTaskView[] }>
 
 /**
  * Research-ledger (audit trail) types. The `events` wiki table is

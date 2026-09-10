@@ -582,12 +582,20 @@ export async function generateMeetingDeck(
     if (imageGen.apiKey !== '') {
       const paperDir = project.paperDir ?? DEFAULT_PAPER_DIR
       const illustrate = async (stem: string, caption: string, prompt: string): Promise<string | undefined> => {
+        // Outside the try: a caller cancel must abort the deck, not read as
+        // "this one image failed" (#247). The fetch itself also observes the
+        // signal, racing the per-request timeout.
+        signal?.throwIfAborted()
         try {
-          const image = await generateImage(imageGen, prompt)
+          const image = await generateImage(imageGen, prompt, undefined, signal)
           const relPath = await saveDeckIllustration(deps, project.id, paperDir, stem, caption, image)
           illustrations += 1
           return join(deps.workspaceDir, paperDir, relPath)
-        } catch {
+        } catch (error) {
+          // An aborted fetch still means the caller cancelled: rethrow so the
+          // deck stops instead of silently shipping without illustrations.
+          if (signal?.aborted === true) throw signal.reason
+          if (error instanceof Error && error.name === 'AbortError') throw error
           return undefined
         }
       }

@@ -42,6 +42,7 @@ import { registerResearchSkills } from './skills.ts'
 import { registerSxngSkill } from './sxng-skill.ts'
 import { startWikiBackupLoop } from './backup.ts'
 import { startArxivSubscriptionLoop } from './arxiv-subscriptions.ts'
+import { TaskHealthRegistry } from './task-health.ts'
 import { createWikiChangeHub, createWikiEventsHandler } from './wiki-events.ts'
 import { startVenueDeadlineLoop } from './services/venue-deadlines.ts'
 import { createVenueSearchTool } from './tools/venue.ts'
@@ -1201,6 +1202,9 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // wired further down; the service config below already carries the notify
   // hook for file-side writes.
   const wikiChangeHub = createWikiChangeHub()
+  // Shared scheduled-task health book (#223): the three timer loops record
+  // every pass here; the service exposes the snapshot via `getTaskHealth`.
+  const taskHealth = new TaskHealthRegistry()
 
   const serviceConfig: ResearchServiceConfig = {
     workspaceDir: deps.workspaceDir,
@@ -1209,6 +1213,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     backup: { ...resolved.backup, dir: backupDir },
     ...(searchConfig === undefined ? {} : { search: searchConfig }),
     zotero: resolved.zotero,
+    taskHealth,
     notifyWikiChange: event => wikiChangeHub.publish(event),
   }
 
@@ -1234,6 +1239,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
         dir: backupDir,
         intervalMs: resolved.backup.intervalMinutes * 60_000,
         keep: resolved.backup.keep,
+        health: taskHealth,
         onError: (error) => { console.warn('[mimir] wiki backup failed:', error) },
       }),
       'mimir.wikiBackup',
@@ -1248,6 +1254,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       () => startArxivSubscriptionLoop({
         workspaceDir: deps.workspaceDir,
         intervalMs: resolved.subscriptions.intervalMinutes * 60_000,
+        health: taskHealth,
         onError: (error) => { console.warn('[mimir] arXiv subscription check failed:', error) },
       }),
       'mimir.arxivSubscriptions',
@@ -1260,6 +1267,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.effect(
     () => startVenueDeadlineLoop({
       workspaceDir: deps.workspaceDir,
+      health: taskHealth,
       onError: (error) => { console.warn('[mimir] venue deadline refresh failed:', error) },
     }),
     'mimir.venueDeadlines',

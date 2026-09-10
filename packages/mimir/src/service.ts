@@ -109,8 +109,10 @@ import type {
   SectionOutlineTitles,
   ServerInput,
   SubsectionMove,
+  ResearchTaskHealthResult,
   ResearchWikiChangeEvent,
 } from './types.ts'
+import type { TaskHealthRegistry } from './task-health.ts'
 import * as paper from './services/paper.ts'
 import * as paperSnapshots from './services/paper-snapshots.ts'
 import * as library from './services/library.ts'
@@ -127,7 +129,7 @@ import * as ledger from './services/ledger.ts'
 import type { MeetingDeps } from './services/meeting.ts'
 import * as imagegen from './services/image-gen.ts'
 import * as sxngConfig from './services/sxng-config.ts'
-import type { ServiceState } from './services/common.ts'
+import { abortLongTasks, linkLongTask, success, type ServiceState } from './services/common.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -192,6 +194,20 @@ export interface ResearchServiceConfig {
    * instead. Absent in tests and direct constructions.
    */
   readonly notifyWikiChange?: ((event: ResearchWikiChangeEvent) => void) | undefined
+  /**
+   * Shared scheduled-task health book (#223) the plugin's timer loops record
+   * into; absent in tests and direct constructions — `getTaskHealth` then
+   * reports an empty list.
+   */
+  readonly taskHealth?: TaskHealthRegistry | undefined
+  /**
+   * Job-limit overrides (tests): the ssh session kill timeout and the output
+   * capture cap; absent, the documented defaults apply (#225).
+   */
+  readonly jobs?: {
+    readonly timeoutMs?: number | undefined
+    readonly maxBufferBytes?: number | undefined
+  } | undefined
 }
 
 /**
@@ -224,19 +240,26 @@ export class ResearchService extends TypertRemoteService {
       ...(config.zotero === undefined ? {} : { zotero: config.zotero }),
       ...(config.meetings === undefined ? {} : { meetings: config.meetings }),
       ...(config.notifyWikiChange === undefined ? {} : { notifyWikiChange: config.notifyWikiChange }),
+      ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
+      ...(config.jobs === undefined ? {} : { jobs: config.jobs }),
     }
     this.state = {
       compileStatus: new Map(),
       jobSeq: 0,
       jobAborts: new Map(),
       jobStopStatus: new Map(),
+      longTasks: new Set(),
     }
-    // The service owns the SSH sessions it spawns: when the fiber is torn
-    // down (host restart / plugin unload / dispose), abort every active job
-    // so a stale child process cannot outlive the service. The abort rides
-    // the job's own signal; each settle marks the record `interrupted`
-    // (never a fabricated succeed/fail for a disconnected session).
+    // The service owns the SSH sessions and long tasks it spawns: when the
+    // fiber is torn down (host restart / plugin unload / dispose), abort
+    // every active job so a stale child process cannot outlive the service,
+    // and abort every in-flight long task (compiles, deck generations) so a
+    // disconnected panel's work cannot keep burning CPU/API quota (#247).
+    // The job abort rides the job's own signal; each settle marks the record
+    // `interrupted` (never a fabricated succeed/fail for a disconnected
+    // session).
     ctx.fiber.effect(() => () => {
+      abortLongTasks(this.state)
       void server.stopOwnedJobs(this.state)
     }, 'research.jobsStopOnDispose')
   }
@@ -467,9 +490,11 @@ export class ResearchService extends TypertRemoteService {
   }
 
   // paper domain: compile status flows through this.state
+  // Long task (#247): panel cancel and host dispose share one abort path.
   @Remote('compile')
   compile(request: { projectId?: string; dir?: string | undefined }, signal: AbortSignal): Promise<ResearchCompileResult> {
-    return paper.compile(this.deps, this.state, request, signal)
+    const task = linkLongTask(this.state, signal)
+    return paper.compile(this.deps, this.state, request, task.signal).finally(task.done)
   }
 
   @Remote('getCompileStatus')
@@ -594,7 +619,10 @@ export class ResearchService extends TypertRemoteService {
     include?: Partial<MeetingInclude> | undefined
     aiIllustrations?: boolean | undefined
   }, signal: AbortSignal): Promise<ResearchGenerateMeetingResult> {
-    return meeting.generateMeetingDeck(this.deps, request, signal)
+    // Long task (#247): figure extraction, AI illustration fetches, and the
+    // pptx render all observe this one linked signal.
+    const task = linkLongTask(this.state, signal)
+    return meeting.generateMeetingDeck(this.deps, request, task.signal).finally(task.done)
   }
 
   @Remote('getImageGenConfig')
@@ -703,6 +731,16 @@ export class ResearchService extends TypertRemoteService {
   @Remote('listBackups')
   listBackups(): Promise<ResearchListBackupsResult> {
     return wikiAdmin.listBackups(this.deps)
+  }
+
+  /**
+   * Scheduled-task health (#223): the panel-visible snapshot of every timer
+   * loop's recorded passes — last success/failure, the failure streak behind
+   * the backoff, and a short error summary. Empty until a loop has run.
+   */
+  @Remote('getTaskHealth')
+  getTaskHealth(): Promise<ResearchTaskHealthResult> {
+    return Promise.resolve(success({ tasks: this.deps.taskHealth?.snapshot() ?? Object.freeze([]) }))
   }
 
   // ledger domain: the append-only growth record (query + progress report)

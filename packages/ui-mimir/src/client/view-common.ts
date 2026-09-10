@@ -10,7 +10,7 @@
  * @module dsh-client-ui-mimir/client/view-common
  */
 
-import type { BibEntry, ExperimentRecord, ExperimentStatus, OutlineNode, PaperRecord, ProjectStage, SectionMove, SectionOutlineTitles, ServerRecord, SubsectionMove } from 'dsh-mimir/types'
+import type { BibEntry, ExperimentRecord, ExperimentStatus, MetricDirection, OutlineNode, PaperRecord, ProjectStage, SectionMove, SectionOutlineTitles, ServerRecord, SubsectionMove } from 'dsh-mimir/types'
 import type { ResearchFailureView, ResearchSaveState } from './controller.ts'
 import type { ResearchKey } from './locales.ts'
 
@@ -156,15 +156,77 @@ export function metricChartRows(experiments: readonly ExperimentRecord[], key: s
   }))
 }
 
+/** One bar's geometry in a zero-baseline chart: percentages of the bar lane. */
+export interface BarSpan {
+  /** Left edge of the bar (0–100). */
+  readonly leftPct: number
+  /** Width of the bar (0–100). */
+  readonly widthPct: number
+  /** True for a negative value: the bar extends LEFT of the zero line. */
+  readonly negative: boolean
+}
+
 /**
- * Bar widths (0–100) for one chart's values, normalized to the largest.
- * Negative values and an all-non-positive chart (e.g. a zero-only metric)
- * collapse to zero-width bars.
+ * Bar geometry (percentages) for one chart's values on a ZERO baseline
+ * (#220): the lane spans [min(0, values), max(0, values)], so negative bars
+ * extend left of the zero line and positive bars right. An all-zero chart
+ * yields zero-width bars. Both the panel chart and the exported SVG figure
+ * consume this one rule, so they can never disagree.
  */
-export function barWidthPercents(values: readonly number[]): number[] {
-  const max = Math.max(...values, 0)
-  if (max <= 0) return values.map(() => 0)
-  return values.map(value => Math.max(0, Math.min(100, (value / max) * 100)))
+export function barSpans(values: readonly number[]): BarSpan[] {
+  const lo = Math.min(0, ...values)
+  const hi = Math.max(0, ...values)
+  const span = hi - lo
+  if (span <= 0) return values.map(() => ({ leftPct: 0, widthPct: 0, negative: false }))
+  return values.map(value => ({
+    leftPct: ((Math.min(value, 0) - lo) / span) * 100,
+    widthPct: (Math.abs(value) / span) * 100,
+    negative: value < 0,
+  }))
+}
+
+/**
+ * Zero-line position (percent of the bar lane) for one chart's values, or
+ * null when every value is non-negative (the lane's left edge IS the zero
+ * line, which both renderers already draw).
+ */
+export function zeroLinePct(values: readonly number[]): number | null {
+  if (!values.some(value => value < 0)) return null
+  const lo = Math.min(0, ...values)
+  const hi = Math.max(0, ...values)
+  const span = hi - lo
+  return span <= 0 ? null : ((0 - lo) / span) * 100
+}
+
+/**
+ * Index of a chart's best run under the metric's direction (#220): the
+ * smallest value for `min`, the largest for `max`, and null for `none`
+ * (unordered metric — no best exists). Ties keep the earliest row.
+ */
+export function bestRowIndex(rows: readonly MetricChartRow[], direction: MetricDirection): number | null {
+  if (direction === 'none' || rows.length === 0) return null
+  let best = 0
+  rows.forEach((row, index) => {
+    const top = rows[best]
+    if (top !== undefined && (direction === 'min' ? row.value < top.value : row.value > top.value)) best = index
+  })
+  return best
+}
+
+/**
+ * Per-metric directions merged across one project's experiments (#220):
+ * later-updated records win, so the newest run's form edits govern the
+ * chart. Records predating the field contribute nothing.
+ */
+export function metricDirectionsOf(experiments: readonly ExperimentRecord[]): Record<string, MetricDirection> {
+  const directions: Record<string, MetricDirection> = {}
+  const sorted = [...experiments].sort((left, right) => left.updatedAt.localeCompare(right.updatedAt))
+  for (const record of sorted) {
+    for (const [key, direction] of Object.entries(record.metricDirections ?? {})) {
+      directions[key] = direction
+    }
+  }
+  return directions
 }
 
 /**
