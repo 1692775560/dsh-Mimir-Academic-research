@@ -156,7 +156,8 @@ export type MetricDirection = 'min' | 'max' | 'none'
 
 /**
  * The settled outcome of the remote job most recently linked to one
- * experiment, written back when the job reaches `succeeded`/`failed`.
+ * experiment, written back when the job reaches `succeeded`/`failed`/
+ * `cancelled` (the schema widened for `cancelled` in #247).
  */
 export interface ExperimentJobOutcome {
   /** The settled job record's id. */

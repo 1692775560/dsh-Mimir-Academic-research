@@ -100,9 +100,11 @@ export const experimentRecord = z.object({
   serverId: z.string().optional(),
   // Added WITHOUT a version bump: `.optional()` leaves the field absent on
   // records that predate it, so existing v2 JSON stores keep loading.
+  // 'cancelled' added to the enum (#247): writeBackExperiment already wrote
+  // it for user-cancelled linked jobs, and the narrow enum rejected the put.
   lastJob: z.object({
     jobId: z.string(),
-    status: z.enum(['succeeded', 'failed']),
+    status: z.enum(['succeeded', 'failed', 'cancelled']),
     exitCode: z.number().int().nullable(),
     durationMs: z.number().nonnegative().nullable(),
     finishedAt: z.string(),

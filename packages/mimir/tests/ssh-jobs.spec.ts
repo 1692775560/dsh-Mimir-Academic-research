@@ -478,6 +478,44 @@ describe('ResearchService.listJobs / deleteJob', () => {
     expect(settled.stderrTail).toContain('capture limit')
   })
 
+  it('writes a cancelled linked job back to the experiment without a schema rejection (#247)', async () => {
+    const { domain, service } = await harness()
+    await stubFakeSsh()
+    const created = await service.saveServer({ server: SERVER_INPUT })
+    if (!created.ok) throw new Error('create failed')
+    await domain.table('experiments').put(EXPERIMENT.id, EXPERIMENT)
+    const submitted = await service.submitJob({
+      serverId: created.value.server.id,
+      command: 'mimir-slow python train.py --epochs 20',
+      experimentId: EXPERIMENT.id,
+    })
+    if (!submitted.ok) throw new Error('submit rejected')
+    for (let attempt = 0; attempt < 200; attempt += 1) {
+      const listed = await service.listJobs({})
+      if (listed.ok && listed.value.jobs.some(job => job.id === submitted.value.job.id && job.status === 'running')) break
+      await new Promise(resolve => setTimeout(resolve, 25))
+    }
+
+    await expect(service.deleteJob({ id: submitted.value.job.id })).resolves.toEqual({
+      ok: true,
+      value: { id: submitted.value.job.id },
+    })
+    const settled = await settleJob(service, submitted.value.job.id)
+    expect(settled.status).toBe('cancelled')
+    // The store schema must accept the cancelled outcome: the write-back
+    // lands instead of dying on the enum (#247). The job's terminal write
+    // precedes the write-back inside one settle, so poll for the latter.
+    let experiment = domain.table('experiments').get(EXPERIMENT.id)
+    for (let attempt = 0; attempt < 200 && experiment?.lastJob === undefined; attempt += 1) {
+      await new Promise(resolve => setTimeout(resolve, 25))
+      experiment = domain.table('experiments').get(EXPERIMENT.id)
+    }
+    expect(experiment).toMatchObject({
+      status: 'failed',
+      lastJob: { jobId: settled.id, status: 'cancelled', exitCode: null },
+    })
+  })
+
   it('deletes a record and reports job-not-found on a repeat', async () => {
     const { domain, service } = await harness()
     const record: JobRecord = {
