@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from 'react'
 import type { EventRecord, ResearchEventFilter, ResearchGenerateBriefOptions, ResearchProgressReportOptions } from 'dsh-mimir/types'
-import type { ResearchBriefView, ResearchDigestSlice, ResearchFailureView, ResearchForagingSlice, ResearchLedgerView, ResearchMomentsSlice, ResearchReportView, ResearchWorktreeSlice } from './controller.ts'
+import type { ResearchBriefView, ResearchDigestSlice, ResearchEvidenceGraphSlice, ResearchFailureView, ResearchForagingSlice, ResearchLedgerView, ResearchMomentsSlice, ResearchReportView, ResearchWorktreeSlice } from './controller.ts'
 import type { ResearchKey } from './locales.ts'
 import type { ResearchT } from './view-common.ts'
 import { renderMarkdown } from './MarkdownView.tsx'
@@ -22,11 +22,13 @@ import { WorktreeView } from './WorktreeView.tsx'
 import { ForagingView } from './ForagingView.tsx'
 import { DigestView } from './DigestView.tsx'
 import { MomentsView } from './MomentsView.tsx'
+import { EvidenceGraphView } from './EvidenceGraphView.tsx'
 import {
   ACTOR_KEYS, LEDGER_LIST_LIMIT, LEDGER_WINDOWS,
   ledgerIsDestructive, ledgerPayloadLine, ledgerTimeParts, ledgerWindowFilter,
   reportFileName, reportWindowOptions, type LedgerWindow,
 } from './ledger-view.ts'
+import { provenanceFilter } from './evidence-graph-view.ts'
 import css from './ResearchPanel.module.css'
 
 /** The ledger view's project scope. */
@@ -74,10 +76,11 @@ function LedgerRow({ event, t }: {
  * @returns the ledger view.
  */
 export function LedgerView({
-  ledger, report, brief, worktree, foraging, moments, digest, selectedProjectId, loadLedger, generateReport, generateBrief, addJournal,
+  ledger, report, brief, worktree, foraging, moments, evidence, digest, selectedProjectId, loadLedger, generateReport, generateBrief, addJournal,
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
   ensureForaging, refreshForaging,
   ensureMoments, refreshMoments, declineMoment,
+  ensureEvidenceGraph, refreshEvidenceGraph, retractEvidence,
   ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
   t,
 }: {
@@ -87,6 +90,7 @@ export function LedgerView({
   readonly worktree: ResearchWorktreeSlice
   readonly foraging: ResearchForagingSlice
   readonly moments: ResearchMomentsSlice
+  readonly evidence: ResearchEvidenceGraphSlice
   readonly digest: ResearchDigestSlice
   readonly selectedProjectId: string | null
   readonly loadLedger: (filter: ResearchEventFilter) => void
@@ -118,6 +122,12 @@ export function LedgerView({
   readonly refreshMoments: () => void
   /** Decline one moment candidate (seen and refused). */
   readonly declineMoment: (targetEventId: string) => Promise<ResearchFailureView | null>
+  /** Load the evidence graph once, on the ledger view's first open. */
+  readonly ensureEvidenceGraph: () => void
+  /** Re-fetch the evidence graph (the card's refresh button, or after a write). */
+  readonly refreshEvidenceGraph: () => void
+  /** Retract one evidence edge by dedupKey (the panel's human final say). */
+  readonly retractEvidence: (dedupKey: string, reason?: string | undefined) => Promise<ResearchFailureView | null>
   /** Load the digest once, on the ledger view's first open (active push). */
   readonly ensureDigest: () => void
   /** Re-fetch the digest at its current tier/lang. */
@@ -157,6 +167,10 @@ export function LedgerView({
   useEffect(() => {
     ensureMoments()
   }, [ensureMoments])
+  // The evidence graph (v1) loads once on the view's first open.
+  useEffect(() => {
+    ensureEvidenceGraph()
+  }, [ensureEvidenceGraph])
   // The digest (B–F) pushes on the ledger view's first open.
   useEffect(() => {
     ensureDigest()
@@ -273,6 +287,17 @@ export function LedgerView({
         refreshMoments={refreshMoments}
         pinMoment={pinMoment}
         declineMoment={declineMoment}
+        t={t}
+      />
+
+      {/* The evidence graph (v1): claim-grouped evidence history, conflicts,
+          and the flat edge list — pure fold, provenance jumps back down to
+          the raw timeline. */}
+      <EvidenceGraphView
+        evidence={evidence}
+        refreshEvidence={refreshEvidenceGraph}
+        retractEvidence={retractEvidence}
+        jumpToProvenance={ts => { loadLedger(provenanceFilter(ts)) }}
         t={t}
       />
 

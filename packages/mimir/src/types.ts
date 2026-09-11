@@ -13,10 +13,23 @@ import type { CbeMomentKind } from './moment-index.ts'
 import type { CbeMomentSource, CbeMomentStats, CbeClosenessVotes } from './moment-candidates.ts'
 import type { CbeEurekaContextView, CbeEurekaProfile } from './eureka.ts'
 import type { CbeWindowFeatures } from './window-features.ts'
+import type { EvidenceGraph } from './evidence-graph.ts'
 export type { CbeCuratedMoment, CbeMomentKind } from './moment-index.ts'
 export type { CbeMomentSource, CbeMomentStats, CbeClosenessVotes } from './moment-candidates.ts'
 export type { CbeEurekaContextView } from './eureka.ts'
 export type { CbeWindowFeatures } from './window-features.ts'
+export type {
+  EvidenceClaimHistory,
+  EvidenceConflict,
+  EvidenceEdgeRel,
+  EvidenceGraphEdge,
+  EvidenceGraphNode,
+  EvidenceGraphRel,
+  EvidenceGraphStats,
+  EvidenceGraphWindow,
+  EvidenceTimelineEntry,
+  EvidenceTimelineGroup,
+} from './evidence-graph.ts'
 export type { OutlineNode, SectionMove, SectionOutlineTitles, SubsectionMove } from './outline.ts'
 export type { BibEntry } from './bibtex.ts'
 import type { BibEntry } from './bibtex.ts'
@@ -1493,6 +1506,82 @@ export interface ResearchEurekaView {
   }[]
   /** speaks=false ⇒ lift rows stay null (I2), rendered with the descriptive-not-predictive note. */
   readonly profile: CbeEurekaProfile
+}
+
+/* ── Evidence graph (v1): declared evidence edges + the pure fold's audit view ── */
+
+/**
+ * `addEvidenceEdge` request: one explicit relation assertion. `src`/`dst`
+ * are node keys (`<kind>:<value>`, ≤128); `keys` carries the destination's
+ * (or source's) normalized aliases for the fold's union-find; the optional
+ * refs scope the edge to a project/idea/claim. The dedupKey is computed
+ * server-side — callers never supply one.
+ */
+export interface AddEvidenceEdgeRequest {
+  readonly rel: string
+  readonly src: string
+  readonly dst: string
+  readonly srcLabel?: string | undefined
+  readonly dstLabel?: string | undefined
+  readonly keys?: {
+    readonly arxiv?: string | undefined
+    readonly doi?: string | undefined
+    readonly url?: string | undefined
+    readonly titleFp?: string | undefined
+  } | undefined
+  readonly note?: string | undefined
+  readonly projectId?: string | undefined
+  readonly ideaId?: string | undefined
+  readonly claimId?: string | undefined
+}
+
+/** `addEvidenceEdge` result: the edge's server-computed identity. */
+export type ResearchAddEvidenceEdgeResult = ResearchResult<{
+  readonly dedupKey: string
+  readonly rel: string
+  readonly src: string
+  readonly dst: string
+}>
+
+/**
+ * `retractEvidenceEdge` request: the dedupKey identity of the edge to
+ * retract (the retraction covers ALL duplicate declarations of that edge —
+ * dedupKey-level granularity), plus an optional one-line reason. The scope
+ * refs ride along for attribution; the permission check (panel retracts
+ * anything, an agent only its own declarations) happens in the service.
+ */
+export interface RetractEvidenceEdgeRequest {
+  readonly dedupKey: string
+  readonly reason?: string | undefined
+  readonly projectId?: string | undefined
+  readonly ideaId?: string | undefined
+  readonly claimId?: string | undefined
+}
+
+/** `retractEvidenceEdge` result: the dedupKey the retraction landed on. */
+export type ResearchRetractEvidenceEdgeResult = ResearchResult<{
+  readonly dedupKey: string
+}>
+
+/** `getEvidenceGraph` result: the pure fold's audit view over one window. */
+export type ResearchGetEvidenceGraphResult = ResearchResult<ResearchEvidenceGraphView>
+
+/**
+ * The evidence graph view (L1: re-derivable, never persisted). Wraps the
+ * fold's product with the read's retrieval honesty (what was folded vs. the
+ * true total) and the resolved window.
+ */
+export interface ResearchEvidenceGraphView {
+  readonly derivedAt: string
+  readonly window: { readonly since: string; readonly until: string }
+  readonly retrieval: {
+    /** Decision-grade events actually folded (observations stripped). */
+    readonly eventsHit: number
+    /** The true match count, uncapped. */
+    readonly eventsTotal: number
+    readonly truncated: boolean
+  }
+  readonly graph: EvidenceGraph
 }
 
 

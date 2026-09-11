@@ -14,10 +14,13 @@ import { emitEvent, WIKI_AGENT_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type { LedgerJsonValue } from '../types.ts'
 import { isValidArxivId } from './arxiv.ts'
+import { addEvidenceEdge, retractEvidenceEdge } from '../services/evidence.ts'
+import type { AddEvidenceEdgeRequest } from '../types.ts'
+import { evidenceScopeOf, queryKeyOf } from '../evidence-identity.ts'
 
 const ACTIONS = [
   'add_paper', 'set_paper', 'add_idea', 'fail_idea', 'add_claim', 'set_claim', 'set_project',
-  'add_experiment', 'set_experiment', 'list', 'get',
+  'add_experiment', 'set_experiment', 'add_evidence', 'retract_evidence', 'list', 'get',
 ] as const
 const TABLES = ['papers', 'ideas', 'claims', 'projects', 'experiments'] as const
 const EXPERIMENT_STATUSES = ['running', 'success', 'failed'] as const
@@ -49,6 +52,18 @@ interface WikiArgs {
   readonly name?: string
   readonly metrics?: Record<string, JsonValue>
   readonly log_path?: string
+  // Evidence graph (v1): the edge declaration and retraction parameters.
+  readonly rel?: string
+  readonly src?: string
+  readonly dst?: string
+  readonly src_label?: string
+  readonly dst_label?: string
+  readonly keys?: { arxiv?: string; doi?: string; url?: string; titleFp?: string }
+  readonly note?: string
+  readonly query?: string
+  readonly dedup_key?: string
+  readonly idea_id?: string
+  readonly claim_id?: string
 }
 
 /** Require one non-empty string field for the current action. */
@@ -282,6 +297,52 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
       })
       return { ok: true, table: 'experiments', id, status: args.status ?? 'updated' }
     }
+    case 'add_evidence': {
+      // The agent channel of the evidence graph: one explicit relation
+      // assertion, validated and emitted by the same service function the
+      // panel uses (field caps, server-side dedupKey, best-effort trail).
+      const rel = requireField(args.rel, 'rel', args.action)
+      let src = args.src
+      if (rel === 'retrieved-via' && src === undefined && args.query !== undefined) {
+        // A web_search/arxiv_search hit adopted as evidence: the source node
+        // is the retrieval query (same query → same node, no query table).
+        src = queryKeyOf(args.query, evidenceScopeOf({ projectId: args.project_id, ideaId: args.idea_id, claimId: args.claim_id }))
+      }
+      const request: AddEvidenceEdgeRequest = {
+        rel,
+        src: requireField(src, 'src', args.action),
+        dst: requireField(args.dst, 'dst', args.action),
+        ...(args.src_label === undefined ? {} : { srcLabel: args.src_label }),
+        ...(args.dst_label === undefined ? {} : { dstLabel: args.dst_label }),
+        ...(args.keys === undefined ? {} : { keys: args.keys }),
+        ...(args.note === undefined ? {} : { note: args.note }),
+        ...(args.project_id === undefined ? {} : { projectId: args.project_id }),
+        ...(args.idea_id === undefined ? {} : { ideaId: args.idea_id }),
+        ...(args.claim_id === undefined ? {} : { claimId: args.claim_id }),
+      }
+      const result = await addEvidenceEdge({ domain }, request, WIKI_AGENT_ACTOR)
+      if (!result.ok) {
+        throw new Error(`wiki_note action 'add_evidence' failed: ${'message' in result.error ? result.error.message : result.error.code}`)
+      }
+      return { ok: true, dedupKey: result.value.dedupKey, rel: result.value.rel, src: result.value.src, dst: result.value.dst }
+    }
+    case 'retract_evidence': {
+      // Retraction granularity is the edge identity (dedupKey): every
+      // duplicate declaration is retracted at once. An agent may only
+      // retract edges it declared itself (enforced in the service).
+      const dedupKey = requireField(args.dedup_key, 'dedup_key', args.action)
+      const result = await retractEvidenceEdge({ domain }, {
+        dedupKey,
+        ...(args.reason === undefined ? {} : { reason: args.reason }),
+        ...(args.project_id === undefined ? {} : { projectId: args.project_id }),
+        ...(args.idea_id === undefined ? {} : { ideaId: args.idea_id }),
+        ...(args.claim_id === undefined ? {} : { claimId: args.claim_id }),
+      }, WIKI_AGENT_ACTOR)
+      if (!result.ok) {
+        throw new Error(`wiki_note action 'retract_evidence' failed: ${'message' in result.error ? result.error.message : result.error.code}`)
+      }
+      return { ok: true, dedupKey: result.value.dedupKey, retracted: true }
+    }
     case 'list': {
       const table = args.table
       if (table === undefined) {
@@ -347,7 +408,7 @@ export function createWikiNoteTool(domain: ResearchWikiDomain): ToolDefinition {
       relevance_score: { type: 'number', description: '0-10 relevance score for set_paper (requires project_id and relevance_reason); also links the paper to that project.' },
       relevance_reason: { type: 'string', description: 'One-paragraph justification of relevance_score for set_paper.' },
       hypothesis: { type: 'string', description: 'Hypothesis for add_idea.' },
-      reason: { type: 'string', description: 'Why the idea failed, for fail_idea.' },
+      reason: { type: 'string', description: 'Why the idea failed, for fail_idea; why the edge is withdrawn, for retract_evidence.' },
       text: { type: 'string', description: 'Claim text for add_claim.' },
       status: { type: 'string', description: 'New status for set_claim (supported|invalidated|pending) or add_experiment/set_experiment (running|success|failed).' },
       evidence: { type: 'string', description: 'Evidence pointer for add_claim/set_claim.' },
@@ -356,6 +417,17 @@ export function createWikiNoteTool(domain: ResearchWikiDomain): ToolDefinition {
       name: { type: 'string', description: 'Experiment name for add_experiment/set_experiment.' },
       metrics: { type: 'object', additionalProperties: true, description: 'Scalar metrics for add_experiment/set_experiment (string/number values).' },
       log_path: { type: 'string', description: 'Log path relative to the workspace for add_experiment/set_experiment.' },
+      rel: { type: 'string', description: 'Relation for add_evidence (supports|contradicts|tests|cites|extends|uses|retrieved-via).' },
+      src: { type: 'string', description: 'Source node key for add_evidence (kind:value, e.g. lit:arxiv:2401.00001 or claim:<uuid>). Omit it with query for retrieved-via.' },
+      dst: { type: 'string', description: 'Destination node key for add_evidence (kind:value).' },
+      src_label: { type: 'string', description: 'Optional display label of the source node for add_evidence (≤160 chars).' },
+      dst_label: { type: 'string', description: 'Optional display label of the destination node for add_evidence (≤160 chars).' },
+      keys: { type: 'object', additionalProperties: true, description: 'Optional normalized aliases of the add_evidence endpoints for identity merging: { arxiv?, doi?, url?, titleFp? }.' },
+      note: { type: 'string', description: 'One-line judgment note carried on the add_evidence edge (≤256 chars).' },
+      query: { type: 'string', description: 'The retrieval query for a retrieved-via add_evidence (builds the query: node when src is omitted).' },
+      dedup_key: { type: 'string', description: 'The 32-hex edge identity for retract_evidence (returned by add_evidence; retracts ALL duplicate declarations).' },
+      idea_id: { type: 'string', description: 'Optional idea scope ref for add_evidence/retract_evidence.' },
+      claim_id: { type: 'string', description: 'Optional claim scope ref for add_evidence/retract_evidence.' },
     },
     output: {
       schema: { type: 'json' },

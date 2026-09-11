@@ -20,6 +20,12 @@ import type { MetricChartRow } from './view-common.ts'
 import { pruneExpiredToasts, pushToast, type ResearchToast, type ResearchToastKind } from './toasts.ts'
 import type {
   ArxivEntry,
+  AddEvidenceEdgeRequest,
+  ResearchAddEvidenceEdgeResult,
+  ResearchEvidenceGraphView,
+  ResearchGetEvidenceGraphResult,
+  ResearchRetractEvidenceEdgeResult,
+  RetractEvidenceEdgeRequest,
   ArxivSubscriptionView,
   BibEntry,
   EventRecord,
@@ -148,15 +154,6 @@ import {
   type LiveSlice,
   type WikiChangeAggregator,
 } from './live-refresh.ts'
-
-// Re-exported so view components (DigestView) can import these model types
-// from the controller module rather than reaching into the package directly.
-export type {
-  ResearchDigestView,
-  ResearchDigestTier,
-  ResearchExperienceCapsule,
-  ResearchCapsulePerspective,
-} from 'dsh-mimir/types'
 
 // Re-exported so view components (DigestView) can import these model types
 // from the controller module rather than reaching into the package directly.
@@ -412,6 +409,16 @@ export interface ResearchRemote {
   }) => Promise<RemoteResult<ResearchGetMomentIndexResult>>
   /** Read the retrospective eureka view (S8c): declarations × measured roads. */
   getEurekaView: () => Promise<RemoteResult<ResearchGetEurekaViewResult>>
+  /** Read the evidence graph (v1): one pure fold over one ledger window (L1). */
+  getEvidenceGraph: (request: {
+    projectId?: string | undefined
+    since?: string | undefined
+    until?: string | undefined
+  }) => Promise<RemoteResult<ResearchGetEvidenceGraphResult>>
+  /** Declare one evidence edge — the panel channel of the graph's writes. */
+  addEvidenceEdge: (request: AddEvidenceEdgeRequest) => Promise<RemoteResult<ResearchAddEvidenceEdgeResult>>
+  /** Retract one evidence edge by dedupKey (panel: any edge — human final say). */
+  retractEvidenceEdge: (request: RetractEvidenceEdgeRequest) => Promise<RemoteResult<ResearchRetractEvidenceEdgeResult>>
 }
 
 /** Quiet period after the last keystroke before the draft autosaves. */
@@ -733,6 +740,13 @@ export interface ResearchMomentsSlice {
   readonly failure: ResearchFailureView | null
 }
 
+/** The evidence graph (v1) slice: the pure fold's product (L1), cold until opened. */
+export interface ResearchEvidenceGraphSlice {
+  readonly status: ResearchLoadStatus
+  readonly view: ResearchEvidenceGraphView | null
+  readonly failure: ResearchFailureView | null
+}
+
 /** The eureka (S8c) slice: declarations × measured roads, cold until opened. */
 export interface ResearchEurekaSlice {
   readonly status: ResearchLoadStatus
@@ -822,6 +836,8 @@ export interface ResearchView {
   readonly moments: ResearchMomentsSlice
   /** The ledger view's eureka (S8c): declarations with their measured roads. */
   readonly eureka: ResearchEurekaSlice
+  /** The ledger view's evidence graph (v1): the pure fold over one window. */
+  readonly evidence: ResearchEvidenceGraphSlice
   /** The ledger view's digest (B–F): six-perspective capsules + Eureka EWS, pushed on open. */
   readonly digest: ResearchDigestSlice
   /** The corner toast queue (oldest first); the host component sweeps expiries. */
@@ -879,6 +895,7 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   foraging: Object.freeze({ status: 'cold', view: null, failure: null }),
   moments: Object.freeze({ status: 'cold', view: null, failure: null }),
   eureka: Object.freeze({ status: 'cold', view: null, failure: null }),
+  evidence: Object.freeze({ status: 'cold', view: null, failure: null }),
   digest: Object.freeze({ status: 'idle', tier: 'weekly', lang: 'zh', report: null, markdown: '', generatedAt: null, failure: null }),
   toasts: Object.freeze([]),
   backup: null,
@@ -944,6 +961,7 @@ export class ResearchController implements HostObservable<ResearchView> {
   private foragingPromise: Promise<void> | null = null
   private momentsPromise: Promise<void> | null = null
   private eurekaPromise: Promise<void> | null = null
+  private evidencePromise: Promise<void> | null = null
   private figuresInFlight = false
   private figuresRefreshPending: { readonly projectId: string; readonly quiet: boolean } | null = null
   private meetingsGeneration = 0
@@ -1614,6 +1632,73 @@ export class ResearchController implements HostObservable<ResearchView> {
   ensureEureka(): void {
     if (this.view.eureka.status === 'ready' || this.eurekaPromise !== null) return
     this.eurekaPromise = this.loadEureka().finally(() => { this.eurekaPromise = null })
+  }
+
+  /**
+   * Load the evidence graph (v1) slice: one pure fold over the whole ledger
+   * window (L1 — the product lives only in this view and the fold, never
+   * persisted). Same publish contract as the worktree/foraging/moments slices.
+   */
+  private async loadEvidenceGraph(): Promise<void> {
+    this.publish({
+      evidence: Object.freeze({ status: 'loading', view: this.view.evidence.view, failure: null }),
+    })
+    try {
+      const carried = await this.remote.getEvidenceGraph({})
+      if (!carried.ok) {
+        const failure = failureOf(carried.error.code, carried.error.message)
+        this.publish({ evidence: Object.freeze({ status: 'error', view: null, failure }) })
+        return
+      }
+      const result = carried.value
+      if (!result.ok) {
+        const failure = businessFailure(result.error)
+        this.publish({ evidence: Object.freeze({ status: 'error', view: null, failure }) })
+        return
+      }
+      this.publish({
+        evidence: Object.freeze({ status: 'ready', view: result.value, failure: null }),
+      })
+    } catch (error) {
+      const failure = transportFailure(error)
+      this.publish({ evidence: Object.freeze({ status: 'error', view: null, failure }) })
+    }
+  }
+
+  /** Load the evidence graph once, on the ledger view's first open. */
+  ensureEvidenceGraph(): void {
+    if (this.view.evidence.status === 'ready' || this.evidencePromise !== null) return
+    this.evidencePromise = this.loadEvidenceGraph().finally(() => { this.evidencePromise = null })
+  }
+
+  /** Re-fetch the evidence graph (the card's refresh button, or after a write). */
+  refreshEvidenceGraph(): void {
+    if (this.evidencePromise !== null) return
+    this.evidencePromise = this.loadEvidenceGraph().finally(() => { this.evidencePromise = null })
+  }
+
+  /**
+   * Retract one evidence edge by dedupKey — the panel's human-final-say
+   * retraction (any edge; agents are gated host-side). A success toasts once
+   * and re-folds the graph so the strikethrough appears immediately.
+   * @returns null on success, the settled failure view otherwise.
+   */
+  async retractEvidence(dedupKey: string, reason?: string | undefined): Promise<ResearchFailureView | null> {
+    try {
+      const carried = await this.remote.retractEvidenceEdge({
+        dedupKey,
+        ...(reason === undefined ? {} : { reason }),
+      })
+      if (!carried.ok) { this.notify('error', 'evidence.failed'); return failureOf(carried.error.code, carried.error.message) }
+      const result = carried.value
+      if (!result.ok) { this.notify('error', 'evidence.failed'); return businessFailure(result.error) }
+      this.notify('success', 'evidence.retractedToast')
+      this.refreshEvidenceGraph()
+      return null
+    } catch (error) {
+      this.notify('error', 'evidence.failed')
+      return transportFailure(error)
+    }
   }
 
   /** Re-fetch the foraging layer (the card's refresh button). */

@@ -648,6 +648,21 @@ export interface ResearchPanelInjected {
    */
   pinMoment: (targetEventId: string, note?: string | undefined) => Promise<ResearchFailureView | null>
   /**
+   * Load the evidence graph (v1) once, on the ledger view's first open: the
+   * claim-grouped evidence history, the conflicts, and the flat edge list.
+   */
+  ensureEvidenceGraph: () => void
+  /**
+   * Re-fetch the evidence graph (the card's refresh button, or after a write).
+   */
+  refreshEvidenceGraph: () => void
+  /**
+   * Retract one evidence edge by dedupKey — the panel's human-final-say
+   * retraction; covers every duplicate declaration of the edge.
+   * @returns null on success, the settled failure view otherwise.
+   */
+  retractEvidence: (dedupKey: string, reason?: string | undefined) => Promise<ResearchFailureView | null>
+  /**
    * Export the whole wiki as one snapshot (the download button).
    * @returns the snapshot, or the settled failure view.
    */
