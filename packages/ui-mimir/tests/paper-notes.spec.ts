@@ -1,8 +1,9 @@
 /**
  * Behavior tests for the reading-notes helpers behind the papers view's PDF
  * reader side panel: timestamp formatting, appending an entry without
- * touching existing content, and parsing entries back out while skipping
- * free-form (agent-written or legacy) blocks.
+ * touching existing content, and parsing entries back out — multi-paragraph
+ * entries keep their blank-line continuations and legacy/agent-written
+ * blocks stay visible instead of being silently dropped (#248).
  */
 
 import { describe, expect, it } from 'vitest'
@@ -44,23 +45,50 @@ describe('appendReadingNote', () => {
 })
 
 describe('parseReadingNotes', () => {
-  it('parses entries in stored order and skips free-form blocks', () => {
+  it('parses entries in stored order and keeps a leading free-form block visible', () => {
     const notes = [
       'agent note, free-form',
       '[2026-08-23 07:05]\nfirst entry',
       '[2026-08-23 15:42]\nsecond entry\nwith a second line',
     ].join('\n\n')
     expect(parseReadingNotes(notes)).toEqual([
+      { at: '', text: 'agent note, free-form' },
       { at: '2026-08-23 07:05', text: 'first entry' },
       { at: '2026-08-23 15:42', text: 'second entry\nwith a second line' },
     ])
   })
 
-  it('returns an empty list for empty or headerless notes', () => {
+  it('returns an empty list for empty or blank notes', () => {
     expect(parseReadingNotes('')).toEqual([])
-    expect(parseReadingNotes('just a thought\n\nanother one')).toEqual([])
-    // A bracketed block without the full timestamp shape is not an entry.
-    expect(parseReadingNotes('[todo] check citations')).toEqual([])
+    expect(parseReadingNotes('\n\n  \n\n')).toEqual([])
+  })
+
+  it('shows headerless notes instead of dropping them (#248)', () => {
+    expect(parseReadingNotes('just a thought\n\nanother one')).toEqual([
+      { at: '', text: 'just a thought\n\nanother one' },
+    ])
+    // A bracketed block without the full timestamp shape is a legacy note.
+    expect(parseReadingNotes('[todo] check citations')).toEqual([
+      { at: '', text: '[todo] check citations' },
+    ])
+  })
+
+  it('reattaches blank-line continuations to the entry above them (#248)', () => {
+    const notes = [
+      '[2026-08-23 07:05]\n第一段 first paragraph',
+      '第二段 second paragraph',
+      'third paragraph 第三段',
+    ].join('\n\n')
+    expect(parseReadingNotes(notes)).toEqual([
+      { at: '2026-08-23 07:05', text: '第一段 first paragraph\n\n第二段 second paragraph\n\nthird paragraph 第三段' },
+    ])
+  })
+
+  it('round-trips a multi-paragraph note through appendReadingNote (#248)', () => {
+    const notes = appendReadingNote('', 'first paragraph\n\nsecond paragraph 含中文', MORNING)
+    expect(parseReadingNotes(notes)).toEqual([
+      { at: '2026-08-23 07:05', text: 'first paragraph\n\nsecond paragraph 含中文' },
+    ])
   })
 
   it('round-trips through appendReadingNote', () => {

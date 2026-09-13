@@ -69,6 +69,45 @@ Additive-only changes: optional fields with `.default(...)`, new tables
 open empty on old snapshots. `events` is the append-only ledger that powers
 the ledger view and the cognitive engine.
 
+## HTTP route permission model
+
+The `/research/*` routes split in two (`http-write-boundary.ts`, #210).
+**Write routes** (figure upload, template upload) require an `Origin` header
+matching `Host` exactly (`isSameOriginWrite`). **Read/download routes**
+(compiled PDF, paper PDF, figure, meeting deck, SSE events) are
+loopback-panel-only (`isTrustedRead`): the `Host` header must name the
+loopback listener (`localhost`/`127.0.0.1`/`[::1]`, any port), and an
+`Origin`, when present (cross-origin fetches always carry one), must match
+it exactly. The panel's `<img>`/`<iframe>`/`<a>` navigations carry no
+`Origin` and pass on the Host check alone. Under DNS rebinding the rebound
+request carries the attacker's host name and is refused. Deployment
+boundary: when dsh is exposed through a reverse proxy or LAN bind, these
+routes stay loopback-only by design; expose them remotely only behind an
+authenticating proxy that rewrites `Host`.
+
+## Remote-job lifecycle
+
+The single authoritative contract lives in `job-lifecycle.ts` (#225):
+`queued → running → succeeded|failed`, plus three ways a run ends WITHOUT
+an observed outcome — `cancelled` (the user aborted the local session),
+`interrupted` (the host disposed/restarted while the job was active;
+restart recovery settles leftovers here), and `unknown` (the session
+exceeded its 30-minute duration cap and was dropped; the remote process may
+still be alive). Output past the 4 MiB capture cap is an explicit `failed`
+with a note, never a silent truncation. The linked experiment's lifecycle
+stays coarser: only an observed `succeeded` lands as `success`; every other
+terminal state lands as `failed`, with the precise cause kept on the job
+record. The schema accepts `cancelled` on the experiment's `lastJob`
+write-back (#247).
+
+Long tasks (LaTeX compiles, meeting-deck generations) share one
+cancellation contract (#247): each registers in the service's long-task
+registry through `linkLongTask`, which merges the caller's RPC signal with
+a service-owned controller. The panel's cancel, the host's dispose (fiber
+teardown aborts every registered task), and RPC timeouts therefore travel
+the same termination path — including the deck's AI-illustration fetches,
+which race the caller signal against their per-request timeout.
+
 ## Agent surface
 
 - **Tools (9)**: `arxiv_search`, `web_search`, `wiki_note`, `figure_save`,

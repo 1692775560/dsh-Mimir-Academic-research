@@ -4,11 +4,11 @@
  * and the atomic commit preserving content and permission bits.
  */
 
-import { mkdtemp, readFile, rm, stat, utimes, writeFile } from 'node:fs/promises'
+import { mkdtemp, mkdir, readFile, rm, stat, symlink, utimes, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { readPaperSource, resolvePaperDir, savePaperSourceFile } from '../src/paper-source.ts'
+import { readPaperSource, resolvePaperDir, resolvePaperDirReal, savePaperSourceFile } from '../src/paper-source.ts'
 
 describe('resolvePaperDir', () => {
   const root = join(tmpdir(), 'research-ws')
@@ -40,6 +40,47 @@ describe('resolvePaperDir', () => {
   })
 })
 
+describe('resolvePaperDirReal (#213)', () => {
+  let workspace: string
+  let outside: string
+
+  beforeEach(async () => {
+    workspace = await mkdtemp(join(tmpdir(), 'mimir-realpath-ws-'))
+    outside = await mkdtemp(join(tmpdir(), 'mimir-realpath-out-'))
+  })
+
+  afterEach(async () => {
+    await rm(workspace, { recursive: true, force: true })
+    await rm(outside, { recursive: true, force: true })
+  })
+
+  it('resolves a real in-workspace directory', async () => {
+    await mkdir(join(workspace, 'paper'))
+    expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBe(join(workspace, 'paper'))
+  })
+
+  it('rejects a symlinked directory escaping the workspace', async () => {
+    // Lexically 'paper' is fine, but workspace/paper → outside must fail.
+    await symlink(outside, join(workspace, 'paper'), 'dir')
+    expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBeUndefined()
+  })
+
+  it('accepts a symlink staying inside the workspace', async () => {
+    await mkdir(join(workspace, 'real-paper'))
+    await symlink(join(workspace, 'real-paper'), join(workspace, 'paper'), 'dir')
+    expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBe(join(workspace, 'paper'))
+  })
+
+  it('accepts a directory that does not exist yet when the parent chain is clean', async () => {
+    expect(await resolvePaperDirReal(workspace, undefined, 'fresh-paper')).toBe(join(workspace, 'fresh-paper'))
+  })
+
+  it('still rejects lexical escapes', async () => {
+    expect(await resolvePaperDirReal(workspace, '../outside')).toBeUndefined()
+    expect(await resolvePaperDirReal(workspace, '/etc')).toBeUndefined()
+  })
+})
+
 describe('paper-source', () => {
   let dir: string
   let texPath: string
@@ -63,6 +104,32 @@ describe('paper-source', () => {
       const snapshot = await readPaperSource(texPath)
       expect(snapshot?.content).toBe('\\documentclass{article}\n')
       expect(snapshot?.mtimeMs).toBe((await stat(texPath)).mtimeMs)
+    })
+  })
+
+  describe('read/save coherence (R01)', () => {
+    it('never pairs new content with a stale mtime while a save is mid-commit', async () => {
+      await writeFile(texPath, 'v1\n', 'utf8')
+      // Rewrite under a pinned timestamp on the SAME inode: with a coarse
+      // clock (ms resolution on WSL2/ext4) two writes can share one mtime,
+      // so the file can change while its mtime does not. A lock-free reader
+      // could then read the new content but carry the old mtime as its base
+      // — a base that wrongly passes the optimistic check and overwrites.
+      const stamp = new Date(1_700_000_000_000)
+      await utimes(texPath, stamp, stamp)
+      const staleBase = (await stat(texPath)).mtimeMs
+      await writeFile(texPath, 'v2\n', 'utf8')
+      const snapshot = await readPaperSource(texPath)
+      // The read+stat both happened under the writer lock, so the snapshot
+      // is coherent: it reports the content it actually read. If the read
+      // had been lock-free it could carry `staleBase` while returning v2.
+      expect(snapshot?.content).toBe('v2\n')
+      expect(snapshot?.mtimeMs).toBe((await stat(texPath)).mtimeMs)
+      // The reported base must NOT accept a save of stale content over v2.
+      expect(snapshot?.mtimeMs).not.toBe(staleBase)
+      const staleSave = await savePaperSourceFile(texPath, 'stale draft\n', staleBase)
+      expect(staleSave).toEqual({ kind: 'conflict', currentMtimeMs: snapshot?.mtimeMs })
+      expect(await readFile(texPath, 'utf8')).toBe('v2\n')
     })
   })
 

@@ -79,6 +79,29 @@ describe('generateImage', () => {
     const fetcher: ImageGenFetch = async () => ({ ok: false, status: 401, json: async () => ({}) })
     await expect(generateImage(config, 'x', fetcher)).rejects.toThrow('401')
   })
+
+  it('races the caller signal against the per-request timeout (#247)', async () => {
+    let seen: AbortSignal | undefined
+    const fetcher: ImageGenFetch = async (_url, init) => {
+      seen = init.signal
+      return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: Buffer.from('png').toString('base64') }] }) }
+    }
+    const caller = new AbortController()
+    await generateImage(config, 'a cover', fetcher, caller.signal)
+    expect(seen).toBeDefined()
+    expect(seen?.aborted).toBe(false)
+    caller.abort()
+    // The combined signal follows the caller's abort.
+    expect(seen?.aborted).toBe(true)
+    // Without a caller signal the bare timeout rides alone (unchanged default).
+    let bare: AbortSignal | undefined
+    const bareFetcher: ImageGenFetch = async (_url, init) => {
+      bare = init.signal
+      return { ok: true, status: 200, json: async () => ({ data: [{ b64_json: Buffer.from('png').toString('base64') }] }) }
+    }
+    await generateImage(config, 'a cover', bareFetcher)
+    expect(bare?.aborted).toBe(false)
+  })
 })
 
 describe('prompts', () => {

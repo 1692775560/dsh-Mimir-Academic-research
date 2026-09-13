@@ -46,7 +46,7 @@ dsh plugin --profile web add dsh-mimir@latest   # installs and self-activates
 dsh web                                          # then open http://127.0.0.1:3080
 ```
 
-Got an old version (e.g. 0.11.x/0.12.x)? dsh's plugin store uses pnpm, which holds back freshly published releases by default. Pin the exact version instead: `dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.14.1`
+Got an old version (e.g. 0.11.x/0.12.x)? dsh's plugin store uses pnpm, which holds back freshly published releases by default. Pin the exact version instead: `dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.19.0`
 
 Version compatibility: **0.18.x requires dsh ≥ 0.1.2-alpha.4** (upstream breaking changes). On an older dsh, pin the previous release: `dsh plugin --profile web add dsh-mimir@0.16.0`.
 
@@ -60,6 +60,10 @@ Optional capabilities:
   bash scripts/setup-web-search.sh
   ```
 - **Zotero** — set `zotero.apiKey` / `zotero.userId` in the plugin config (keys at zotero.org/settings/keys)
+
+## Related projects
+
+- **[Mimir-Desktop](https://github.com/hxhy00/Mimir-Desktop)** — a standalone Electron desktop edition of the workbench: no dsh install, no backend to run, same feature set. Community-maintained by [@hxhy00](https://github.com/hxhy00), MIT.
 
 ## Configuration
 
@@ -83,6 +87,7 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 
 ## Changelog
 
+- **0.19.0** — issue-batch fixes: figure extraction honors cancellation end to end ([#233](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/233)) · LaTeX `main.log` reads capped at a 1 MiB tail ([#234](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/234)) · per-record venue-cache guard + a guarded localStorage codec ([#241](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/241)) · reviewer rounds get a per-attempt timeout (new `reviewer.timeoutMs`, default 10 min), one fresh retry, and a structured failed outcome that no longer burns the round budget ([#246](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/246)) · the reading-notes panel no longer drops paragraphs or legacy notes ([#248](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/248)) · review-round merges by [@hkwuks](https://github.com/hkwuks): research PDF/figure route hardening ([#138](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/138)), zotero 429 default wait ([#139](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/139)), meeting-deck path validation ([#140](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/140)), inverted moment-window guard ([#143](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/143)), calendar-day venue countdown in the panel ([#142](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/142)) · SSH jobs interrupted on host dispose, paper-source read/write lock coherence, figure insert/rename under the body lock ([#156](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/156)–[#159](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/159)) · CI style gate (`check-style.mjs`) with PR template and CONTRIBUTING hard gate
 - **0.18.1** — stale subscription-lock recovery (a crashed writer no longer wedges every later check) and workspace-scoped coalescing of concurrent venue-cache refreshes by [@mikemikimike](https://github.com/mikemikimike) ([#144](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/144), fixes [#141](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/141)) · sxng integration by [@hkwuks](https://github.com/hkwuks) ([#137](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/137)): optional `sxng-cli` tracks latest, missing-CLI guidance names your actual package manager, new `/skill-sync` command copies the upstream sxng skill into the dsh skills dir · devDependencies track dsh 0.1.2-rc.1 (verified against 0.1.3-alpha.1; peer floor unchanged)
 - **0.18.0** — Features: **Venues** (ninth view): CCF conference-deadline countdown on the ccfddl catalog, per-project watchlist, CCF-A journal directory, `venue_search` agent tool · **SSE live refresh**: wiki writes push to the open panel over `/research/events`, every warm view follows agent/teammate edits without a reload · collapsible sidebar, narrower outline rail, compact buttons · verified architecture docs: [docs/architecture.md](docs/architecture.md) ([中文](docs/architecture.zh.md)). Fixes: two hardening rounds, 23 items — path-traversal / SSH-injection safety, load-time quarantine for unsafe library ids, SSE heartbeat write-guard + reconnect resync, autosave/save-lane races on project switch, subscription checks under the file lock, live-refresh starvation and stale-read guards; controller lifecycle isolation by [@hkwuks](https://github.com/hkwuks) ([#129](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/129))
 
@@ -105,7 +110,7 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 
 Branch off `main` (`feature/<name>` / `fix/<name>`), keep `pnpm run build && pnpm test && pnpm run typecheck` green, and open a PR — see [CONTRIBUTING.md](CONTRIBUTING.md). Please merge PRs with a **merge commit** (not squash) so contributor authorship shows up on the contributors graph. For the big picture, start with the verified architecture overview: [docs/architecture.md](docs/architecture.md) ([中文](docs/architecture.zh.md)).
 
-Contributors so far: [@EriXPsy](https://github.com/EriXPsy) (Ledger view, humanized journal) · [@hkwuks](https://github.com/hkwuks) (SearXNG web search, [sxng CLI](https://github.com/hkwuks/sxng-cli), de-AI skill) · [@hxhy](https://github.com/huixiaheyu) (web_search cancellation fix)
+Contributors so far: [@EriXPsy](https://github.com/EriXPsy) (Ledger view, humanized journal) · [@hkwuks](https://github.com/hkwuks) (SearXNG web search, [sxng CLI](https://github.com/hkwuks/sxng-cli), de-AI skill) · [@hxhy](https://github.com/huixiaheyu) (web_search cancellation fix) · [@hxhy00](https://github.com/hxhy00) ([Mimir-Desktop](https://github.com/hxhy00/Mimir-Desktop), the standalone desktop edition)
 
 ## Community
 

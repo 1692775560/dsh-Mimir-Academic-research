@@ -19,6 +19,7 @@ import type { ResearchTab } from './store.ts'
 import type { ResearchKey } from './locales.ts'
 import { arrowTab, trapFocusIndex } from './focus.ts'
 import { readSidebarFolded, SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue } from './sidebar-fold.ts'
+import { readStorageFlag, readStorageValue, storageFlagValue, writeStorageValue } from './storage.ts'
 import { shortcutFor, TABS } from './shortcuts.ts'
 import { countUpcomingDeadlines } from './venues-view.ts'
 import type { ResearchPanelProps } from './slots.ts'
@@ -231,35 +232,28 @@ export function ResearchPanel({
   const digest = useResearch(view => view.digest)
   const toasts = useResearch(view => view.toasts)
   const backup = useResearch(view => view.backup)
+  const taskHealth = useResearch(view => view.taskHealth)
   const paperJump = useResearch(view => view.paperJump)
   const rootRef = useRef<HTMLDivElement>(null)
 
   // Sidebar project list fold; persists across panel opens like the paper
   // pane layout does. Collapsed still shows the selected project's name.
   const [projectsCollapsed, setProjectsCollapsed] = useState(
-    () => localStorage.getItem(PROJECTS_COLLAPSED_STORAGE_KEY) === '1',
+    () => readStorageFlag(PROJECTS_COLLAPSED_STORAGE_KEY, false),
   )
   // The "import existing project" dialog of the sidebar project list.
   const [importOpen, setImportOpen] = useState(false)
   useEffect(() => {
-    try {
-      localStorage.setItem(PROJECTS_COLLAPSED_STORAGE_KEY, projectsCollapsed ? '1' : '0')
-    } catch {
-      // A full/blocked localStorage drops persistence; the fold still works.
-    }
+    writeStorageValue(PROJECTS_COLLAPSED_STORAGE_KEY, storageFlagValue(projectsCollapsed))
   }, [projectsCollapsed])
 
   // The rail fold (narrow icons-only rail); persists across panel opens. The
   // fold control hides in top-bar mode (≤700px) — see sidebar-fold.ts.
   const [sidebarFolded, setSidebarFolded] = useState(
-    () => readSidebarFolded(key => localStorage.getItem(key)),
+    () => readSidebarFolded(readStorageValue),
   )
   useEffect(() => {
-    try {
-      localStorage.setItem(SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue(sidebarFolded))
-    } catch {
-      // A full/blocked localStorage drops persistence; the fold still works.
-    }
+    writeStorageValue(SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue(sidebarFolded))
   }, [sidebarFolded])
 
   // Every read is deferred to the first open rather than fired on mount: the
@@ -535,7 +529,7 @@ export function ResearchPanel({
       </aside>
       <main className={css.content} role="tabpanel" aria-label={t(TAB_KEYS[activeTab])}>
         {activeTab === 'overview' && (
-          <OverviewView project={selectedProject} stats={overviewStats} backup={backup} jobs={jobs} experiments={experiments} openLedger={() => { actions.setTab('ledger') }} exportWiki={exportWiki} importWiki={importWiki} t={t} />
+          <OverviewView project={selectedProject} stats={overviewStats} backup={backup} taskHealth={taskHealth} jobs={jobs} experiments={experiments} openLedger={() => { actions.setTab('ledger') }} exportWiki={exportWiki} importWiki={importWiki} t={t} />
         )}
         {activeTab === 'paper' && (
           <PaperView
@@ -623,10 +617,10 @@ export function ResearchPanel({
             deleteExperiment={deleteExperiment}
             updateExperiment={updateExperiment}
             saveExperiment={saveExperiment}
-            generateMetricFigure={(metricKey, rows) =>
+            generateMetricFigure={(metricKey, rows, direction) =>
               selectedProjectId === null
                 ? Promise.resolve()
-                : generateMetricFigure(selectedProjectId, metricKey, rows)
+                : generateMetricFigure(selectedProjectId, metricKey, rows, direction)
             }
             retry={() => { if (selectedProjectId !== null) selectProject(selectedProjectId) }}
             t={t}

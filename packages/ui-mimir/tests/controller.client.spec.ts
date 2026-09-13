@@ -1735,6 +1735,30 @@ describe('ResearchController figure insert', () => {
     expect(view.source?.content).toBe('p2 tex')
   })
 
+  it('keeps typing done during the SVG conversion by splicing into the live draft', async () => {
+    const conversion = deferred<RemoteResult<ResearchConvertFigureResult>>()
+    const controller = new ResearchController(stubRemote({
+      ...selectReads,
+      getPaperSource: () => Promise.resolve(carried(sourceOk(TEX, 1000))),
+      convertFigure: () => conversion.promise,
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    const pending = controller.insertFigureIntoPaper('p1', { ...FIGURE, name: 'plot.svg', relPath: 'figures/plot.svg' })
+    // The user keeps typing while the host converts to PDF.
+    controller.edit('text\\nnew paragraph typed during conversion')
+    conversion.resolve(carried({ ok: true, value: { relPath: 'figures/plot.pdf', converter: 'rsvg-convert' } }))
+    const line = await pending
+    expect(line).not.toBeNull()
+    await vi.advanceTimersByTimeAsync(0)
+    const view = controller.getSnapshot()
+    // Both survive: the continued paragraph AND the inserted figure block.
+    expect(view.source?.content).toContain('new paragraph typed during conversion')
+    expect(view.source?.content).toContain('\\includegraphics[width=\\linewidth]{figures/plot.pdf}')
+    expect(view.source?.saveState).toBe('dirty')
+    expect(view.toasts.at(-1)).toMatchObject({ kind: 'success', copy: 'toast.figureConvertedSvg' })
+  })
+
   it('does not re-read the paper when the project switched during a figure rename', async () => {
     const rename = deferred<RemoteResult<ResearchRenameFigureResult>>()
     const sourceReads: string[] = []

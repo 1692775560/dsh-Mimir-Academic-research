@@ -22,7 +22,7 @@ import type {
   ResearchGenerateMeetingResult,
   ResearchMeetingDecksResult,
 } from '../types.ts'
-import { resolvePaperDir } from '../paper-source.ts'
+import { resolvePaperDir, resolvePaperDirReal, DEFAULT_PAPER_DIR } from '../paper-source.ts'
 import { listPaperFigures, type FigureFile } from '../artifacts.ts'
 import { isValidArxivId } from '../arxiv-id.ts'
 import { isValidProjectId } from '../project-id.ts'
@@ -471,11 +471,14 @@ export async function loadPaperFigures(
  * An unknown project is `project-not-found`.
  * @param deps - workspace root and open domain.
  * @param request - the deck options.
+ * @param signal - caller cancellation; aborts figure extraction and stops the
+ * deck promptly (a cancelled generation rejects instead of returning).
  * @returns the produced file.
  */
 export async function generateMeetingDeck(
   deps: WikiAdminDeps & { readonly workspaceDir: string; readonly meetings?: MeetingDeps },
   request: GenerateMeetingRequest,
+  signal?: AbortSignal,
 ): Promise<ResearchGenerateMeetingResult> {
   const project = deps.domain.table('projects').get(request.projectId)
   if (project === undefined) return rejected({ code: 'project-not-found', projectId: request.projectId })
@@ -552,10 +555,11 @@ export async function generateMeetingDeck(
     const warmPdf = deps.meetings?.fetchPdf
       ?? (async (arxivId: string) => { await fetchPaperPdf(deps, { arxivId }) })
     for (const paper of papers) {
+      signal?.throwIfAborted()
       if ((await resolvePaperPdf(deps.workspaceDir, paper.arxivId)) === undefined) {
         await warmPdf(paper.arxivId).catch(() => undefined)
       }
-      const assets = await extractPaperFigures(deps.workspaceDir, paper.arxivId)
+      const assets = await extractPaperFigures(deps.workspaceDir, paper.arxivId, { ...(signal === undefined ? {} : { signal }) })
       if (assets.length > 0) paperFigures[paper.arxivId] = assets
     }
   }
@@ -566,17 +570,32 @@ export async function generateMeetingDeck(
   let coverArt: string | undefined
   const paperArt: Record<string, string> = {}
   let illustrations = 0
-  if (request.aiIllustrations === true && dir !== undefined) {
+  if (request.aiIllustrations === true) {
+    // Validate the target directory BEFORE any external image-generation
+    // call: an escaping or symlinked paperDir is rejected as `invalid-dir`
+    // up front, never carried into the API call or the file write (#213).
+    const realDir = await resolvePaperDirReal(deps.workspaceDir, undefined, project.paperDir)
+    if (realDir === undefined) {
+      return rejected({ code: 'invalid-dir', dir: project.paperDir ?? DEFAULT_PAPER_DIR })
+    }
     const imageGen = await readImageGenConfig(deps.workspaceDir)
     if (imageGen.apiKey !== '') {
-      const paperDir = project.paperDir ?? 'paper'
+      const paperDir = project.paperDir ?? DEFAULT_PAPER_DIR
       const illustrate = async (stem: string, caption: string, prompt: string): Promise<string | undefined> => {
+        // Outside the try: a caller cancel must abort the deck, not read as
+        // "this one image failed" (#247). The fetch itself also observes the
+        // signal, racing the per-request timeout.
+        signal?.throwIfAborted()
         try {
-          const image = await generateImage(imageGen, prompt)
+          const image = await generateImage(imageGen, prompt, undefined, signal)
           const relPath = await saveDeckIllustration(deps, project.id, paperDir, stem, caption, image)
           illustrations += 1
           return join(deps.workspaceDir, paperDir, relPath)
-        } catch {
+        } catch (error) {
+          // An aborted fetch still means the caller cancelled: rethrow so the
+          // deck stops instead of silently shipping without illustrations.
+          if (signal?.aborted === true) throw signal.reason
+          if (error instanceof Error && error.name === 'AbortError') throw error
           return undefined
         }
       }

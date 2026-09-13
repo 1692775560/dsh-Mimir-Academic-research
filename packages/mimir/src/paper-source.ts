@@ -1,15 +1,19 @@
 /**
- * File-level operations for the shared paper's `main.tex`: a read snapshot
- * carrying the mtime the content was read from, and an optimistic-concurrency
- * replace. The save runs the mtime check and the atomic commit inside the
- * cross-process writer lock (`withFileLock`), so an agent writing through the
- * file tools and a human saving from the panel can never interleave a
- * check-then-write. Pure path in, structured outcome out — no wire types.
+ * File-level operations for the shared paper's `main.tex` (and the same
+ * operations reused for `references.bib`): a read snapshot carrying the mtime
+ * the content was read from, and an optimistic-concurrency replace. Reads and
+ * saves share ONE cross-process writer lock per file (`withFileLock`): the
+ * save runs its mtime check and its atomic commit under the lock, and the read
+ * now takes the same lock so it cannot observe the check-then-commit
+ * half-applied. An agent writing through the file tools, a human saving from
+ * the panel, and a reader building an outline/diff base can therefore never
+ * interleave a check-then-write or pair new content with a stale mtime. Pure
+ * path in, structured outcome out — no wire types.
  * @module dsh-mimir/src/paper-source
  */
 
-import { readFile, stat } from 'node:fs/promises'
-import { basename, isAbsolute, resolve, sep } from 'node:path'
+import { readFile, realpath, stat } from 'node:fs/promises'
+import { basename, dirname, isAbsolute, resolve, sep } from 'node:path'
 import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 
 /** Paper directory used when neither the request nor the project names one. */
@@ -36,6 +40,41 @@ export function resolvePaperDir(
   const root = resolve(workspaceDir)
   const resolved = resolve(root, candidate)
   return resolved === root || resolved.startsWith(root + sep) ? resolved : undefined
+}
+
+/**
+ * Realpath-backed variant of {@link resolvePaperDir} (#213): the lexical
+ * check first, then the nearest existing ancestor of the resolved directory
+ * must realpath INSIDE the workspace's realpath — a symlinked paper
+ * directory (or a symlink anywhere along the path) cannot smuggle reads and
+ * writes outside the workspace. A directory that does not exist yet passes
+ * when its ancestor chain is clean; the caller's mkdir then creates a real
+ * directory. Returns undefined for a violating path (`invalid-dir`).
+ * @param workspaceDir - absolute research workspace root.
+ * @param requestDir - directory the caller explicitly asked for, if any.
+ * @param projectPaperDir - the project record's `paperDir`, if any.
+ * @returns the absolute paper directory, or undefined for a violating path.
+ */
+export async function resolvePaperDirReal(
+  workspaceDir: string,
+  requestDir?: string,
+  projectPaperDir?: string,
+): Promise<string | undefined> {
+  const resolved = resolvePaperDir(workspaceDir, requestDir, projectPaperDir)
+  if (resolved === undefined) return undefined
+  const rootReal = await realpath(resolve(workspaceDir)).catch(() => undefined)
+  if (rootReal === undefined) return undefined
+  // realpath rejects on ENOENT; walk up to the nearest existing ancestor.
+  let probe = resolved
+  for (;;) {
+    const probeReal = await realpath(probe).catch(() => undefined)
+    if (probeReal !== undefined) {
+      return probeReal === rootReal || probeReal.startsWith(rootReal + sep) ? resolved : undefined
+    }
+    const parent = dirname(probe)
+    if (parent === probe) return undefined
+    probe = parent
+  }
 }
 
 /** Content of `main.tex` plus the mtime it was read from. */
@@ -67,11 +106,43 @@ async function statOrUndefined(path: string): Promise<{ mtimeMs: number; mode: n
 }
 
 /**
- * Read `main.tex` with the mtime its content belongs to.
+ * Read a workspace text file with the mtime its content belongs to. The read
+ * and the stat are both inside the file's cross-process writer lock, so a
+ * save (which commits under the same lock) can never land between them: the
+ * caller gets a snapshot whose content matches the mtime it carries. Without
+ * the lock, a read/stat pair could straddle a writer's atomic rename and pair
+ * the new content with the old inode's mtime — a stale-mtime base that would
+ * wrongly accept (or wrongly reject) the next optimistic save.
+ *
+ * The lock is the same `withFileLock` the save path holds, so a read is
+ * mutually exclusive with a save of the same file. The writer lock is NOT
+ * re-entrant: callers that already hold the lock for `texPath` (a
+ * read-modify-write like {@link appendBibEntries}) must read via the exported
+ * {@link readPaperSourceUnlocked} instead of nesting this helper, which would
+ * self-deadlock until the lock times out.
  * @param texPath - absolute path of the paper's `main.tex`.
  * @returns the snapshot, or undefined when the paper has not been scaffolded.
  */
 export async function readPaperSource(texPath: string): Promise<PaperSourceSnapshot | undefined> {
+  // The writer lock requires the parent directory to exist; a missing file or
+  // directory is reported absent without joining the lock — the same
+  // pre-check the save path uses for `missing`, keeping a `paper-not-found`
+  // from surfacing as a lock-setup ENOENT. The pre-check carries no mtime
+  // claim, so it introduces no read/save coherence hazard.
+  if (await statOrUndefined(texPath) === undefined) return undefined
+  return await withFileLock(texPath, () => readPaperSourceUnlocked(texPath))
+}
+
+/**
+ * Read a workspace text file without taking the writer lock. For callers that
+ * already hold the lock for the same path (the outer read-modify-write of
+ * {@link appendBibEntries}) — nesting the locking read would self-deadlock.
+ * Prefer {@link readPaperSource} for standalone reads: this unlocked variant
+ * can pair new content with a stale mtime if it straddles an atomic rename.
+ * @param texPath - absolute path of the file to read.
+ * @returns the snapshot, or undefined when the file has not been scaffolded.
+ */
+export async function readPaperSourceUnlocked(texPath: string): Promise<PaperSourceSnapshot | undefined> {
   try {
     const content = await readFile(texPath, 'utf8')
     const stats = await stat(texPath)
@@ -98,6 +169,9 @@ export async function readPaperSource(texPath: string): Promise<PaperSourceSnaps
  * @param baseMtimeMs - mtime the draft is based on, or null for create-only.
  * @returns `saved` with the committed mtime, `missing` when the file was
  * expected but is gone, or `conflict` with the mtime that displaced the base.
+ * The save shares the file's cross-process writer lock with
+ * {@link readPaperSource}, so a read and a save of the same file are mutually
+ * exclusive and a save's check-then-commit pair is never observable halfway.
  */
 export async function saveTextFileOptimistic(
   filePath: string,

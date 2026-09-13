@@ -12,7 +12,7 @@
  */
 
 import { useRef, useState } from 'react'
-import type { ResearchBackupStatusView, ResearchImportWikiMode, ResearchWikiSnapshot } from 'dsh-mimir/types'
+import type { ResearchBackupStatusView, ResearchImportWikiMode, ResearchScheduledTaskView, ResearchWikiSnapshot } from 'dsh-mimir/types'
 import type { ResearchFailureView } from './controller.ts'
 import { failureCopy, type ResearchT } from './view-common.ts'
 import {
@@ -36,9 +36,11 @@ function totalOf(counts: Record<string, number>): number {
  * @returns the data card: two actions, then the pending-import summary or
  * the settled result.
  */
-export function DataSection({ backup, exportWiki, importWiki, t }: {
+export function DataSection({ backup, taskHealth, exportWiki, importWiki, t }: {
   /** Scheduled-backup status; null hides the line (not loaded yet). */
   readonly backup: ResearchBackupStatusView | null
+  /** Scheduled-task health snapshot (#223); null hides the block. */
+  readonly taskHealth: readonly ResearchScheduledTaskView[] | null
   readonly exportWiki: () => Promise<ResearchWikiSnapshot | ResearchFailureView>
   readonly importWiki: (
     snapshot: unknown,
@@ -123,6 +125,23 @@ export function DataSection({ backup, exportWiki, importWiki, t }: {
             ? `${t('overview.backupEvery')} ${backup.intervalMinutes} ${t('overview.backupMinutes')} · ${t('overview.backupKeep')} ${backup.keep} · ${backup.count} ${t('overview.backupStored')}`
             : t('overview.backupDisabled')}
         </p>
+      )}
+      {taskHealth !== null && taskHealth.length > 0 && (
+        <ul className={css.artifactList} aria-label={t('overview.taskHealth')}>
+          {taskHealth.map(task => (
+            <li key={task.name}>
+              <span data-danger={task.consecutiveFailures > 0 || undefined}>
+                {t(`taskName.${task.name}` as Parameters<ResearchT>[0])}
+              </span>
+              {' · '}
+              {task.consecutiveFailures > 0
+                ? `${t('overview.taskFailing')} × ${task.consecutiveFailures}${task.lastError === null ? '' : `：${task.lastError}`}`
+                : task.lastSuccessAt === null
+                  ? t('overview.taskIdle')
+                  : `${t('overview.taskOk')} · ${new Date(task.lastSuccessAt).toLocaleString()}`}
+            </li>
+          ))}
+        </ul>
       )}
       <div className={css.dataActions}>
         <button type="button" className={css.btn} disabled={busy} onClick={onExport}>
