@@ -27,6 +27,7 @@ import {
   snapshotEnvelopeError, tableRowsError, WIKI_TABLE_NAMES,
 } from '../src/wiki-snapshot.ts'
 import { apply, Config } from '../src/index.ts'
+import { TaskHealthRegistry } from '../src/task-health.ts'
 import type { PaperRecord, ResearchWikiSnapshot } from '../src/types.ts'
 import { ResearchService } from '../src/service.ts'
 
@@ -140,7 +141,7 @@ describe('startWikiBackupLoop', () => {
     const { domain, workspaceDir } = await openDomain()
     const dir = join(workspaceDir, 'backups')
     const stop = startWikiBackupLoop({
-      domain, dir, intervalMs: 40, keep: 24, firstDelayMs: 10, onError: () => {},
+      domain, dir, intervalMs: 40, keep: 24, firstDelayMs: 10, health: new TaskHealthRegistry(), onError: () => {},
     })
     try {
       // Race-safe: a pass may be mid atomic-write when readdir runs, so fold
@@ -160,7 +161,7 @@ describe('startWikiBackupLoop', () => {
     const runBackup = vi.fn(() => new Promise<string>(resolve => { calls.push(() => resolve('done')) }))
     const dir = await mkdtemp(join(tmpdir(), 'mimir-backup-loop-'))
     const stop = startWikiBackupLoop({
-      domain: {} as never, dir, intervalMs: 5, keep: 24, firstDelayMs: 1, onError: () => {}, runBackup,
+      domain: {} as never, dir, intervalMs: 5, keep: 24, firstDelayMs: 1, health: new TaskHealthRegistry(), onError: () => {}, runBackup,
     })
     try {
       await vi.waitFor(() => { expect(runBackup).toHaveBeenCalledTimes(1) }, { timeout: 5000, interval: 5 })
@@ -180,7 +181,7 @@ describe('startWikiBackupLoop', () => {
     await writeFile(blocker, 'occupied')
     const errors: unknown[] = []
     const stop = startWikiBackupLoop({
-      domain, dir: blocker, intervalMs: 30, keep: 24, firstDelayMs: 5,
+      domain, dir: blocker, intervalMs: 30, keep: 24, firstDelayMs: 5, health: new TaskHealthRegistry(),
       onError: (error) => { errors.push(error) },
     })
     try {
@@ -196,7 +197,7 @@ describe('startWikiBackupLoop', () => {
     const { domain, workspaceDir } = await openDomain()
     const dir = join(workspaceDir, 'backups')
     const stop = startWikiBackupLoop({
-      domain, dir, intervalMs: 20, keep: 24, firstDelayMs: 60_000, onError: () => {},
+      domain, dir, intervalMs: 20, keep: 24, firstDelayMs: 60_000, health: new TaskHealthRegistry(), onError: () => {},
     })
     stop()
     await new Promise(resolveTimer => setTimeout(resolveTimer, 100))

@@ -7,12 +7,15 @@
 import { describe, expect, it } from 'vitest'
 import type { ExperimentRecord } from 'dsh-mimir/types'
 import {
-  barWidthPercents,
+  barSpans,
+  bestRowIndex,
   chartNameLines,
   formatDurationMs,
   formatMetricValue,
   metricChartRows,
+  metricDirectionsOf,
   numericMetricKeys,
+  zeroLinePct,
 } from '../src/client/view-common.ts'
 
 /** One experiment fixture; only the fields the helpers read. */
@@ -58,15 +61,85 @@ describe('metricChartRows', () => {
   })
 })
 
-describe('barWidthPercents', () => {
-  it('normalizes to the largest value and clamps into 0–100', () => {
-    expect(barWidthPercents([92.4, 88.1, 46.2])).toEqual([100, (88.1 / 92.4) * 100, 50])
+describe('barSpans', () => {
+  it('normalizes non-negative charts to the largest value, zero at the lane edge', () => {
+    expect(barSpans([92.4, 88.1, 46.2])).toEqual([
+      { leftPct: 0, widthPct: 100, negative: false },
+      { leftPct: 0, widthPct: (88.1 / 92.4) * 100, negative: false },
+      { leftPct: 0, widthPct: 50, negative: false },
+    ])
   })
 
-  it('collapses an all-non-positive chart to zero-width bars', () => {
-    expect(barWidthPercents([0, 0])).toEqual([0, 0])
-    expect(barWidthPercents([])).toEqual([])
-    expect(barWidthPercents([-1, -2])).toEqual([0, 0])
+  it('collapses an all-zero chart to zero-width bars', () => {
+    expect(barSpans([0, 0])).toEqual([
+      { leftPct: 0, widthPct: 0, negative: false },
+      { leftPct: 0, widthPct: 0, negative: false },
+    ])
+    expect(barSpans([])).toEqual([])
+  })
+
+  it('extends negative bars left of the zero line (#220)', () => {
+    // Lane spans [-2, 1] → 3 units; zero sits at 2/3 of the lane.
+    expect(barSpans([-2, 1])).toEqual([
+      { leftPct: 0, widthPct: (2 / 3) * 100, negative: true },
+      { leftPct: (2 / 3) * 100, widthPct: (1 / 3) * 100, negative: false },
+    ])
+  })
+
+  it('keeps an all-negative chart on the zero baseline (bars grow leftward)', () => {
+    expect(barSpans([-1, -2])).toEqual([
+      { leftPct: 50, widthPct: 50, negative: true },
+      { leftPct: 0, widthPct: 100, negative: true },
+    ])
+  })
+})
+
+describe('zeroLinePct', () => {
+  it('returns null when no value is negative (the lane edge IS the zero line)', () => {
+    expect(zeroLinePct([0, 3])).toBeNull()
+    expect(zeroLinePct([])).toBeNull()
+  })
+
+  it('positions the zero line inside the lane when a value is negative', () => {
+    expect(zeroLinePct([-2, 1])).toBe((2 / 3) * 100)
+    expect(zeroLinePct([-1, -2])).toBe(100)
+  })
+})
+
+describe('bestRowIndex', () => {
+  const rows = metricChartRows([
+    run('e1', { loss: 0.8 }, '2026-08-01T00:00:00Z'),
+    run('e2', { loss: 0.5 }, '2026-08-02T00:00:00Z'),
+    run('e3', { loss: 0.9 }, '2026-08-03T00:00:00Z'),
+  ], 'loss')
+
+  it('picks the smallest value for min and the largest for max', () => {
+    expect(bestRowIndex(rows, 'min')).toBe(1)
+    expect(bestRowIndex(rows, 'max')).toBe(2)
+  })
+
+  it('highlights nothing for none and keeps the earliest row on ties', () => {
+    expect(bestRowIndex(rows, 'none')).toBeNull()
+    expect(bestRowIndex([], 'min')).toBeNull()
+    const tied = metricChartRows([
+      run('t1', { loss: 0.5 }, '2026-08-01T00:00:00Z'),
+      run('t2', { loss: 0.5 }, '2026-08-02T00:00:00Z'),
+    ], 'loss')
+    expect(bestRowIndex(tied, 'min')).toBe(0)
+  })
+})
+
+describe('metricDirectionsOf', () => {
+  it('merges per-record directions with the later-updated record winning', () => {
+    const directions = metricDirectionsOf([
+      { ...run('new', { acc: 90 }, '2026-08-02T00:00:00Z'), metricDirections: { acc: 'max' } },
+      { ...run('old', { acc: 80, loss: 0.5 }, '2026-08-01T00:00:00Z'), metricDirections: { acc: 'min', loss: 'min' } },
+    ])
+    expect(directions).toEqual({ acc: 'max', loss: 'min' })
+  })
+
+  it('treats records without the field as contributing nothing', () => {
+    expect(metricDirectionsOf([run('e1', { loss: 1 }, '2026-08-01T00:00:00Z')])).toEqual({})
   })
 })
 

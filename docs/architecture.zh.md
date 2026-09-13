@@ -63,6 +63,29 @@ remote face 调用它。
 `figures`、`events`、`venue_watches`。只许增量变更：可选字段带 `.default(...)`，
 新表对旧快照空开。`events` 是只追加的账本，驱动记录视图和认知引擎。
 
+## HTTP 路由权限模型
+
+`/research/*` 路由分两类（`http-write-boundary.ts`，#210）。**写路由**（图上传、
+模板上传）要求 `Origin` 头与 `Host` 精确同源（`isSameOriginWrite`）。**读/下载
+路由**（编译 PDF、论文 PDF、图、组会 deck、SSE events）只对 loopback 面板开放
+（`isTrustedRead`）：`Host` 必须指向 loopback 监听（`localhost`/`127.0.0.1`/
+`[::1]`，任意端口）；若带 `Origin`（跨源 fetch 必带）则必须与 `Host` 精确一致。
+面板的 `<img>`/`<iframe>`/`<a>` 导航不带 `Origin`，仅靠 Host 校验即可通过。
+DNS rebinding 下反弹请求带的是攻击者域名，天然被拒。部署边界：dsh 经反代或
+LAN 暴露时这些路由仍按设计只认 loopback，远程暴露只能放在会改写 `Host` 的
+认证代理之后。
+
+## 远程 job 生命周期
+
+单一权威契约在 `job-lifecycle.ts`（#225）：`queued → running →
+succeeded|failed`，外加三种「无观测结局」——`cancelled`（用户主动中止
+本地会话）、`interrupted`（宿主 dispose/重启时 job 仍活跃；重启恢复把
+残留 job 结到这里）、`unknown`（会话超过 30 分钟时长上限被丢弃，远端
+进程可能仍在运行）。输出超过 4 MiB 捕获上限是明确的 `failed`（记录里
+写明），绝不静默截断。关联实验的生命周期更粗：只有观测到的
+`succeeded` 落成 `success`，其余终态都落成 `failed`，精确原因留在 job
+记录上。
+
 ## Agent 能力面
 
 - **工具（9 个）**：`arxiv_search`、`web_search`、`wiki_note`、`figure_save`、

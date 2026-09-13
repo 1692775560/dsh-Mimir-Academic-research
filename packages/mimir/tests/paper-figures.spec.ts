@@ -136,4 +136,43 @@ describe('extractPaperFigures', () => {
     expect(assets).toEqual([])
     expect(calls).toHaveLength(0)
   })
+
+  it('threads the abort signal to the runner and rejects on cancel instead of degrading (#233)', async () => {
+    const dir = await workspace()
+    await mkdir(join(dir, 'papers'), { recursive: true })
+    await writeFile(join(dir, 'papers', '2304.06024.pdf'), '%PDF fake')
+    const controller = new AbortController()
+    let seenSignal: AbortSignal | undefined
+
+    // Before the fix the runner never received a signal and a failure was
+    // swallowed into []; an abort must propagate so the deck stops promptly.
+    const pending = extractPaperFigures(dir, '2304.06024', {
+      skillsDir: await workspace(),
+      signal: controller.signal,
+      run: async (_e, _args, _timeout, signal) => {
+        seenSignal = signal
+        controller.abort()
+        throw new Error('figure extraction was cancelled')
+      },
+    })
+
+    await expect(pending).rejects.toThrow('cancelled')
+    expect(seenSignal).toBe(controller.signal)
+  })
+
+  it('rejects immediately when the signal is already aborted', async () => {
+    const dir = await workspace()
+    await mkdir(join(dir, 'papers'), { recursive: true })
+    await writeFile(join(dir, 'papers', '2304.06024.pdf'), '%PDF fake')
+    const controller = new AbortController()
+    controller.abort()
+    const calls: string[][] = []
+
+    await expect(extractPaperFigures(dir, '2304.06024', {
+      skillsDir: await workspace(),
+      signal: controller.signal,
+      run: async (_e, args) => { calls.push([...args]) },
+    })).rejects.toThrow()
+    expect(calls).toHaveLength(0) // no clone, no extract
+  })
 })

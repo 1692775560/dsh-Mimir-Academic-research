@@ -16,6 +16,7 @@ import { createServer } from 'node:net'
 import type { AddressInfo } from 'node:net'
 import { describe, expect, it, vi, afterEach } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
+import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -646,6 +647,55 @@ describe('ResearchService.fetchPaperPdf', () => {
     expect(domain.table('papers').get(ARXIV_ENTRY.id)?.pdfPath).toBe('papers/2103.00020v2.pdf')
   })
 
+  it('merges a completed download with paper fields updated while it was in flight', async () => {
+    let releaseDownload!: (response: Response) => void
+    const download = new Promise<Response>(resolve => { releaseDownload = resolve })
+    vi.stubGlobal('fetch', async () => download)
+    const { domain, service } = await harness()
+    await service.importPaper({ entry: ARXIV_ENTRY })
+    const pending = service.fetchPaperPdf({ arxivId: ARXIV_ENTRY.id })
+
+    await service.updatePaper({ arxivId: ARXIV_ENTRY.id, notes: 'written during download', tags: ['important'] })
+    releaseDownload(new Response(PDF_BYTES, { status: 200 }))
+
+    await expect(pending).resolves.toMatchObject({ ok: true, value: { paper: { pdfPath: 'papers/2103.00020v2.pdf' } } })
+    expect(domain.table('papers').get(ARXIV_ENTRY.id)).toMatchObject({
+      notes: 'written during download',
+      tags: ['important'],
+      pdfPath: 'papers/2103.00020v2.pdf',
+    })
+  })
+
+  it('keeps a repeated PDF download idempotent', async () => {
+    vi.stubGlobal('fetch', async () => new Response(PDF_BYTES, { status: 200 }))
+    const { domain, service } = await harness()
+    await service.importPaper({ entry: ARXIV_ENTRY })
+    await service.updatePaper({ arxivId: ARXIV_ENTRY.id, notes: 'keep this note' })
+
+    await expect(service.fetchPaperPdf({ arxivId: ARXIV_ENTRY.id })).resolves.toMatchObject({ ok: true })
+    await expect(service.fetchPaperPdf({ arxivId: ARXIV_ENTRY.id })).resolves.toMatchObject({ ok: true })
+    expect(domain.table('papers').get(ARXIV_ENTRY.id)).toMatchObject({
+      notes: 'keep this note',
+      pdfPath: 'papers/2103.00020v2.pdf',
+    })
+  })
+
+  it('does not resurrect a paper deleted while its PDF was downloading', async () => {
+    let releaseDownload!: (response: Response) => void
+    const download = new Promise<Response>(resolve => { releaseDownload = resolve })
+    vi.stubGlobal('fetch', async () => download)
+    const { domain, workspaceDir, service } = await harness()
+    await service.importPaper({ entry: ARXIV_ENTRY })
+    const pending = service.fetchPaperPdf({ arxivId: ARXIV_ENTRY.id })
+
+    await service.removePaper({ arxivId: ARXIV_ENTRY.id })
+    releaseDownload(new Response(PDF_BYTES, { status: 200 }))
+
+    await expect(pending).resolves.toMatchObject({ ok: false, error: { code: 'paper-not-found' } })
+    expect(domain.table('papers').get(ARXIV_ENTRY.id)).toBeUndefined()
+    await expect(stat(join(workspaceDir, 'papers', '2103.00020v2.pdf'))).rejects.toThrow()
+  })
+
   it('reports paper-not-found for an unknown id and never fetches', async () => {
     let fetches = 0
     vi.stubGlobal('fetch', async () => {
@@ -1081,7 +1131,8 @@ describe('ResearchService bibliography remotes', () => {
     const text = await readFile(join(workspaceDir, 'paper', 'references.bib'), 'utf8')
     expect(text).toContain('@misc{210300020v2,')
     expect(text).toContain('eprint = {2103.00020v2}')
-    expect(text).toContain('note = {baseline notes}')
+    // Reading notes are workbench-private; they never enter the citation (#219).
+    expect(text).not.toContain('baseline notes')
     // url falls back to the arXiv abs page when the record carries none.
     expect(text).toContain('url = {https://arxiv.org/abs/1812.01187v1}')
     // A repeat import skips both; a mix adds only the new one.
@@ -1425,6 +1476,66 @@ describe('ResearchService.saveExperiment', () => {
     if (!updated.ok) throw new Error('unreachable')
     expect(updated.value.experiment.serverId).toBe(serverId)
   })
+
+  it('stores and round-trips metricDirections (#220)', async () => {
+    const h = await harness()
+    await seed(h)
+    const created = await h.service.saveExperiment({
+      experiment: {
+        projectId: PROJECT.id,
+        name: 'run',
+        status: 'running',
+        metrics: { loss: 0.5, acc: 0.9 },
+        metricDirections: { loss: 'min', acc: 'max' },
+      },
+    })
+    if (!created.ok) throw new Error('create failed')
+    expect(created.value.experiment.metricDirections).toEqual({ loss: 'min', acc: 'max' })
+    // An update that omits the field keeps the stored directions.
+    const kept = await h.service.saveExperiment({
+      experiment: {
+        id: created.value.experiment.id,
+        projectId: PROJECT.id,
+        name: 'run',
+        status: 'success',
+        metrics: { loss: 0.4, acc: 0.91 },
+      },
+    })
+    if (!kept.ok) throw new Error('update failed')
+    expect(kept.value.experiment.metricDirections).toEqual({ loss: 'min', acc: 'max' })
+    // An update that provides the field replaces it wholesale.
+    const replaced = await h.service.saveExperiment({
+      experiment: {
+        id: created.value.experiment.id,
+        projectId: PROJECT.id,
+        name: 'run',
+        status: 'success',
+        metrics: { loss: 0.4, acc: 0.91 },
+        metricDirections: { acc: 'max' },
+      },
+    })
+    if (!replaced.ok) throw new Error('replace failed')
+    expect(replaced.value.experiment.metricDirections).toEqual({ acc: 'max' })
+  })
+
+  it('rejects bad metricDirections as invalid-input (#220)', async () => {
+    const h = await harness()
+    await seed(h)
+    // A direction naming no metric.
+    await expect(h.service.saveExperiment({
+      experiment: {
+        projectId: PROJECT.id, name: 'run', status: 'running',
+        metrics: { loss: 0.5 }, metricDirections: { ghost: 'min' },
+      },
+    })).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    // A direction outside the enum.
+    await expect(h.service.saveExperiment({
+      experiment: {
+        projectId: PROJECT.id, name: 'run', status: 'running',
+        metrics: { loss: 0.5 }, metricDirections: { loss: 'up' as 'min' },
+      },
+    })).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+  })
 })
 
 describe('ResearchService arXiv subscriptions (facade)', () => {
@@ -1600,6 +1711,40 @@ describe('ResearchService.renameFigure', () => {
     await scaffoldPaper(workspaceDir)
     await expect(service.renameFigure({ projectId: 'p1', relPath: 'figures/plot.png', newName: 'plot.png' }))
       .resolves.toEqual({ ok: true, value: { relPath: 'figures/plot.png', references: 0 } })
+  })
+
+  it('runs the reference rewrite under the body lock: a draft landed mid-rename survives (R23)', async () => {
+    const { domain, workspaceDir, service } = await harness()
+    await domain.table('projects').put(PROJECT.id, PROJECT)
+    await scaffoldWithReference(workspaceDir)
+    const texPath = join(workspaceDir, 'paper', 'main.tex')
+    // A body edit lands (the agent's file tools, or a panel save) while the
+    // rename is in flight: it keeps the figure block and adds a paragraph. The
+    // edit is a raw write that does NOT take the body lock — exactly the writer
+    // a lock-free rename rewrite would clobber by rewriting a body it read
+    // before the edit landed.
+    const draft = '\\documentclass{article}\n\\begin{document}\n\\section{Draft paragraph kept}\n\\includegraphics[width=\\linewidth]{figures/plot.png}\n\\end{document}\n'
+    // Hold main.tex's writer lock (the same lock a rename rewrite now waits
+    // on), THEN fire the rename: it moves the figure file and must block on
+    // this lock before rewriting the body.
+    let releaseRename = (): void => {}
+    const renameMayRun = new Promise<void>(resolve => { releaseRename = resolve })
+    const renaming = (async () => {
+      await renameMayRun
+      return service.renameFigure({ projectId: 'p1', relPath: 'figures/plot.png', newName: 'loss-curve.png' })
+    })()
+    await withFileLock(texPath, async () => {
+      releaseRename()
+      await writeFileAtomic(texPath, draft, { mode: 0o666 })
+      // Returning releases the lock; the rename's rewrite then re-reads the
+      // NEW body and rewrites only the figure reference onto it.
+    })
+    const outcome = await renaming
+    expect(outcome).toEqual({ ok: true, value: { relPath: 'figures/loss-curve.png', references: 2 } })
+    // Both edits survive: the draft's paragraph and the renamed reference.
+    const body = await readFile(texPath, 'utf8')
+    expect(body).toContain('\\section{Draft paragraph kept}')
+    expect(body).toContain('\\includegraphics[width=\\linewidth]{figures/loss-curve.png}')
   })
 })
 

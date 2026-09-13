@@ -51,7 +51,7 @@ export function createMeetingDeckTool(workspaceDir: string, domain: ResearchWiki
       schema: { type: 'json' },
       render: (_args, value) => [{ type: 'text', text: JSON.stringify(value) }],
     },
-    execute: async (args: MeetingDeckArgs): Promise<JsonValue> => {
+    execute: async (args: MeetingDeckArgs, exec): Promise<JsonValue> => {
       if (args.project_id === undefined || args.project_id.trim().length === 0) {
         throw new Error('meeting_deck requires a non-empty \'project_id\'')
       }
@@ -67,7 +67,7 @@ export function createMeetingDeckTool(workspaceDir: string, domain: ResearchWiki
           figures: args.include_figures ?? true,
           papers: args.include_papers ?? true,
         },
-      })
+      }, exec.signal)
       if (!result.ok) {
         const detail = 'message' in result.error ? ` — ${result.error.message}` : ` (${JSON.stringify(result.error)})`
         throw new Error(`meeting_deck: ${result.error.code}${detail}`)

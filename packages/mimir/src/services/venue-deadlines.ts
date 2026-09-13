@@ -28,6 +28,7 @@ import type {
   VenueDeadlineView,
 } from '../types.ts'
 import { success, rejected } from './common.ts'
+import { startScheduledLoop, type TaskHealthRegistry } from '../task-health.ts'
 import type { WikiAdminDeps } from './wiki-admin.ts'
 
 /** The upstream aggregate (community-maintained ccfddl/ccf-deadlines). */
@@ -47,6 +48,35 @@ interface VenueCache {
 
 /** In-flight cache refreshes keyed by workspace, so timer and manual calls share one fetch. */
 const activeVenueRefreshes = new Map<string, Promise<VenueCache>>()
+
+/**
+ * Whether one cached record is a well-formed series. The cache is validated
+ * per record rather than per file: one malformed entry (a hand edit, a write
+ * cut short mid-array) must not take the whole catalog down with it (#241).
+ * Checks exactly the fields the folds dereference.
+ */
+function isVenueSeriesRecord(value: unknown): value is VenueSeries {
+  if (typeof value !== 'object' || value === null) return false
+  const series = value as Record<string, unknown>
+  if (typeof series['key'] !== 'string' || series['key'] === '') return false
+  if (typeof series['title'] !== 'string') return false
+  if (typeof series['description'] !== 'string') return false
+  if (typeof series['sub'] !== 'string') return false
+  if (!['A', 'B', 'C', 'N'].includes(series['ccfRank'] as string)) return false
+  if (typeof series['dblp'] !== 'string' && series['dblp'] !== null) return false
+  if (!Array.isArray(series['confs'])) return false
+  return series['confs'].every((conf: unknown) => {
+    if (typeof conf !== 'object' || conf === null) return false
+    const entry = conf as Record<string, unknown>
+    if (typeof entry['year'] !== 'number') return false
+    if (typeof entry['id'] !== 'string') return false
+    if (typeof entry['link'] !== 'string') return false
+    if (typeof entry['timezone'] !== 'string') return false
+    if (typeof entry['date'] !== 'string') return false
+    if (typeof entry['place'] !== 'string') return false
+    return Array.isArray(entry['timeline'])
+  })
+}
 
 /** Deps of the venue-deadline handlers: workspace root plus the wiki domain. */
 export type VenueDeadlineDeps = WikiAdminDeps & { readonly workspaceDir: string }
@@ -68,7 +98,9 @@ export async function loadVenueCache(workspaceDir: string): Promise<VenueCache |
     if (typeof parsed !== 'object' || parsed === null) return null
     const cache = parsed as Partial<VenueCache>
     if (typeof cache.fetchedAt !== 'string' || !Array.isArray(cache.venues)) return null
-    return { fetchedAt: cache.fetchedAt, venues: cache.venues }
+    // Per-record, not per-file: keep the good series, drop the bad ones
+    // instead of failing the whole batch (#241).
+    return { fetchedAt: cache.fetchedAt, venues: cache.venues.filter(isVenueSeriesRecord) }
   } catch {
     return null
   }
@@ -106,38 +138,40 @@ export async function refreshVenueCache(workspaceDir: string, fetchImpl: VenueFe
 
 /** Options for {@link startVenueDeadlineLoop}. */
 export interface VenueDeadlineLoopOptions {
+  /** The absolute research workspace root. */
   readonly workspaceDir: string
   /** Refresh cadence in milliseconds (default {@link VENUE_REFRESH_INTERVAL_MS}). */
   readonly intervalMs?: number
   /** Delay of the FIRST refresh in milliseconds (default 2s — startup stays fast). */
   readonly firstDelayMs?: number
+  /** Shared scheduled-task health book (#223); every pass is recorded. */
+  readonly health: TaskHealthRegistry
   /** Failure sink: refresh errors land here and the loop keeps going. */
   readonly onError: (error: unknown) => void
   /** Fetch seam (tests). */
   readonly fetchImpl?: VenueFetch
 }
 
+/** Health-book key of the venue-deadline refresh loop. */
+export const VENUE_DEADLINE_TASK = 'venue-deadlines'
+
 /**
  * Start the refresh loop: first pass shortly after plugin start, then every
- * `intervalMs`. A failed pass leaves the previous cache untouched. Both
- * timers are unref'd so they never hold the process open.
- * @returns dispose: clears the pending timers (an in-flight pass finishes).
+ * `intervalMs` after the previous pass settles, stretched by the shared
+ * backoff after consecutive failures (#223). A failed pass leaves the
+ * previous cache untouched. The timer is unref'd so it never holds the
+ * process open.
+ * @returns dispose: clears the pending timer (an in-flight pass finishes).
  */
 export function startVenueDeadlineLoop(options: VenueDeadlineLoopOptions): () => void {
-  const run = (): void => {
-    refreshVenueCache(options.workspaceDir, options.fetchImpl).catch(options.onError)
-  }
-  let interval: NodeJS.Timeout | undefined
-  const first = setTimeout(() => {
-    run()
-    interval = setInterval(run, options.intervalMs ?? VENUE_REFRESH_INTERVAL_MS)
-    interval.unref()
-  }, options.firstDelayMs ?? 2_000)
-  first.unref()
-  return () => {
-    clearTimeout(first)
-    if (interval !== undefined) clearInterval(interval)
-  }
+  return startScheduledLoop({
+    name: VENUE_DEADLINE_TASK,
+    health: options.health,
+    intervalMs: options.intervalMs ?? VENUE_REFRESH_INTERVAL_MS,
+    firstDelayMs: options.firstDelayMs ?? 2_000,
+    run: () => refreshVenueCache(options.workspaceDir, options.fetchImpl),
+    onError: options.onError,
+  })
 }
 
 /** Render one edition for the wire: deadlines become ISO instants. */

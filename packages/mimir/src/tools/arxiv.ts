@@ -222,6 +222,12 @@ export async function rememberFetchedPaper(
     projectIds: [...new Set([...(existing?.projectIds ?? []), ...(project === undefined ? [] : [project.id])])],
     ...(existing?.pdfPath === undefined ? {} : { pdfPath: existing.pdfPath }),
     addedAt: existing?.addedAt ?? new Date().toISOString(),
+    // Source publication metadata: refreshed when the entry carries it,
+    // preserved otherwise.
+    ...(entry.published !== ''
+      ? { published: entry.published }
+      : existing?.published === undefined ? {} : { published: existing.published }),
+    ...(existing?.doi === undefined ? {} : { doi: existing.doi }),
   }
   await table.put(entry.id, record)
   return record

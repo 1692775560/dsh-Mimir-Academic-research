@@ -14,6 +14,7 @@ import { mkdir, readdir, unlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { buildWikiSnapshot, type WikiSnapshotSource } from './wiki-snapshot.ts'
+import { startScheduledLoop, type TaskHealthRegistry } from './task-health.ts'
 
 /** Backup filename prefix; only files matching it are pruned. */
 export const WIKI_BACKUP_PREFIX = 'mimir-wiki-'
@@ -93,38 +94,34 @@ export interface WikiBackupLoopOptions {
   readonly keep: number
   /** Delay of the FIRST run in milliseconds (default {@link WIKI_BACKUP_FIRST_DELAY_MS}). */
   readonly firstDelayMs?: number
+  /** Shared scheduled-task health book (#223); every pass is recorded. */
+  readonly health: TaskHealthRegistry
   /** Failure sink: called with each pass's error; the loop keeps going. */
   readonly onError: (error: unknown) => void
   /** Backup implementation (test injection; defaults to {@link runWikiBackup}). */
   readonly runBackup?: typeof runWikiBackup
 }
 
+/** Health-book key of the wiki-backup loop. */
+export const WIKI_BACKUP_TASK = 'wiki-backup'
+
 /**
  * Start the backup loop: the first pass runs after `firstDelayMs` (startup
  * stays fast; the wiki rarely changes in the first minute), then every
- * `intervalMs`. Both timers are unref'd so they never hold the process open.
+ * `intervalMs` after the previous pass settles, stretched by the shared
+ * backoff after consecutive failures (#223). The timer is unref'd so it never
+ * holds the process open, and no pass outcome can stop the loop or the plugin.
  * @param options - see {@link WikiBackupLoopOptions}.
- * @returns dispose: clears the pending timers (an in-flight pass finishes).
+ * @returns dispose: clears the pending timer (an in-flight pass finishes).
  */
 export function startWikiBackupLoop(options: WikiBackupLoopOptions): () => void {
   const runBackup = options.runBackup ?? runWikiBackup
-  let inFlight = false
-  const run = (): void => {
-    if (inFlight) return
-    inFlight = true
-    runBackup(options.domain, options.dir, options.keep)
-      .catch(options.onError)
-      .finally(() => { inFlight = false })
-  }
-  let interval: NodeJS.Timeout | undefined
-  const first = setTimeout(() => {
-    run()
-    interval = setInterval(run, options.intervalMs)
-    interval.unref()
-  }, options.firstDelayMs ?? WIKI_BACKUP_FIRST_DELAY_MS)
-  first.unref()
-  return () => {
-    clearTimeout(first)
-    if (interval !== undefined) clearInterval(interval)
-  }
+  return startScheduledLoop({
+    name: WIKI_BACKUP_TASK,
+    health: options.health,
+    intervalMs: options.intervalMs,
+    firstDelayMs: options.firstDelayMs ?? WIKI_BACKUP_FIRST_DELAY_MS,
+    run: () => runBackup(options.domain, options.dir, options.keep),
+    onError: options.onError,
+  })
 }

@@ -607,7 +607,9 @@ export function PaperView({
   const stateCopy = compiling
     ? t('compile.running')
     : compileView.state === 'ok'
-      ? t('compile.ok')
+      // A backfilled status (PDF on disk, never compiled this session) reads
+      // differently from a witnessed one (#221).
+      ? compileView.observed ? t('compile.ok') : t('compile.okUnobserved')
       : compileView.state === 'error'
         ? t('compile.error')
         : t('compile.idle')

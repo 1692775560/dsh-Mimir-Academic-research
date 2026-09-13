@@ -13,7 +13,7 @@
 
 import { execFile } from 'node:child_process'
 import type { ExecFileException } from 'node:child_process'
-import { readFile, stat } from 'node:fs/promises'
+import { open, readFile, stat } from 'node:fs/promises'
 import { basename, isAbsolute, join } from 'node:path'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
@@ -26,6 +26,14 @@ export type { LatexEngineKind } from '../types.ts'
 
 /** Characters of log tail returned to the model; the rest is unrecoverable noise. */
 const LOG_EXCERPT_CHARS = 4096
+
+/**
+ * Bytes of an on-disk `main.log` worth reading. stdout/stderr already carry a
+ * maxBuffer cap; the disk log had none, so a pathological log could be read
+ * whole into memory. Diagnostics live at the tail — past the cap, only the
+ * last DISK_LOG_MAX_BYTES are read.
+ */
+const DISK_LOG_MAX_BYTES = 1_048_576
 
 /** The concrete executable and command-line dialect of one resolved engine. */
 export interface ResolvedLatexEngine {
@@ -181,6 +189,31 @@ export function parseTectonicErrors(log: string): LatexIssue[] {
   return issues
 }
 
+/**
+ * Read `main.log` with a size cap: whole file when small, only the last
+ * {@link DISK_LOG_MAX_BYTES} when large (diagnostics cluster at the tail).
+ * A tail read drops the first, possibly half-split, line. Missing or
+ * unreadable files resolve to undefined — the console output is the fallback.
+ */
+export async function readLogTail(logPath: string): Promise<string | undefined> {
+  const stats = await stat(logPath).catch(() => undefined)
+  if (stats?.isFile() !== true) return undefined
+  if (stats.size <= DISK_LOG_MAX_BYTES) {
+    return readFile(logPath, 'utf8').catch(() => undefined)
+  }
+  const handle = await open(logPath, 'r').catch(() => undefined)
+  if (handle === undefined) return undefined
+  try {
+    const buffer = Buffer.alloc(DISK_LOG_MAX_BYTES)
+    await handle.read(buffer, 0, DISK_LOG_MAX_BYTES, stats.size - DISK_LOG_MAX_BYTES)
+    const text = buffer.toString('utf8')
+    const firstNewline = text.indexOf('\n')
+    return firstNewline === -1 ? text : text.slice(firstNewline + 1)
+  } finally {
+    await handle.close()
+  }
+}
+
 /** Run the engine once, resolving with the merged output and the exit status. */
 function runEngine(
   engine: ResolvedLatexEngine,
@@ -230,9 +263,10 @@ export async function compileLatex(projectDir: string, options: LatexToolOptions
   const engine = await resolveLatexEngine(options.engine, options.probe)
   const { ok, log } = await runEngine(engine, projectDir, options.timeoutMs, signal)
   // Prefer the on-disk TeX log tectonic leaves behind (--keep-logs): it is
-  // far richer than tectonic's terse console lines.
+  // far richer than tectonic's terse console lines. Capped at the tail — an
+  // unbounded readFile let a pathological log into memory whole (#234).
   const diskLog = engine.kind === 'tectonic'
-    ? await readFile(join(projectDir, 'main.log'), 'utf8').catch(() => undefined)
+    ? await readLogTail(join(projectDir, 'main.log'))
     : undefined
   const source = diskLog ?? log
   const issues = diskLog !== undefined

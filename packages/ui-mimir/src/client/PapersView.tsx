@@ -176,10 +176,10 @@ function PaperPdfSection({ paper, fetchPaperPdf, updatePaper, onError, t }: {
 
 /**
  * The reading-notes side panel next to the open PDF reader: the record's
- * timestamped entries (parsed out of `notes`) as a list, then a quick-add
- * box appending a new `[YYYY-MM-DD HH:mm]` entry through the existing
- * `updatePaper` verb. The entry list re-derives from the refreshed record
- * after every save.
+ * entries (parsed out of `notes`, legacy/agent-written blocks included) as
+ * a list, then a quick-add box appending a new `[YYYY-MM-DD HH:mm]` entry
+ * through the existing `updatePaper` verb. The entry list re-derives from
+ * the refreshed record after every save.
  */
 function PaperNotesPanel({ paper, updatePaper, onError, t }: {
   readonly paper: PaperRecord
@@ -214,7 +214,7 @@ function PaperNotesPanel({ paper, updatePaper, onError, t }: {
         <div className={css.paperNoteList}>
           {entries.map((entry, index) => (
             <div key={`${entry.at}-${index}`} className={css.paperNoteItem}>
-              <span className={css.paperNoteAt}>{entry.at}</span>
+              {entry.at !== '' && <span className={css.paperNoteAt}>{entry.at}</span>}
               <p className={css.paperNoteText}>{entry.text}</p>
             </div>
           ))}

@@ -22,7 +22,20 @@ export interface ReviewerOptions {
   readonly provider: string
   /** Maximum review rounds before /research-review stops looping (default 3). */
   readonly maxRounds: number
+  /** Wall-clock budget per reviewer attempt in milliseconds (default 600_000). */
+  readonly timeoutMs: number
 }
+
+/**
+ * Outcome of one review round: a settled verdict, or a round that failed
+ * after one fresh retry. A failed round reports its reason instead of
+ * throwing, so a transient reviewer crash neither loses the command
+ * invocation nor consumes the project's reviewRounds counter. Caller
+ * cancellation still rejects — cancellation is not a failure state.
+ */
+export type ReviewOutcome =
+  | { readonly status: 'completed'; readonly round: ReviewRound; readonly retried: boolean }
+  | { readonly status: 'failed'; readonly reason: string; readonly attempts: number }
 
 /** One review request. */
 export interface ReviewRequest {
@@ -125,22 +138,26 @@ export function renderReviewRound(round: ReviewRound): string {
  *
  * The reviewer provider must be registered, support structured output and
  * personas, and not inherit parent context; a provider failing any of these
- * rejects with a named reason. A child that ends abnormally or without a
- * structured verdict rejects rather than degrading to a guess. WARN/FAIL
- * verdicts are handed to the parent agent as a revision follow-up.
+ * rejects with a named reason. A child that ends abnormally, times out
+ * (`options.timeoutMs` per attempt), or returns no structured verdict gets
+ * ONE fresh retry with a new reviewer child; a round still failing after the
+ * retry settles as a `failed` outcome rather than throwing, leaving earlier
+ * rounds untouched. Caller cancellation rejects immediately and never
+ * retries. WARN/FAIL verdicts are handed to the parent agent as a revision
+ * follow-up.
  *
  * @param ctx - Plugin context carrying the `subagents` service.
  * @param domain - Open research-wiki domain for the reviewRounds counter.
  * @param options - Resolved reviewer config.
  * @param request - Parent agent, absolute paths, scope, and cancellation.
- * @returns the validated verdict of this round.
+ * @returns the validated verdict of this round, or a failed-round outcome.
  */
 export async function runReview(
   ctx: Context,
   domain: ResearchWikiDomain,
   options: ReviewerOptions,
   request: ReviewRequest,
-): Promise<ReviewRound> {
+): Promise<ReviewOutcome> {
   if (request.paths.length === 0) throw new Error('research review requires at least one file path')
   const provider = ctx.subagents.getProvider(options.provider)
   if (provider === undefined) {
@@ -155,50 +172,71 @@ export async function runReview(
   if (provider.inheritsParentContext) {
     throw new Error(`research reviewer provider '${options.provider}' inherits parent context; review requires a fresh reviewer`)
   }
-
-  const run = await ctx.subagents.start(options.provider, {
-    label: `research review: ${request.scope}`,
-    prompt: [{ type: 'text', text: reviewerPrompt(request) }],
-    parent: request.parent,
-    signal: request.signal,
-    outputSchema: VERDICT_SCHEMA,
-    persona: REVIEWER_PERSONA,
-  })
-  try {
-    const result = await run.result
-    if (result.stopReason !== 'completed') {
-      throw new Error(`research reviewer ended abnormally (${result.stopReason})${result.diagnostic === undefined ? '' : `: ${result.diagnostic}`}`)
-    }
-    const round = readReviewRound(result.structured)
-
-    if (request.projectId !== undefined) {
-      if (domain.table('projects').get(request.projectId) === undefined) {
-        throw new Error(`research review named unknown project '${request.projectId}'`)
-      }
-      await domain.table('projects').update(request.projectId, current => ({
-        ...current,
-        reviewRounds: current.reviewRounds + 1,
-        updatedAt: new Date().toISOString(),
-      }))
-    }
-
-    if (round.verdict !== 'PASS') {
-      request.parent.followup(createUserMessage({
-        content: [{
-          type: 'text',
-          text: [
-            `Independent review of ${request.scope} returned ${round.verdict}.`,
-            '',
-            renderReviewRound(round),
-            '',
-            'Address every major issue (and minor ones where cheap), then run /research-review again.',
-          ].join('\n'),
-        }],
-        source: { kind: 'user' },
-      }))
-    }
-    return round
-  } finally {
-    await run.dispose()
+  if (request.projectId !== undefined
+    && domain.table('projects').get(request.projectId) === undefined) {
+    throw new Error(`research review named unknown project '${request.projectId}'`)
   }
+
+  /** One reviewer attempt: start a fresh child, await its verdict, always dispose. */
+  const attemptOnce = async (signal: AbortSignal): Promise<ReviewRound> => {
+    const run = await ctx.subagents.start(options.provider, {
+      label: `research review: ${request.scope}`,
+      prompt: [{ type: 'text', text: reviewerPrompt(request) }],
+      parent: request.parent,
+      signal,
+      outputSchema: VERDICT_SCHEMA,
+      persona: REVIEWER_PERSONA,
+    })
+    try {
+      const result = await run.result
+      if (result.stopReason !== 'completed') {
+        throw new Error(`research reviewer ended abnormally (${result.stopReason})${result.diagnostic === undefined ? '' : `: ${result.diagnostic}`}`)
+      }
+      return readReviewRound(result.structured)
+    } finally {
+      await run.dispose()
+    }
+  }
+
+  let reason = 'unknown reviewer failure'
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    request.signal.throwIfAborted()
+    const timeout = AbortSignal.timeout(options.timeoutMs)
+    const signal = AbortSignal.any([request.signal, timeout])
+    try {
+      const round = await attemptOnce(signal)
+
+      if (request.projectId !== undefined) {
+        await domain.table('projects').update(request.projectId, current => ({
+          ...current,
+          reviewRounds: current.reviewRounds + 1,
+          updatedAt: new Date().toISOString(),
+        }))
+      }
+
+      if (round.verdict !== 'PASS') {
+        request.parent.followup(createUserMessage({
+          content: [{
+            type: 'text',
+            text: [
+              `Independent review of ${request.scope} returned ${round.verdict}.`,
+              '',
+              renderReviewRound(round),
+              '',
+              'Address every major issue (and minor ones where cheap), then run /research-review again.',
+            ].join('\n'),
+          }],
+          source: { kind: 'user' },
+        }))
+      }
+      return { status: 'completed', round, retried: attempt > 1 }
+    } catch (error) {
+      if (request.signal.aborted) throw error
+      const what = timeout.aborted
+        ? `research reviewer timed out after ${options.timeoutMs}ms`
+        : 'research reviewer attempt failed'
+      reason = `${what}: ${error instanceof Error ? error.message : String(error)}`
+    }
+  }
+  return { status: 'failed', reason, attempts: 2 }
 }

@@ -12,6 +12,7 @@ import { useEffect, useState } from 'react'
 import type { ArxivEntry, ArxivSubscriptionView } from 'dsh-mimir/types'
 import type { ResearchFailureView, ResearchSubscriptionsView } from './controller.ts'
 import { subscriptionNewCount, totalNewSubscriptionCount, unimportedNewEntries } from './subscriptions.ts'
+import { readStorageFlag, storageFlagValue, writeStorageValue } from './storage.ts'
 import { failureCopy, type ResearchT } from './view-common.ts'
 import css from './ResearchPanel.module.css'
 
@@ -86,14 +87,10 @@ export function SubscriptionsBar({
   // The new-paper list defaults to folded (a long list floods the library
   // view); a successful manual check unfolds it once. The fold persists.
   const [newCollapsed, setNewCollapsed] = useState(
-    () => localStorage.getItem(NEW_ENTRIES_COLLAPSED_STORAGE_KEY) !== '0',
+    () => readStorageFlag(NEW_ENTRIES_COLLAPSED_STORAGE_KEY, true),
   )
   useEffect(() => {
-    try {
-      localStorage.setItem(NEW_ENTRIES_COLLAPSED_STORAGE_KEY, newCollapsed ? '1' : '0')
-    } catch {
-      // A full/blocked localStorage drops persistence; the fold still works.
-    }
+    writeStorageValue(NEW_ENTRIES_COLLAPSED_STORAGE_KEY, storageFlagValue(newCollapsed))
   }, [newCollapsed])
   const newTotal = totalNewSubscriptionCount(subscriptions.list, importedIds)
 

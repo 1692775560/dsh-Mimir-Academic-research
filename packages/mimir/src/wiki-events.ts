@@ -9,6 +9,7 @@
  */
 
 import type { IncomingMessage, ServerResponse } from 'node:http'
+import { isTrustedRead } from './http-write-boundary.ts'
 import type { ResearchWikiChangeEvent } from './types.ts'
 
 /** Keep-alive comment cadence; intermediaries drop quieter SSE streams. */
@@ -49,7 +50,8 @@ export function createWikiChangeHub(): WikiChangeHub {
 /**
  * Build the `/research/events` route handler: one SSE stream per connection,
  * one `data:` frame per change, a heartbeat comment every HEARTBEAT_MS, and
- * unsubscribe on close. Same-origin like the other `/research/*` routes.
+ * unsubscribe on close. Loopback-panel-only like the other `/research/*`
+ * download routes (`isTrustedRead`, #210).
  * @param hub - the wiki change hub.
  * @returns the route handler owning the full response lifecycle.
  */
@@ -59,6 +61,11 @@ export function createWikiEventsHandler(
   return (req, res) => {
     if (req.method !== 'GET') {
       res.writeHead(405).end()
+      return
+    }
+    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
+    if (!isTrustedRead(req.headers)) {
+      res.writeHead(403).end('wiki events are served to the loopback panel only')
       return
     }
     res.writeHead(200, {
