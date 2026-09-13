@@ -161,15 +161,6 @@ export type {
   ResearchCapsulePerspective,
 } from 'dsh-mimir/types'
 
-// Re-exported so view components (DigestView) can import these model types
-// from the controller module rather than reaching into the package directly.
-export type {
-  ResearchDigestView,
-  ResearchDigestTier,
-  ResearchExperienceCapsule,
-  ResearchCapsulePerspective,
-} from 'dsh-mimir/types'
-
 /**
  * The Remote calls this controller needs, exactly as the
  * generated `research` namespace types them. The ledger remotes keep
