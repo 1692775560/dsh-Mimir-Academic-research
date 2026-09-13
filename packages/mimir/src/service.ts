@@ -111,6 +111,11 @@ import type {
   SubsectionMove,
   ResearchTaskHealthResult,
   ResearchWikiChangeEvent,
+  AddEvidenceEdgeRequest,
+  RetractEvidenceEdgeRequest,
+  ResearchGetEvidenceGraphResult,
+  ResearchAddEvidenceEdgeResult,
+  ResearchRetractEvidenceEdgeResult,
 } from './types.ts'
 import type { TaskHealthRegistry } from './task-health.ts'
 import * as paper from './services/paper.ts'
@@ -126,6 +131,7 @@ import * as venue from './services/venue.ts'
 import * as venueDeadlines from './services/venue-deadlines.ts'
 import * as meeting from './services/meeting.ts'
 import * as ledger from './services/ledger.ts'
+import * as evidence from './services/evidence.ts'
 import type { MeetingDeps } from './services/meeting.ts'
 import * as imagegen from './services/image-gen.ts'
 import * as sxngConfig from './services/sxng-config.ts'
@@ -913,6 +919,29 @@ export class ResearchService extends TypertRemoteService {
   @Remote('getForaging')
   getForaging(): Promise<ResearchGetForagingResult> {
     return ledger.getForagingRemote(this.deps)
+  }
+
+  // evidence graph (v1): two append-only declarations + one pure-fold read.
+  // The edge is the ledger row it was declared on; retractions resolve in
+  // the fold (last-declaration-wins) and are authorized here (panel: any
+  // edge; agents: only their own declarations).
+  @Remote('getEvidenceGraph')
+  getEvidenceGraph(request: {
+    projectId?: string | undefined
+    since?: string | undefined
+    until?: string | undefined
+  }): Promise<ResearchGetEvidenceGraphResult> {
+    return evidence.getEvidenceGraph(this.deps, request)
+  }
+
+  @Remote('addEvidenceEdge')
+  addEvidenceEdge(request: AddEvidenceEdgeRequest): Promise<ResearchAddEvidenceEdgeResult> {
+    return evidence.addEvidenceEdge(this.deps, request)
+  }
+
+  @Remote('retractEvidenceEdge')
+  retractEvidenceEdge(request: RetractEvidenceEdgeRequest): Promise<ResearchRetractEvidenceEdgeResult> {
+    return evidence.retractEvidenceEdge(this.deps, request)
   }
 }
 

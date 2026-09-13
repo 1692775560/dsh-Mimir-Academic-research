@@ -51,7 +51,13 @@ const REPORT_DETAIL_MAX_EVENTS = 200
 /** How many destructive-operation rows the report's risk section shows. */
 const REPORT_RISK_MAX_ROWS = 50
 
-/** Monotonic suffix so same-millisecond events keep a stable order. */
+/**
+ * Monotonic suffix so same-millisecond events keep a stable order.
+ * Module-level mutable state by exemption: a pure same-millisecond sequence
+ * number — used only to keep event ordering stable, with no cross-instance
+ * correctness impact (an id only needs to be unique and ordered) — so it is
+ * not carried in `ServiceState`.
+ */
 let eventSeq = 0
 
 /**
@@ -133,18 +139,33 @@ export async function appendEvent(domain: ResearchWikiDomain, input: LedgerEvent
   return event
 }
 
+/** Transient-failure retry delays for the best-effort append (R28). */
+const EMIT_RETRY_DELAYS_MS: readonly number[] = [50, 200]
+
 /**
  * Best-effort append: the call-site contract. A ledger failure is warned
  * and swallowed — the surrounding business operation must never fail
- * because the trail could not be written.
+ * because the trail could not be written. Transient storage hiccups get a
+ * bounded retry first (R28: a state write whose trail event landed nowhere
+ * is unrecoverable from the UI, so "failed once, never retried" is the one
+ * outcome this wrapper must not produce; a durable repair protocol stays
+ * the planned P2 hardening).
  * @param domain - the plugin-owned open research-wiki domain.
  * @param input - actor, action, refs, payload, and an optional clock.
  */
 export async function emitEvent(domain: ResearchWikiDomain, input: LedgerEventInput): Promise<void> {
-  try {
-    await appendEvent(domain, input)
-  } catch (error) {
-    console.warn('[mimir] ledger append failed:', error)
+  for (let attempt = 0; attempt <= EMIT_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      await appendEvent(domain, input)
+      return
+    } catch (error) {
+      const delay = EMIT_RETRY_DELAYS_MS[attempt]
+      if (delay === undefined) {
+        console.warn('[mimir] ledger append failed after retries:', error)
+        return
+      }
+      await new Promise(resolve => { setTimeout(resolve, delay) })
+    }
   }
 }
 

@@ -4,21 +4,18 @@
  * serializer's round-trip invariant, and the PaperRecord → @misc projection.
  */
 
+import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
 import { bibKeyOf, entryFromPaper, parseBibtex, serializeBibtex } from '../src/bibtex.ts'
 import type { PaperRecord } from '../src/types.ts'
 
+/** Real-world sample kept byte-stable under `tests/fixtures/`. */
+const REAL_WORLD_BIB = readFileSync(fileURLToPath(new URL('./fixtures/bibtex/real-world.bib', import.meta.url)), 'utf8')
+
 describe('parseBibtex', () => {
   it('parses entries of any type with lowercased field names', () => {
-    const entries = parseBibtex(`
-@article{Vaswani2017Attention,
-  AUTHOR = {Vaswani, Ashish and Shazeer, Noam},
-  Title = {Attention Is All You Need},
-  year = 2017,
-}
-@InProceedings{he2016deep, title={Deep Residual Learning}, booktitle={CVPR}, year={2016}}
-@book{goodfellow2016deep, title = "Deep Learning", publisher = {MIT Press}}
-`)
+    const entries = parseBibtex(REAL_WORLD_BIB)
     expect(entries.map(entry => entry.type)).toEqual(['article', 'inproceedings', 'book'])
     expect(entries[0]).toMatchObject({
       key: 'Vaswani2017Attention',

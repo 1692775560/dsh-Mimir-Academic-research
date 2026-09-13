@@ -5,7 +5,7 @@
  * a venue writes `template/TEMPLATE.md` into the paper directory host-side;
  * the handoff button then sends the assembled re-layout prompt to the
  * current session's agent.
- * @module dsh-client-ui-mimir/src/client/VenuePicker
+ * @module dsh-client-ui-mimir/client/VenuePicker
  */
 
 import { useEffect, useRef, useState } from 'react'
