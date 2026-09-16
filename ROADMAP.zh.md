@@ -122,6 +122,8 @@ session/interaction 破坏性变更）。策略：
 - LaTeX：排版预览与光标联动、参考文献从项目文献库自动补全。
 - 实验自动收录：盯托管服务器上的远程训练任务，把指标解析进实验记录和对比图。
 - 内置 skills 可靠性专项（`/research-plan`、`/write` 等）。
+- 成长记录加固：一条记录与其事件在同一文件锁下提交（把 append-only
+  保证做硬），出处见 `packages/mimir/src/ledger.ts` 的自注。
 
 ### 远期 / 愿景
 

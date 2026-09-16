@@ -12,3 +12,7 @@ MIMIR-POSITIONING.zh.md
 MIMIR-ECOSYSTEM.zh.md
 MIMIR-COGNITIVE-BEIDOU.zh.md
 MIMIR-CBE-P2-TICKETS.zh.md
+
+# 本地会话产物（agent 运行日志与工作台目录），不入库
+ci_log.txt
+.workbuddy/

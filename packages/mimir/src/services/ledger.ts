@@ -98,7 +98,7 @@ const DEFAULT_SPAN_DAYS = 30
  * deliberately NOT part of this snapshot: the shelf is not a line, carries
  * no drift, and is read directly by {@link module:dsh-mimir/src/library-themes}.
  */
-function wikiSnapshot(domain: ResearchWikiDomain): CbeWikiSnapshot {
+export function wikiSnapshot(domain: ResearchWikiDomain): CbeWikiSnapshot {
   return {
     ideas: [...domain.table('ideas').entries()].map(([, record]) => record),
     claims: [...domain.table('claims').entries()].map(([, record]) => record),
@@ -135,7 +135,7 @@ function resolveWindow(
 }
 
 /** One bounded ledger read: what was folded, and what was really there. */
-interface LedgerWindow {
+export interface LedgerWindow {
   /** The events handed to the fold — the newest window, time-ascending, observations out. */
   readonly events: readonly EventRecord[]
   /** Every event matching the filter, uncapped by {@link LIST_EVENTS_MAX_LIMIT}. */
@@ -162,7 +162,7 @@ interface LedgerWindow {
  * @param filter - the same predicates `listEvents` takes.
  * @param label - what is folding, for the truncation warning.
  */
-async function loadLedgerWindow(
+export async function loadLedgerWindow(
   domain: ResearchWikiDomain,
   filter: Omit<ResearchEventFilter, 'limit' | 'order' | 'anchor'>,
   label: string,

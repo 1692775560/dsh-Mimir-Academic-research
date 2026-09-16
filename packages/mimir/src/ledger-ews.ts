@@ -184,7 +184,7 @@ export function conditionalEntropy(
   const byContext = new Map<string, Map<string, number>>()
   const contextTotals = new Map<string, number>()
   for (let i = order; i < symbols.length; i += 1) {
-    const context = symbols.slice(i - order, i).join(' ')
+    const context = symbols.slice(i - order, i).join('\u0000')
     const next = symbols[i]
     if (next === undefined) continue
     const bucket = byContext.get(context) ?? new Map<string, number>()
@@ -221,7 +221,7 @@ export function surprisalSequence(
   const byContext = new Map<string, Map<string, number>>()
   const contextTotals = new Map<string, number>()
   for (let i = order; i < symbols.length; i += 1) {
-    const context = symbols.slice(i - order, i).join(' ')
+    const context = symbols.slice(i - order, i).join('\u0000')
     const next = symbols[i]
     if (next === undefined) continue
     const bucket = byContext.get(context) ?? new Map<string, number>()
@@ -231,7 +231,7 @@ export function surprisalSequence(
   }
   return symbols.map((symbol, index) => {
     if (index < order) return null
-    const context = symbols.slice(index - order, index).join(' ')
+    const context = symbols.slice(index - order, index).join('\u0000')
     const bucket = byContext.get(context)
     const total = contextTotals.get(context) ?? 0
     if (bucket === undefined || total <= 0) return null

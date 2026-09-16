@@ -155,6 +155,9 @@ test counts, and screenshots go stale fast — refresh them on every release.
 - Experiment auto-ingest: watch remote training jobs on managed servers,
   parse metrics into experiment records and comparison charts.
 - Reliability pass on the bundled skills (`/research-plan`, `/write`, …).
+- Ledger hardening: commit a record and its event under one file lock
+  (the append-only guarantee made hard), as self-noted in
+  `packages/mimir/src/ledger.ts`.
 
 ### Later / vision
 
