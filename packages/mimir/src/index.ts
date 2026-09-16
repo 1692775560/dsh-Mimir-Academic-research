@@ -755,11 +755,13 @@ function createPdfHandler(
       // The panel cache-busts with ?v=<pdfUpdatedAt>; a stale cached preview
       // would otherwise survive a recompile under the same URL.
       'Cache-Control': 'no-cache',
-      // Defense-in-depth: the served bytes are not our app; never let the
-      // browser guess a type or let a crafted PDF inherit our origin's
-      // privileges, even though the file is workspace-local.
+      // No Content-Security-Policy (#257): browser-native PDF viewers run in
+      // their own isolated plugin/extension origin, so a document CSP buys
+      // nothing here — and it breaks them (`sandbox` disables Chrome's
+      // PDFium plugin for a black reader; WebKit's viewer needs the inline
+      // styles `default-src 'none'` blocks). `nosniff` stays so the browser
+      // never re-guesses the type of the workspace-local bytes.
       'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'none'; sandbox",
     })
     if (req.method === 'HEAD') {
       res.end()
@@ -832,12 +834,13 @@ function createPaperPdfHandler(
       // Same cache-bust rationale as the compiled-paper route: a refetch
       // overwrites the same file, and the panel busts with ?v=<timestamp>.
       'Cache-Control': 'no-cache',
-      // Defense-in-depth: the served bytes are not our app; never let the
-      // browser guess a type or let a crafted PDF/SVG inherit our origin's
-      // privileges (sniffing + sandbox), even though these files are
-      // workspace-local.
+      // No Content-Security-Policy (#257): browser-native PDF viewers run in
+      // their own isolated plugin/extension origin, so a document CSP buys
+      // nothing here — and it breaks them (`sandbox` disables Chrome's
+      // PDFium plugin for a black reader; WebKit's viewer needs the inline
+      // styles `default-src 'none'` blocks). `nosniff` stays so the browser
+      // never re-guesses the type of the workspace-local bytes.
       'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'none'; sandbox",
     })
     if (req.method === 'HEAD') {
       res.end()
