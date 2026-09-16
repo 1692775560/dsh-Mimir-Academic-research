@@ -17,6 +17,7 @@ import { isValidArxivId } from './arxiv.ts'
 import { addEvidenceEdge, retractEvidenceEdge } from '../services/evidence.ts'
 import type { AddEvidenceEdgeRequest } from '../types.ts'
 import { evidenceScopeOf, queryKeyOf } from '../evidence-identity.ts'
+import { mergePaperRecord } from '../services/library.ts'
 
 const ACTIONS = [
   'add_paper', 'set_paper', 'add_idea', 'fail_idea', 'add_claim', 'set_claim', 'set_project',
@@ -119,23 +120,21 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
         throw new Error(`wiki_note action 'add_paper' got an unsafe arxiv_id '${arxivId}'`)
       }
       const existing = domain.table('papers').get(arxivId)
-      const record = {
+      // The same shared merge as the panel/Zotero imports (R29 / #230): an
+      // agent-driven re-add refreshes the metadata but never wipes
+      // workbench-curated fields (notes/tags/projects/relevance/PDF
+      // pointer), and the first-import timestamp no longer resets.
+      const record = mergePaperRecord({
         arxivId,
         title: requireField(args.title, 'title', args.action),
         authors: args.authors ?? [],
         summary: requireField(args.summary, 'summary', args.action),
         url: args.url ?? `https://arxiv.org/abs/${arxivId}`,
-        // An agent-driven re-add must not wipe workbench-curated fields.
-        notes: args.notes ?? existing?.notes ?? '',
-        tags: [...(existing?.tags ?? [])],
-        projectIds: [...(existing?.projectIds ?? [])],
-        ...(existing?.relevance === undefined ? {} : { relevance: existing.relevance }),
+        notes: args.notes ?? '',
+        tags: [],
+        projectIds: [],
         addedAt: new Date().toISOString(),
-        // The agent tool carries no publication metadata; a re-add preserves
-        // what an earlier arXiv/Zotero import recorded.
-        ...(existing?.published === undefined ? {} : { published: existing.published }),
-        ...(existing?.doi === undefined ? {} : { doi: existing.doi }),
-      }
+      }, existing, { ...(args.notes === undefined ? {} : { notes: args.notes }) })
       await domain.table('papers').put(arxivId, record)
       await emit(domain, 'literature.paper.imported', { paperId: arxivId }, { title: record.title, imported: existing === undefined })
       return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
@@ -218,7 +217,9 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
       // a trail failure after the retries compensates the flip and FAILS
       // the tool call, never faking a success over a ghost state.
       await commitDecisionEvent(domain, {
-        apply: () => domain.table('ideas').update(id, current => ({ ...current, status: 'failed' as const, failureReason: reason })),
+        apply: async () => {
+          await domain.table('ideas').update(id, current => ({ ...current, status: 'failed' as const, failureReason: reason }))
+        },
         revert: () => domain.table('ideas').put(id, existing),
       }, { actor: WIKI_AGENT_ACTOR, action: 'knowledge.idea.failed', refs: { ideaId: id }, payload: { reason } })
       return { ok: true, table: 'ideas', id, status: 'failed' }

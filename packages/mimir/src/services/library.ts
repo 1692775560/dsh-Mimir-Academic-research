@@ -84,6 +84,60 @@ async function writeBytesAtomic(filePath: string, bytes: Uint8Array): Promise<vo
 }
 
 /**
+ * The ONE re-import merge every paper-ingest entry point shares (R29 /
+ * #230): the panel's `importPaper`, the Zotero item import (both paths),
+ * and the agent's `wiki_note add_paper`. `fresh` is the full record the
+ * entry point would write for a NEW paper — source metadata refreshed,
+ * curated fields at their first-import defaults. A re-import then merges
+ * instead of overwriting, so nothing the workbench curated can drift or
+ * vanish:
+ * - notes/tags/projectIds/relevance/pdfPath/addedAt come from the STORED
+ *   record (a fetched-PDF pointer and the first-import timestamp survive
+ *   every re-ingest; project links union with `linkProjectId`);
+ * - title/authors/summary/url refresh from the source;
+ * - published/doi refresh when the source carries them, else keep the
+ *   stored value;
+ * - `options.notes` is an explicit replacement (the agent's add_paper
+ *   note) winning over the stored note.
+ * @param fresh - the record for the new-paper case (addedAt = now).
+ * @param existing - the stored record, or undefined on a first import.
+ * @param options - the project link to union in and an explicit note.
+ * @returns the record to persist.
+ */
+export function mergePaperRecord(
+  fresh: PaperRecord,
+  existing: PaperRecord | undefined,
+  options: {
+    readonly linkProjectId?: string | undefined
+    readonly notes?: string | undefined
+  } = {},
+): PaperRecord {
+  const projectIds = [...new Set([
+    ...(existing?.projectIds ?? []),
+    ...fresh.projectIds,
+    ...(options.linkProjectId === undefined ? [] : [options.linkProjectId]),
+  ])]
+  if (existing === undefined) {
+    return { ...fresh, projectIds }
+  }
+  return {
+    ...fresh,
+    notes: options.notes ?? (existing.notes !== '' ? existing.notes : fresh.notes),
+    tags: [...existing.tags],
+    projectIds,
+    ...(existing.relevance === undefined ? {} : { relevance: existing.relevance }),
+    ...(existing.pdfPath === undefined ? {} : { pdfPath: existing.pdfPath }),
+    addedAt: existing.addedAt,
+    ...(fresh.published === undefined
+      ? (existing.published === undefined ? {} : { published: existing.published })
+      : {}),
+    ...(fresh.doi === undefined
+      ? (existing.doi === undefined ? {} : { doi: existing.doi })
+      : {}),
+  }
+}
+
+/**
  * List every remembered paper, most recently added first.
  * @param deps - open wiki domain.
  * @returns the literature cards for the panel's papers view.
@@ -183,10 +237,12 @@ export async function searchWeb(
 /**
  * Remember one arXiv entry in the wiki's papers table. The write is an
  * idempotent upsert keyed by the bare arXiv id: a re-import refreshes the
- * metadata but preserves the existing record's notes and first-write
- * timestamp. A `projectId` links the paper to that project (unknown id is
- * `project-not-found`) — the workbench passes the selected project so each
- * project's literature view fills up on its own.
+ * metadata but rides the shared {@link mergePaperRecord}, so the curated
+ * fields (notes, tags, project links, relevance, the fetched-PDF pointer)
+ * and the first-write timestamp survive. A `projectId` links the paper to
+ * that project (unknown id is `project-not-found`) — the workbench passes
+ * the selected project so each project's literature view fills up on its
+ * own.
  * @param deps - open wiki domain.
  * @param request - the parsed entry (an empty id or title is `invalid-input`)
  * plus the optional project link.
@@ -214,27 +270,20 @@ export async function importPaper(
     const table = deps.domain.table('papers')
     const existing = table.get(arxivId)
     // The publication date is source metadata; a re-import without one keeps
-    // the previously recorded value rather than dropping it.
-    const published = entry.published !== '' ? entry.published : existing?.published
-    const record: PaperRecord = {
+    // the previously recorded value rather than dropping it (the merge).
+    const published = entry.published !== '' ? entry.published : undefined
+    const record = mergePaperRecord({
       arxivId,
       title: entry.title,
       authors: [...entry.authors],
       summary: entry.summary,
       url: entry.url === '' ? `https://arxiv.org/abs/${arxivId}` : entry.url,
-      notes: existing?.notes ?? '',
-      // A re-import refreshes the arXiv metadata but never wipes the
-      // workbench-curated organization fields.
-      tags: [...(existing?.tags ?? [])],
-      projectIds: [...new Set([
-        ...(existing?.projectIds ?? []),
-        ...(request.projectId === undefined ? [] : [request.projectId]),
-      ])],
-      ...(existing?.relevance === undefined ? {} : { relevance: existing.relevance }),
-      addedAt: existing?.addedAt ?? new Date().toISOString(),
+      notes: '',
+      tags: [],
+      projectIds: [],
+      addedAt: new Date().toISOString(),
       ...(published === undefined ? {} : { published }),
-      ...(existing?.doi === undefined ? {} : { doi: existing.doi }),
-    }
+    }, existing, { linkProjectId: request.projectId })
     await table.put(arxivId, record)
     await emitEvent(deps.domain, {
       actor: PANEL_ACTOR,

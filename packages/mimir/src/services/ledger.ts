@@ -783,11 +783,13 @@ export async function closeIdeaRemote(
     // a trail failure after the retries compensates the flip, so the line
     // is never "closed but event-less" (the ghost state) nor the reverse.
     const event = await commitDecisionEvent(deps.domain, {
-      apply: () => deps.domain.table('ideas').update(ideaId, current => ({
-        ...current,
-        status: 'failed' as const,
-        failureReason: reason,
-      })),
+      apply: async () => {
+        await deps.domain.table('ideas').update(ideaId, current => ({
+          ...current,
+          status: 'failed' as const,
+          failureReason: reason,
+        }))
+      },
       revert: () => deps.domain.table('ideas').put(ideaId, idea),
     }, {
       actor: PANEL_ACTOR,
@@ -841,10 +843,12 @@ export async function adoptIdeaRemote(
     // Decision-grade (R28): same one-commit contract as closeIdea — a
     // trail failure after the retries compensates the flip.
     const event = await commitDecisionEvent(deps.domain, {
-      apply: () => deps.domain.table('ideas').update(ideaId, current => ({
-        ...current,
-        status: 'adopted' as const,
-      })),
+      apply: async () => {
+        await deps.domain.table('ideas').update(ideaId, current => ({
+          ...current,
+          status: 'adopted' as const,
+        }))
+      },
       revert: () => deps.domain.table('ideas').put(ideaId, idea),
     }, {
       actor: PANEL_ACTOR,

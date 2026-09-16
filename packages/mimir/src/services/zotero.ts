@@ -16,7 +16,6 @@ import { createZoteroClient } from '../tools/zotero.ts'
 import type { ZoteroClientConfig, ZoteroItem } from '../tools/zotero.ts'
 import type {
   ArxivEntry,
-  PaperRecord,
   ResearchCheckZoteroResult,
   ResearchZoteroCollectionsResult,
   ResearchZoteroExportResult,
@@ -24,7 +23,7 @@ import type {
   ResearchZoteroSearchResult,
 } from '../types.ts'
 import { rejected, success } from './common.ts'
-import { importPaper } from './library.ts'
+import { importPaper, mergePaperRecord } from './library.ts'
 import { appendBibEntries } from './paper.ts'
 import type { PaperDeps } from './paper.ts'
 
@@ -190,25 +189,23 @@ export async function importZoteroItem(
     item.doi === '' ? '' : `DOI: ${item.doi}.`,
     item.url === '' ? '' : `URL: ${item.url}.`,
   ].filter(line => line !== '').join(' ')
-  const record: PaperRecord = {
+  // The same shared merge as the arXiv path (R29 / #230): a re-import
+  // refreshes the Zotero metadata but never wipes the workbench-curated
+  // fields — relevance and the fetched-PDF pointer included.
+  const record = mergePaperRecord({
     arxivId: paperId,
     title: item.title,
     authors: [...item.authors],
     summary: '',
     url: item.url,
-    notes: existing?.notes ?? provenance,
-    // A re-import refreshes the Zotero metadata but never wipes the
-    // workbench-curated organization fields.
-    tags: [...(existing?.tags ?? [])],
-    projectIds: [...new Set([
-      ...(existing?.projectIds ?? []),
-      ...(request.projectId === undefined ? [] : [request.projectId]),
-    ])],
-    addedAt: existing?.addedAt ?? new Date().toISOString(),
+    notes: provenance,
+    tags: [],
+    projectIds: [],
+    addedAt: new Date().toISOString(),
     // Source publication metadata rides the re-import refresh, like title.
     ...(item.year === '' ? {} : { published: item.year }),
     ...(item.doi === '' ? {} : { doi: item.doi }),
-  }
+  }, existing, { linkProjectId: request.projectId })
   await table.put(paperId, record)
   return success({ imported: existing === undefined, paperId })
 }
