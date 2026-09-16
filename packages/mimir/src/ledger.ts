@@ -143,6 +143,28 @@ export async function appendEvent(domain: ResearchWikiDomain, input: LedgerEvent
 const EMIT_RETRY_DELAYS_MS: readonly number[] = [50, 200]
 
 /**
+ * Append with the bounded transient-failure retry (R28): the one retry
+ * policy of the ledger, shared by the best-effort wrapper and the
+ * compensating decision commit. Throws the last error once the retries are
+ * exhausted.
+ */
+async function appendWithRetries(domain: ResearchWikiDomain, input: LedgerEventInput): Promise<EventRecord> {
+  let lastError: unknown
+  for (let attempt = 0; attempt <= EMIT_RETRY_DELAYS_MS.length; attempt += 1) {
+    try {
+      return await appendEvent(domain, input)
+    } catch (error) {
+      lastError = error
+      const delay = EMIT_RETRY_DELAYS_MS[attempt]
+      if (delay !== undefined) {
+        await new Promise(resolve => { setTimeout(resolve, delay) })
+      }
+    }
+  }
+  throw lastError
+}
+
+/**
  * Best-effort append: the call-site contract. A ledger failure is warned
  * and swallowed — the surrounding business operation must never fail
  * because the trail could not be written. Transient storage hiccups get a
@@ -154,18 +176,50 @@ const EMIT_RETRY_DELAYS_MS: readonly number[] = [50, 200]
  * @param input - actor, action, refs, payload, and an optional clock.
  */
 export async function emitEvent(domain: ResearchWikiDomain, input: LedgerEventInput): Promise<void> {
-  for (let attempt = 0; attempt <= EMIT_RETRY_DELAYS_MS.length; attempt += 1) {
+  try {
+    await appendWithRetries(domain, input)
+  } catch (error) {
+    console.warn('[mimir] ledger append failed after retries:', error)
+  }
+}
+
+/**
+ * One decision-grade state change plus its trail event as ONE logical
+ * commit (R28). The change applies first; the event append rides the same
+ * bounded retry as `emitEvent`. If the trail still cannot land, the change
+ * is COMPENSATED — `revert` restores the pre-commit snapshot — and the
+ * failure propagates, so a decision never exists without its event (the
+ * "closed but event-less" ghost state) nor an event without its state.
+ * This is the grade split the ledger vocabulary implies: ordinary audit
+ * events stay best-effort (`emitEvent`); lifecycle flips a user can never
+ * reconstruct by hand go through here. True atomicity (a file-locked
+ * record+event commit) remains the planned P2 hardening — compensation
+ * only narrows the window to a revert failure, which is warned loudly.
+ * @param domain - the plugin-owned open research-wiki domain.
+ * @param commit - the state change and its compensating undo.
+ * @param input - actor, action, refs, payload, and an optional clock.
+ * @returns the stored trail event.
+ */
+export async function commitDecisionEvent(
+  domain: ResearchWikiDomain,
+  commit: {
+    /** Applies the business change (the pre-change snapshot is the caller's). */
+    readonly apply: () => Promise<void>
+    /** Restores the pre-commit snapshot when the trail cannot land. */
+    readonly revert: () => Promise<void>
+  },
+  input: LedgerEventInput,
+): Promise<EventRecord> {
+  await commit.apply()
+  try {
+    return await appendWithRetries(domain, input)
+  } catch (error) {
     try {
-      await appendEvent(domain, input)
-      return
-    } catch (error) {
-      const delay = EMIT_RETRY_DELAYS_MS[attempt]
-      if (delay === undefined) {
-        console.warn('[mimir] ledger append failed after retries:', error)
-        return
-      }
-      await new Promise(resolve => { setTimeout(resolve, delay) })
+      await commit.revert()
+    } catch (revertError) {
+      console.warn('[mimir] ledger commit compensation failed:', revertError)
     }
+    throw error
   }
 }
 

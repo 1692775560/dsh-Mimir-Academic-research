@@ -11,6 +11,7 @@ import type { ResearchWikiDomain } from '../store.ts'
 import {
   appendEvent,
   buildProgressReport,
+  commitDecisionEvent,
   countEvents,
   emitEvent,
   EVENT_PAYLOAD_MAX_CHARS,
@@ -778,12 +779,17 @@ export async function closeIdeaRemote(
     return rejected({ code: 'invalid-input', message: 'an adopted line is a merge, not a dead end' })
   }
   try {
-    await deps.domain.table('ideas').update(ideaId, current => ({
-      ...current,
-      status: 'failed' as const,
-      failureReason: reason,
-    }))
-    const event = await appendEvent(deps.domain, {
+    // Decision-grade (R28): the flip and its trail event commit as one —
+    // a trail failure after the retries compensates the flip, so the line
+    // is never "closed but event-less" (the ghost state) nor the reverse.
+    const event = await commitDecisionEvent(deps.domain, {
+      apply: () => deps.domain.table('ideas').update(ideaId, current => ({
+        ...current,
+        status: 'failed' as const,
+        failureReason: reason,
+      })),
+      revert: () => deps.domain.table('ideas').put(ideaId, idea),
+    }, {
       actor: PANEL_ACTOR,
       action: 'knowledge.idea.failed',
       refs: { ideaId },
@@ -832,11 +838,15 @@ export async function adoptIdeaRemote(
     return rejected({ code: 'invalid-input', message: 'a documented No is a dead end, not a merge' })
   }
   try {
-    await deps.domain.table('ideas').update(ideaId, current => ({
-      ...current,
-      status: 'adopted' as const,
-    }))
-    const event = await appendEvent(deps.domain, {
+    // Decision-grade (R28): same one-commit contract as closeIdea — a
+    // trail failure after the retries compensates the flip.
+    const event = await commitDecisionEvent(deps.domain, {
+      apply: () => deps.domain.table('ideas').update(ideaId, current => ({
+        ...current,
+        status: 'adopted' as const,
+      })),
+      revert: () => deps.domain.table('ideas').put(ideaId, idea),
+    }, {
       actor: PANEL_ACTOR,
       action: 'knowledge.idea.adopted',
       refs: { ideaId },

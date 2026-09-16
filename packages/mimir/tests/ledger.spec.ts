@@ -1107,3 +1107,115 @@ describe('emitEvent transient-failure retry (R28)', () => {
     expect(all.map(event => event.action)).not.toContain('a.doomed')
   })
 })
+
+
+describe('decision-grade commit compensation (R28, #228)', () => {
+  /**
+   * Real storage underneath; only the events table's `put` hiccups on
+   * demand. Unlike the emitEvent flakiness harness above, every other
+   * table must keep working — the decision commit writes the business
+   * record first and compensates it last.
+   */
+  const flakyEventsDomain = (domain: ResearchWikiDomain, failures: { left: number }): ResearchWikiDomain => ({
+    table: (name: string) => {
+      const handle = domain.table(name as never)
+      if (name !== 'events') return handle
+      return {
+        get: (key: string) => handle.get(key),
+        put: async (key: string, value: EventRecord): Promise<void> => {
+          if (failures.left > 0) {
+            failures.left -= 1
+            throw new Error('transient storage hiccup')
+          }
+          await handle.put(key, value)
+        },
+        update: handle.update.bind(handle),
+        delete: handle.delete.bind(handle),
+        entries: () => handle.entries(),
+        size: handle.size,
+      }
+    },
+  }) as unknown as ResearchWikiDomain
+
+  /** Boot a service whose domain fails event appends on demand. */
+  async function flakyServiceHarness(failures: { left: number }) {
+    const ctx = new Context()
+    await ctx.plugin(Storage)
+    const backend = new MemoryStorageBackend(new MemoryMediaPool())
+    ctx.storage.backend.register('memory', backend)
+    ctx.provide(storageBackendServiceKey('memory'), backend)
+    const facility = new DomainFacility(ctx, { backend: 'memory', routes: {} })
+    ctx.storage.mount('domain', facility)
+    const domain = await facility.open(researchWikiDomainSpec)
+    const flaky = flakyEventsDomain(domain, failures)
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'mimir-ledger-flaky-'))
+    const service = new ResearchService(ctx, {
+      workspaceDir,
+      domain: flaky,
+      latex: { engine: 'auto', timeoutMs: 1000 },
+    })
+    return { domain, flaky, service }
+  }
+
+  const ACTIVE_IDEA: IdeaRecord = {
+    id: 'i-flaky',
+    title: 'Retrieval-free decoding',
+    hypothesis: 'It works without retrieval.',
+    status: 'active',
+    createdAt: '2026-08-01T00:00:00.000Z',
+  }
+
+  it('closeIdea compensates the flip when the trail cannot land — no ghost state', async () => {
+    const { domain, service } = await flakyServiceHarness({ left: Number.MAX_SAFE_INTEGER })
+    await domain.table('ideas').put(ACTIVE_IDEA.id, ACTIVE_IDEA)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(service.closeIdea({ ideaId: ACTIVE_IDEA.id, reason: 'no effect' }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'operation-failed' } })
+
+    // The business write was compensated: the line is still open and no
+    // event pretends otherwise.
+    expect(domain.table('ideas').get(ACTIVE_IDEA.id)).toMatchObject({ status: 'active' })
+    expect(await listEvents(domain, { actionPrefix: 'knowledge.idea.' })).toHaveLength(0)
+    warn.mockRestore()
+  })
+
+  it('closeIdea lands both the flip and the event when the trail hiccups once', async () => {
+    const { domain, service } = await flakyServiceHarness({ left: 1 })
+    await domain.table('ideas').put(ACTIVE_IDEA.id, ACTIVE_IDEA)
+
+    const closed = await service.closeIdea({ ideaId: ACTIVE_IDEA.id, reason: 'no effect' })
+
+    expect(closed.ok).toBe(true)
+    expect(domain.table('ideas').get(ACTIVE_IDEA.id)).toMatchObject({ status: 'failed', failureReason: 'no effect' })
+    const events = await listEvents(domain, { actionPrefix: 'knowledge.idea.' })
+    expect(events.map(event => event.action)).toEqual(['knowledge.idea.failed'])
+  })
+
+  it('adoptIdea compensates the flip when the trail cannot land', async () => {
+    const { domain, service } = await flakyServiceHarness({ left: Number.MAX_SAFE_INTEGER })
+    await domain.table('ideas').put(ACTIVE_IDEA.id, ACTIVE_IDEA)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(service.adoptIdea({ ideaId: ACTIVE_IDEA.id }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'operation-failed' } })
+
+    expect(domain.table('ideas').get(ACTIVE_IDEA.id)).toMatchObject({ status: 'active' })
+    expect(await listEvents(domain, { actionPrefix: 'knowledge.idea.' })).toHaveLength(0)
+    warn.mockRestore()
+  })
+
+  it('wiki_note fail_idea compensates and fails loud instead of faking success', async () => {
+    const { domain, flaky } = await flakyServiceHarness({ left: Number.MAX_SAFE_INTEGER })
+    await domain.table('ideas').put(ACTIVE_IDEA.id, ACTIVE_IDEA)
+    const tool = createWikiNoteTool(flaky)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    await expect(tool.execute({ action: 'fail_idea', id: ACTIVE_IDEA.id, reason: 'collapses' }, {} as ToolRunContext))
+      .rejects.toThrow('transient storage hiccup')
+
+    expect(domain.table('ideas').get(ACTIVE_IDEA.id)).toMatchObject({ status: 'active' })
+    expect(await listEvents(domain, { actionPrefix: 'knowledge.idea.' })).toHaveLength(0)
+    warn.mockRestore()
+  })
+})

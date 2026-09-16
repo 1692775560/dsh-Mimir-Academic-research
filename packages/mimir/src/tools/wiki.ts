@@ -10,7 +10,7 @@ import { randomUUID } from 'node:crypto'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import { emitEvent, WIKI_AGENT_ACTOR } from '../ledger.ts'
+import { commitDecisionEvent, emitEvent, WIKI_AGENT_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type { LedgerJsonValue } from '../types.ts'
 import { isValidArxivId } from './arxiv.ts'
@@ -210,11 +210,17 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
     case 'fail_idea': {
       const id = requireField(args.id, 'id', args.action)
       const reason = requireField(args.reason, 'reason', args.action)
-      if (domain.table('ideas').get(id) === undefined) {
+      const existing = domain.table('ideas').get(id)
+      if (existing === undefined) {
         throw new Error(`wiki_note: no idea with id '${id}'`)
       }
-      await domain.table('ideas').update(id, current => ({ ...current, status: 'failed' as const, failureReason: reason }))
-      await emit(domain, 'knowledge.idea.failed', { ideaId: id }, { reason })
+      // Decision-grade (R28): the flip and its trail event commit as one —
+      // a trail failure after the retries compensates the flip and FAILS
+      // the tool call, never faking a success over a ghost state.
+      await commitDecisionEvent(domain, {
+        apply: () => domain.table('ideas').update(id, current => ({ ...current, status: 'failed' as const, failureReason: reason })),
+        revert: () => domain.table('ideas').put(id, existing),
+      }, { actor: WIKI_AGENT_ACTOR, action: 'knowledge.idea.failed', refs: { ideaId: id }, payload: { reason } })
       return { ok: true, table: 'ideas', id, status: 'failed' }
     }
     case 'add_claim': {
