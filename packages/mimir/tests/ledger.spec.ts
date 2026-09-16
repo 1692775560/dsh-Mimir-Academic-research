@@ -1219,3 +1219,68 @@ describe('decision-grade commit compensation (R28, #228)', () => {
     warn.mockRestore()
   })
 })
+
+
+describe('pinMoment payload integrity (#217)', () => {
+  it('keeps targetEventId/pinned intact under a max-length, quote-heavy note', async () => {
+    const { domain, service } = await serviceHarness()
+    const anchor = await appendEvent(domain, {
+      actor: PANEL_ACTOR, action: 'knowledge.idea.added', refs: { ideaId: 'i1' }, payload: {},
+    })
+    // 2048 raw characters (the accepted maximum), heavy on characters JSON
+    // must escape — the serialized payload overflows the cap unless the
+    // note alone absorbs the shrink.
+    const note = ('"quoted" \\ line\n'.repeat(140)).slice(0, EVENT_PAYLOAD_MAX_CHARS)
+    expect(note).toHaveLength(EVENT_PAYLOAD_MAX_CHARS)
+
+    const pinned = await service.pinMoment({ targetEventId: anchor.id, note })
+
+    expect(pinned.ok).toBe(true)
+    if (!pinned.ok) throw new Error('unreachable')
+    const payload = pinned.value.event.payload
+    // The structural fields the moment index reads survive verbatim; the
+    // generic whole-payload truncation (the `_truncated` marker) did NOT
+    // fire — only the display note absorbed the shrink.
+    expect(payload['_truncated']).toBeUndefined()
+    expect(payload['targetEventId']).toBe(anchor.id)
+    expect(payload['pinned']).toBe(true)
+    expect(payload['noteTrimmed']).toBe(true)
+    const fitted = payload['note']
+    expect(typeof fitted).toBe('string')
+    expect((fitted as string).length).toBeLessThan(note.length)
+    expect(note.startsWith(fitted as string)).toBe(true)
+    expect(JSON.stringify(payload).length).toBeLessThanOrEqual(EVENT_PAYLOAD_MAX_CHARS)
+    // The moment index can actually resolve the pin.
+    const events = await listEvents(domain, { actionPrefix: 'cbe.moment.' })
+    expect(events).toHaveLength(1)
+  })
+
+  it('stores a short note verbatim with no trimming marker', async () => {
+    const { domain, service } = await serviceHarness()
+    const anchor = await appendEvent(domain, {
+      actor: PANEL_ACTOR, action: 'knowledge.idea.added', refs: { ideaId: 'i1' }, payload: {},
+    })
+
+    const pinned = await service.pinMoment({ targetEventId: anchor.id, note: 'the pivot' })
+
+    expect(pinned.ok).toBe(true)
+    if (!pinned.ok) throw new Error('unreachable')
+    expect(pinned.value.event.payload).toMatchObject({
+      targetEventId: anchor.id,
+      note: 'the pivot',
+      pinned: true,
+    })
+    expect(pinned.value.event.payload['noteTrimmed']).toBeUndefined()
+  })
+
+  it('rejects an over-cap note explicitly instead of faking success', async () => {
+    const { domain, service } = await serviceHarness()
+    const anchor = await appendEvent(domain, {
+      actor: PANEL_ACTOR, action: 'knowledge.idea.added', refs: { ideaId: 'i1' }, payload: {},
+    })
+
+    await expect(service.pinMoment({ targetEventId: anchor.id, note: 'x'.repeat(EVENT_PAYLOAD_MAX_CHARS + 1) }))
+      .resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
+    expect(await listEvents(domain, { actionPrefix: 'cbe.moment.' })).toHaveLength(0)
+  })
+})

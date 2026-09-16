@@ -1100,11 +1100,44 @@ export async function setEurekaRemote(
 }
 
 /**
+ * Fit one moment pin's note into the payload cap WITHOUT touching the
+ * structural fields (#217): the moment index reads `targetEventId` and
+ * `pinned` from the payload, so they must survive verbatim; the note is
+ * the display text and alone absorbs the shrink. JSON escaping inflates
+ * quotes and newlines, so a raw character count cannot be trusted —
+ * binary-search the longest note prefix whose SERIALIZED payload fits.
+ * A trimmed note carries a `noteTrimmed` marker in the payload, so the
+ * search measures the serialized form WITH the marker.
+ * @returns the note (possibly trimmed to its longest fitting prefix).
+ */
+function fitMomentNote(targetEventId: string, note: string, pinned: boolean): string {
+  const payloadLength = (candidate: string, trimmed: boolean): number =>
+    (JSON.stringify({
+      targetEventId,
+      note: candidate,
+      pinned,
+      ...(trimmed ? { noteTrimmed: true } : {}),
+    }) ?? '').length
+  if (payloadLength(note, false) <= EVENT_PAYLOAD_MAX_CHARS) return note
+  let lo = 0
+  let hi = note.length
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (payloadLength(note.slice(0, mid), true) <= EVENT_PAYLOAD_MAX_CHARS) lo = mid
+    else hi = mid - 1
+  }
+  return note.slice(0, lo)
+}
+
+/**
  * Pin (or unpin) one moment — the explicit, user-refusable bookmark of a
  * curated instant. The target is a prior event id carried in the payload
  * (the moment index reads `payload.targetEventId`); `pinned` defaults to
  * `true`. An unpin is a declaration too (a new event with `pinned: false`),
- * never a deletion — the stream stays append-only.
+ * never a deletion — the stream stays append-only. A max-length note (or
+ * one heavy on quotes/newlines) is trimmed to what the payload cap admits
+ * rather than letting the ledger's generic truncation drop the pin's
+ * identity fields (#217).
  * @param deps - open wiki domain.
  * @param request - the target event, optional note, and pin state.
  * @returns the stored pin event.
@@ -1127,12 +1160,21 @@ export async function pinMomentRemote(
       message: `moment note is capped at ${EVENT_PAYLOAD_MAX_CHARS} characters`,
     })
   }
+  const pinState = pinned ?? true
+  const fittedNote = note === undefined ? null : fitMomentNote(targetEventId, note, pinState)
+  const noteTrimmed = note !== undefined && fittedNote !== note
   try {
     const event = await appendEvent(deps.domain, {
       actor: PANEL_ACTOR,
       action: MOMENT_PIN_ACTION,
       refs: {},
-      payload: { targetEventId, note: note ?? null, pinned: pinned ?? true },
+      payload: {
+        targetEventId,
+        note: fittedNote,
+        pinned: pinState,
+        // Transparency marker when the display text absorbed the shrink.
+        ...(noteTrimmed ? { noteTrimmed: true } : {}),
+      },
     })
     return success({ event })
   } catch (error) {
