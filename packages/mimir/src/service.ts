@@ -4,7 +4,7 @@
  * 'research')` registration, the config type, the Context augmentation, and
  * all 64 `@Remote` signatures intact, and forwards every method body to a
  * pure-function domain module under `./services`. It owns no domain logic:
- * the mutable instance state (`compileStatus` map, `jobSeq` counter) rides a
+ * the mutable instance state (`compileStatus` map, the id counters) rides a
  * single {@link ServiceState} object created here, so every
  * `new ResearchService` gets its own copy.
  * @module dsh-mimir/src/service
@@ -224,7 +224,7 @@ export interface ResearchServiceConfig {
 export class ResearchService extends TypertRemoteService {
   /** Read-only injection (workspaceDir/domain/latex/backup from the config). */
   private readonly deps: ResearchServiceConfig
-  /** The only mutable instance state (compileStatus / jobSeq). */
+  /** The only mutable instance state (compileStatus / id counters). */
   private readonly state: ServiceState
 
   /**
@@ -252,6 +252,7 @@ export class ResearchService extends TypertRemoteService {
     this.state = {
       compileStatus: new Map(),
       jobSeq: 0,
+      idSeq: 0,
       jobAborts: new Map(),
       jobStopStatus: new Map(),
       longTasks: new Set(),
@@ -404,7 +405,7 @@ export class ResearchService extends TypertRemoteService {
 
   @Remote('saveExperiment')
   saveExperiment(request: { experiment: ExperimentInput }): Promise<ResearchSaveExperimentResult> {
-    return experiment.saveExperiment(this.deps, request)
+    return experiment.saveExperiment(this.deps, this.state, request)
   }
 
   @Remote('updateExperiment')
@@ -686,7 +687,7 @@ export class ResearchService extends TypertRemoteService {
 
   @Remote('saveServer')
   saveServer(request: { server: ServerInput }): Promise<ResearchSaveServerResult> {
-    return server.saveServer(this.deps, request)
+    return server.saveServer(this.deps, this.state, request)
   }
 
   @Remote('deleteServer')

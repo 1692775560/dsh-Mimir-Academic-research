@@ -1,6 +1,6 @@
 /**
  * Shared helpers of the domain service modules under `./services`.
- * The only mutable instance state (compile status map, job counter, job
+ * The only mutable instance state (compile status map, id counters, job
  * abort handles, long-task registry) is carried by an explicit
  * {@link ServiceState} object rather than module-level mutable variables,
  * so every `new ResearchService` gets its own copy (test isolation,
@@ -15,18 +15,35 @@ import type {
   ResearchSuccess,
 } from '../types.ts'
 
-/** The only mutable instance state: compileStatus and the job counter. */
+/** The only mutable instance state: compileStatus and the id counters. */
 export interface ServiceState {
   /** Per-addressed-project compile status ('' key = the no-project slot); the Map identity is fixed, its contents mutate. */
   readonly compileStatus: Map<string, ResearchCompileStatusView>
   /** Monotonic suffix for jobs submitted within the same millisecond; only submitJob increments it. */
   jobSeq: number
+  /** Monotonic suffix for the srv-/exp- record ids; only nextRecordId increments it. */
+  idSeq: number
   /** Abort handles for active SSH sessions owned by this service instance. */
   readonly jobAborts: Map<string, AbortController>
   /** Intended terminal status for an aborted active job: `cancelled` (user/delete) or `interrupted` (host dispose). Absent → cancelled. */
   readonly jobStopStatus: Map<string, 'cancelled' | 'interrupted'>
   /** Abort handles of in-flight long tasks (compiles, deck generations) owned by this instance; aborted on dispose (#247). */
   readonly longTasks: Set<AbortController>
+}
+
+/**
+ * Generate one collision-safe record id (`<prefix>-<ms36>-<seq>`): a base-36
+ * millisecond timestamp plus a per-instance monotonic suffix, so two creates
+ * landing in the same millisecond never share an id and silently overwrite
+ * each other in the table (#215). Old bare-timestamp ids still read fine —
+ * ids are opaque string keys everywhere. The counter is per service
+ * instance: one workspace is written by one process at a time (the same
+ * single-writer model the store already assumes), so cross-process
+ * same-millisecond collisions are out of scope.
+ */
+export function nextRecordId(state: ServiceState, prefix: string): string {
+  state.idSeq += 1
+  return `${prefix}-${Date.now().toString(36)}-${String(state.idSeq)}`
 }
 
 /** Handle of one registered long task: the linked signal and its release. */
