@@ -19,6 +19,7 @@ import { LedgerView } from '../src/client/LedgerView.tsx'
 import type {
   ResearchBriefView,
   ResearchDigestSlice,
+  ResearchEvidenceGraphSlice,
   ResearchForagingSlice,
   ResearchLedgerView,
   ResearchMomentsSlice,
@@ -120,6 +121,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
       derivationVersion: null, recalibrated: false, questions: [], failure: null,
     }
     const coldMoments: ResearchMomentsSlice = { status: 'cold', view: null, failure: null }
+    const coldEvidence: ResearchEvidenceGraphSlice = { status: 'cold', view: null, failure: null }
     const coldDigest: ResearchDigestSlice = {
       status: 'idle', tier: 'weekly', lang: 'zh', report: null, markdown: '', generatedAt: null, failure: null,
     }
@@ -131,6 +133,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
         worktree={{ status: 'ready', view: WORKTREE, failure: null } as ResearchWorktreeSlice}
         foraging={{ status: 'ready', view: FORAGING, failure: null } as ResearchForagingSlice}
         moments={coldMoments}
+        evidence={coldEvidence}
         digest={coldDigest}
         selectedProjectId={null}
         loadLedger={() => {}}
@@ -148,6 +151,9 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
         ensureMoments={() => {}}
         refreshMoments={() => {}}
         declineMoment={async () => null}
+        ensureEvidenceGraph={() => {}}
+        refreshEvidenceGraph={() => {}}
+        retractEvidence={async () => null}
         ensureDigest={() => {}}
         refreshDigest={() => {}}
         generateDigest={async () => null}

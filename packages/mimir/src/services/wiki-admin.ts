@@ -6,7 +6,9 @@
  * @module dsh-mimir/src/services/wiki-admin
  */
 
-import { readdir } from 'node:fs/promises'
+import { access, mkdir, readFile, readdir, unlink } from 'node:fs/promises'
+import { join } from 'node:path'
+import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { isValidArxivId } from '../arxiv-id.ts'
 import { isValidProjectId } from '../project-id.ts'
 import { isBackupFileName } from '../backup.ts'
@@ -39,12 +41,87 @@ import { rejected, success } from './common.ts'
  */
 export interface WikiAdminDeps {
   readonly domain: ResearchWikiDomain
+  readonly workspaceDir: string
   readonly backup?: {
     readonly enabled: boolean
     readonly intervalMinutes: number
     readonly keep: number
     readonly dir: string
   }
+}
+
+/** Durable undo record for an interrupted destructive wiki import. */
+export const WIKI_IMPORT_RECOVERY_FILE = '.wiki-import-recovery.json'
+
+type WikiTable = {
+  get: (key: string) => unknown
+  put: (key: string, value: unknown) => Promise<void>
+  delete: (key: string) => Promise<boolean>
+  entries: () => IterableIterator<[string, unknown]>
+}
+
+/** Replace exactly the tables carried by one already-validated snapshot. */
+async function replaceWiki(
+  domain: ResearchWikiDomain,
+  snapshot: ResearchWikiSnapshot,
+  skipUnsafeIds: boolean,
+): Promise<Record<ResearchWikiTableName, number>> {
+  const imported: Record<ResearchWikiTableName, number> = {
+    papers: 0, ideas: 0, claims: 0, projects: 0, experiments: 0, servers: 0, figures: 0, events: 0,
+  }
+  // Queue the whole replacement synchronously: a write already queued wins
+  // before replace; one queued after this batch wins after replace.
+  const writes: Promise<unknown>[] = []
+  for (const name of snapshotTables(snapshot)) {
+    const table = domain.table(name) as WikiTable
+    for (const [key] of [...table.entries()]) writes.push(table.delete(key))
+    const keyField = WIKI_TABLE_KEY[name]
+    for (const row of snapshot.tables[name]) {
+      const key = (row as unknown as Record<string, unknown>)[keyField] as string
+      if (skipUnsafeIds && name === 'papers' && !isValidArxivId(key)) continue
+      if (skipUnsafeIds && name === 'projects' && !isValidProjectId(key)) continue
+      writes.push(table.put(key, row))
+      imported[name] += 1
+    }
+  }
+  const settled = await Promise.allSettled(writes)
+  const failed = settled.find(result => result.status === 'rejected')
+  if (failed?.status === 'rejected') throw failed.reason
+  return imported
+}
+
+/** Validate a recovery snapshot read from disk before it can touch the domain. */
+function validateSnapshot(snapshot: ResearchWikiSnapshot): void {
+  const envelopeError = snapshotEnvelopeError(snapshot)
+  if (envelopeError !== null) throw new Error(`invalid wiki import recovery: ${envelopeError}`)
+  for (const name of snapshotTables(snapshot)) {
+    const rowError = tableRowsError(name, snapshot.tables[name])
+    if (rowError !== null) throw new Error(`invalid wiki import recovery: ${rowError}`)
+  }
+}
+
+/** Restore and remove a pending destructive-import undo record, when present. */
+export async function recoverPendingWikiImport(deps: WikiAdminDeps): Promise<void> {
+  const path = join(deps.workspaceDir, WIKI_IMPORT_RECOVERY_FILE)
+  try {
+    await access(path)
+  } catch (error) {
+    if ((error as { code?: unknown }).code === 'ENOENT') return
+    throw error
+  }
+  await withFileLock(path, async () => {
+    let text: string
+    try {
+      text = await readFile(path, 'utf8')
+    } catch (error) {
+      if ((error as { code?: unknown }).code === 'ENOENT') return
+      throw error
+    }
+    const snapshot = JSON.parse(text) as ResearchWikiSnapshot
+    validateSnapshot(snapshot)
+    await replaceWiki(deps.domain, snapshot, false)
+    await unlink(path)
+  })
 }
 
 /** Project one wiki record into the panel's row shape. */
@@ -112,7 +189,9 @@ export async function exportWiki(deps: WikiAdminDeps): Promise<ResearchExportWik
  * upserts only absent primary keys — existing records are never
  * overwritten, just counted as skipped (conservative first). `replace`
  * wipes the tables the snapshot carries first, so it additionally requires
- * `confirmReplace: true` (`invalid-input` otherwise).
+ * `confirmReplace: true` (`invalid-input` otherwise). Replace is an exclusive
+ * maintenance operation: writes issued while it is running may be superseded
+ * by the replacement or a failure rollback.
  * @param deps - open wiki domain.
  * @param request - the parsed snapshot JSON, the mode, and the replace
  * confirmation flag. A legacy v2 snapshot (seven tables, no `events`) is
@@ -150,16 +229,33 @@ export async function importWiki(
   })
   const imported = zeroCounts()
   const skipped = zeroCounts()
+  if (request.mode === 'replace') {
+    const path = join(deps.workspaceDir, WIKI_IMPORT_RECOVERY_FILE)
+    await mkdir(deps.workspaceDir, { recursive: true })
+    await withFileLock(path, async () => {
+      await writeFileAtomic(path, JSON.stringify(buildWikiSnapshot(deps.domain)), { mode: 0o600 })
+      try {
+        Object.assign(imported, await replaceWiki(deps.domain, snapshot, true))
+        await unlink(path)
+      } catch (error) {
+        try {
+          const recovery = JSON.parse(await readFile(path, 'utf8')) as ResearchWikiSnapshot
+          validateSnapshot(recovery)
+          await replaceWiki(deps.domain, recovery, false)
+          await unlink(path)
+        } catch (recoveryError) {
+          throw new AggregateError([error, recoveryError], 'wiki import failed and recovery is pending')
+        }
+        throw error
+      }
+    })
+  }
   for (const name of names) {
-    const table = deps.domain.table(name) as {
-      get: (key: string) => unknown
-      put: (key: string, value: unknown) => Promise<void>
-      delete: (key: string) => Promise<boolean>
-      entries: () => IterableIterator<[string, unknown]>
-    }
+    const table = deps.domain.table(name) as WikiTable
     const keyField = WIKI_TABLE_KEY[name]
     if (request.mode === 'replace') {
-      for (const [key] of [...table.entries()]) await table.delete(key)
+      skipped[name] = snapshot.tables[name].length - imported[name]
+      continue
     }
     for (const row of snapshot.tables[name]) {
       const key = (row as unknown as Record<string, unknown>)[keyField] as string

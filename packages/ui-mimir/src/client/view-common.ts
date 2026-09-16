@@ -39,11 +39,44 @@ export const STAGE_KEYS: Record<ProjectStage, ResearchKey> = {
 /** Pipeline stages in order (the overview progress bar). */
 export const STAGES: readonly ProjectStage[] = ['idea', 'plan', 'experiment', 'writing', 'done']
 
-/** Localized copy for one failure; known codes map to dedicated strings. */
+/**
+ * Locale key of one host failure code. Codes absent here carry a
+ * context-bearing `message` from the host (the offending path, the parse
+ * detail); those fall through to that message rather than losing it behind a
+ * generic line.
+ */
+export const FAILURE_CODE_KEYS: Record<string, ResearchKey> = {
+  'invalid-dir': 'error.invalidDir',
+  'project-not-found': 'error.code.projectNotFound',
+  'paper-not-found': 'error.code.paperNotFound',
+  'experiment-not-found': 'error.code.experimentNotFound',
+  'figure-not-found': 'error.code.figureNotFound',
+  'artifact-not-found': 'error.code.artifactNotFound',
+  'bib-not-found': 'error.code.bibNotFound',
+  'job-not-found': 'error.code.jobNotFound',
+  'server-not-found': 'error.code.serverNotFound',
+  'snapshot-not-found': 'error.code.snapshotNotFound',
+  'subscription-not-found': 'error.code.subscriptionNotFound',
+  'section-not-found': 'error.code.sectionNotFound',
+  'subsection-not-found': 'error.code.subsectionNotFound',
+  'conflict': 'error.code.conflict',
+  'invalid-artifact': 'error.code.invalidArtifact',
+  'invalid-content': 'error.code.invalidContent',
+  'invalid-name': 'error.code.invalidName',
+  'invalid-path': 'error.code.invalidPath',
+}
+
+/**
+ * Localized copy for one failure: a mapped code renders its dedicated string,
+ * an unmapped one falls back to the host message, and a code that arrives
+ * with neither (an unmapped code whose message is empty) renders the generic
+ * line so the UI never shows an empty error.
+ */
 export function failureCopy(t: ResearchT, failure: ResearchFailureView | null): string {
   if (failure === null) return ''
-  if (failure.code === 'invalid-dir') return t('error.invalidDir')
-  return failure.message
+  const key = FAILURE_CODE_KEYS[failure.code]
+  if (key !== undefined) return t(key)
+  return failure.message === '' ? t('error.code.unknown') : failure.message
 }
 
 /** Human-readable byte size (B/KB/MB, one decimal above 1 KB). */

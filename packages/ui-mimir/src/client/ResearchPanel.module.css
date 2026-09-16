@@ -1,8 +1,8 @@
 /* Research workbench overlay: a wide window over the app frame, painted in
    the half-paper-media language (定位文档 §4.6): a warm ivory paper ground
-   with two faint washes, low-saturation ink, hairline rules, a muted slate
+   with two faint washes, low-saturation ink, hairline rules, a caramel
    accent, serif display type over monospace archive microtext, and
-   frosted-glass cards floating over the ground. The `--mimir-*` tokens are
+   near-opaque paper cards floating over the ground. The `--mimir-*` tokens are
    the panel's private palette; the `--dsw-alias-*` overrides below re-tint
    every host token read INSIDE the panel, so the paper palette wins over
    the host's default blue UI. The shell.overlay layer is click-through:
@@ -28,7 +28,7 @@
   display: flex;
   border: 1px solid rgb(255 255 255 / 55%);
   border-radius: 20px;
-  background: linear-gradient(180deg, #f7f2e8, #f2ecdf);
+  background: linear-gradient(180deg, var(--mimir-sheet), var(--mimir-paper));
   box-shadow:
     inset 0 1px 0 rgb(255 255 255 / 60%),
     0 0 1px rgb(33 30 25 / 20%),
@@ -39,31 +39,35 @@
   /* Native widgets (select popups, checkboxes, scrollbars) follow the light
      palette; the dark override below flips them together with the tokens. */
   color-scheme: light;
+  font-family: var(--mimir-sans);
   --dsh-scrollbar-thumb: var(--dsw-alias-scrollbar-bg-l2, rgb(127 127 127 / 40%));
   --dsh-scrollbar-thumb-hover: var(--dsw-alias-scrollbar-hover-l2, rgb(127 127 127 / 55%));
   /* ── Paper & ink (light) ─────────────────────────────────────────────── */
-  --mimir-paper: #f2ecdf;
+  --mimir-paper: #f5f0e6;
   --mimir-paper-deep: #ece5d4;
-  --mimir-sheet: #fffef9;
+  --mimir-sheet: #fdfbf7;
   --mimir-ink: #211e19;
   --mimir-line: rgb(33 30 25 / 10%);
   --mimir-line-soft: rgb(33 30 25 / 6%);
-  --mimir-accent: #3e5c76;
-  --mimir-accent-strong: #33506b;
-  --mimir-accent-soft: rgb(62 92 118 / 12%);
+  --mimir-accent: #a0522d;
+  --mimir-accent-strong: #7a3e22;
+  --mimir-accent-soft: rgb(160 82 45 / 12%);
+  --mimir-seal: #bc4749;
+  --mimir-seal-soft: rgb(188 71 73 / 10%);
   --mimir-success: #5f7e5a;
   --mimir-success-soft: rgb(95 126 90 / 12%);
   --mimir-error: #a24b3f;
   --mimir-error-soft: rgb(162 75 63 / 10%);
   --mimir-warn: #96742f;
   --mimir-warn-soft: rgb(154 123 63 / 12%);
-  --mimir-glass: rgb(255 254 249 / 72%);
+  --mimir-glass: rgb(250 248 245 / 92%);
   --mimir-edge: inset 0 1px 0 rgb(255 255 255 / 60%);
-  --mimir-card-shadow: 0 1px 2px rgb(33 30 25 / 5%), 0 10px 28px rgb(33 30 25 / 8%);
+  --mimir-card-shadow: 0 1px 2px rgb(74 59 50 / 6%), 0 8px 24px rgb(74 59 50 / 8%);
   --mimir-serif: Georgia, 'Iowan Old Style', 'Times New Roman', 'Songti SC', 'Noto Serif SC', serif;
+  --mimir-sans: 'Noto Sans SC', 'Inter', system-ui, sans-serif;
   --mimir-mono: ui-monospace, 'SF Mono', SFMono-Regular, Menlo, Consolas, monospace;
   /* ── Host-alias re-tints: the paper palette inside the panel ─────────── */
-  --dsw-specific-menu: #fffef9;
+  --dsw-specific-menu: var(--mimir-sheet);
   --dsw-alias-markdown-code-block: #f1ebdd;
   --dsw-alias-label-primary: #211e19;
   --dsw-alias-label-secondary: #57503f;
@@ -75,10 +79,10 @@
   --dsw-alias-border-l3: rgb(33 30 25 / 14%);
   --dsw-alias-border-secondary: rgb(33 30 25 / 14%);
   --dsw-alias-interactive-bg-hover: rgb(33 30 25 / 5%);
-  --dsw-alias-button-primary-fill: #211e19;
-  --dsw-alias-button-primary-hover: #3a352c;
-  --dsw-alias-state-business-primary: #3e5c76;
-  --dsw-alias-state-business-tertiary: rgb(62 92 118 / 12%);
+  --dsw-alias-button-primary-fill: #a0522d;
+  --dsw-alias-button-primary-hover: #7a3e22;
+  --dsw-alias-state-business-primary: #a0522d;
+  --dsw-alias-state-business-tertiary: rgb(160 82 45 / 12%);
   --dsw-alias-state-success-primary: #5f7e5a;
   --dsw-alias-state-success-tertiary: rgb(95 126 90 / 12%);
   --dsw-alias-state-error-primary: #a24b3f;
@@ -86,8 +90,8 @@
   --dsw-alias-state-error-tertiary: rgb(162 75 63 / 12%);
   --dsw-alias-state-warn-label: #96742f;
   --dsw-alias-state-warn-tertiary: rgb(154 123 63 / 12%);
-  --dsw-alias-business-primary: #3e5c76;
-  --dsw-alias-business-quaternary: rgb(62 92 118 / 10%);
+  --dsw-alias-business-primary: #a0522d;
+  --dsw-alias-business-quaternary: rgb(160 82 45 / 10%);
   --dsw-font-mono: var(--mimir-mono);
   --dsw-alias-mono-font: var(--mimir-mono);
 }
@@ -102,9 +106,9 @@
   min-height: 0;
   flex-direction: column;
   border-right: 1px solid var(--mimir-line-soft);
-  /* The muted-zine "colored paper strip": a faint slate wash down the rail. */
+  /* The muted-zine "colored paper strip": a faint caramel wash down the rail. */
   background:
-    linear-gradient(180deg, rgb(62 92 118 / 6%), transparent 42%),
+    linear-gradient(180deg, rgb(160 82 45 / 6%), transparent 42%),
     linear-gradient(180deg, var(--mimir-paper-deep), var(--mimir-paper));
 }
 
@@ -509,7 +513,7 @@
   overflow-y: auto;
   padding: 12px;
   border-top: 1px solid var(--dsw-alias-border-l1, rgb(0 0 0 / 4%));
-  background: rgb(62 92 118 / 3%);
+  background: rgb(160 82 45 / 3%);
 }
 
 /* The rail's bottom line: the keyboard-shortcut hint. */
@@ -660,7 +664,7 @@
 }
 
 .projectRow[data-selected] {
-  border-color: rgb(62 92 118 / 28%);
+  border-color: rgb(160 82 45 / 28%);
   background: var(--dsw-specific-menu, #fff);
   box-shadow: 0 6px 18px rgb(33 30 25 / 8%);
 }
@@ -681,10 +685,10 @@
 }
 
 
-/* The content well: the paper ground. Two faint washes (a slate tint at the
+/* The content well: the paper ground. Two faint washes (a caramel tint at the
    upper left, an ochre tint at the upper right — the muted-zine rule of one
-   pale wash each, at a few percent of the area) sit over the ivory gradient
-   so the glass cards have something quiet to float over. Flex column so the
+   pale wash each, at a few percent of the area) sit over the paper gradient
+   so the near-opaque paper cards have something quiet to float over. Flex column so the
    paper view stretches to the full workbench height. */
 .content {
   flex: 1;
@@ -695,9 +699,9 @@
   flex-direction: column;
   padding: 28px 34px;
   background:
-    radial-gradient(620px 300px at 8% -4%, rgb(62 92 118 / 7%), transparent 70%),
+    radial-gradient(620px 300px at 8% -4%, rgb(160 82 45 / 7%), transparent 70%),
     radial-gradient(560px 280px at 96% -6%, rgb(154 123 63 / 6%), transparent 70%),
-    linear-gradient(180deg, #f6f0e4, #f1eadb);
+    linear-gradient(180deg, var(--mimir-paper), var(--mimir-paper-deep));
 }
 
 /* Shared empty state: a centered dashed card with a glyph and copy. */
@@ -3246,10 +3250,10 @@ li.dropIndicator {
 }
 
 /* A shared elevated surface language across EVERY card in the panel:
-   frosted warm-white (translucent + backdrop-blur) over the paper ground,
+   near-opaque warm-white paper over the paper ground,
    one hairline rule, a faint inner top edge light, and the soft paper shadow.
    Kept after the individual card rules so every view finishes with the same
-   visual depth (the glassmorphism brief, applied with paper restraint). */
+   visual depth (the PaperViz brief, applied with paper restraint). */
 .overviewCard,
 .statChip,
 .activitySection,
@@ -3313,6 +3317,8 @@ li.dropIndicator {
   --mimir-accent: #8fb0cc;
   --mimir-accent-strong: #a9c3db;
   --mimir-accent-soft: rgb(143 176 204 / 16%);
+  --mimir-seal: #d08a7c;
+  --mimir-seal-soft: rgb(208 138 124 / 14%);
   --mimir-success: #9cbf94;
   --mimir-success-soft: rgb(156 191 148 / 14%);
   --mimir-error: #d08a7c;
@@ -5195,7 +5201,7 @@ li.dropIndicator {
 }
 
 .worktreeOver {
-  color: #b3261e;
+  color: var(--mimir-error);
   font-size: 11px;
 }
 
@@ -5211,7 +5217,7 @@ li.dropIndicator {
 .foragingBaseline {
   margin: 0 0 10px;
   font-size: 12px;
-  color: var(--research-ink-2, #5b6470);
+  color: var(--dsw-alias-label-secondary, #57503f);
 }
 
 .foragingList {
@@ -5232,14 +5238,14 @@ li.dropIndicator {
 
 .foragingGut {
   margin-left: auto;
-  color: var(--research-ink-2, #5b6470);
+  color: var(--dsw-alias-label-secondary, #57503f);
   font-variant-numeric: tabular-nums;
 }
 
 .foragingNote {
   margin: 10px 0 0;
   font-size: 11px;
-  color: var(--research-ink-3, #8a93a0);
+  color: var(--dsw-alias-label-tertiary, #857d6c);
 }
 
 
@@ -5253,253 +5259,14 @@ li.dropIndicator {
 
 
 
-/* ── Clay skin for the ledger view (worktree + foraging + timeline) ────── */
-
-.ledger {
-  --clay-bg: #efe4db;
-  --clay-card: #f9f1ea;
-  --clay-tray: #e9dcd1;
-  --clay-btn: #f6ebe2;
-  --clay-ink: #5b4a3f;
-  --clay-ink2: #8a766a;
-  --clay-ink3: #ac9a8d;
-  --clay-accent: #d98a68;
-  --clay-sh: 92, 72, 58;
-  background: var(--clay-bg);
-  border-radius: 26px;
-  padding: 22px;
-}
-
-.ledger .reportCard {
-  border: none;
-  border-radius: 26px;
-  background: var(--clay-card);
-  color: var(--clay-ink);
-  box-shadow:
-    0 16px 28px rgba(var(--clay-sh), 0.16),
-    0 5px 10px rgba(var(--clay-sh), 0.09),
-    inset 0 9px 16px rgba(255, 255, 255, 0.65),
-    inset 0 -12px 22px rgba(var(--clay-sh), 0.09);
-}
-
-.ledger .reportCardTitle { color: var(--clay-ink); font-weight: 700; }
-.ledger .hint { color: var(--clay-ink2); }
-.ledger .viewTitle { color: var(--clay-ink); }
-.ledger .viewSubtitle { color: var(--clay-ink2); }
-
-.ledger .btn,
-.ledger .btnPrimary {
-  border: none;
-  border-radius: 999px;
-  cursor: pointer;
-  font-weight: 600;
-  color: var(--clay-ink);
-  background: var(--clay-btn);
-  box-shadow:
-    0 8px 14px rgba(var(--clay-sh), 0.16),
-    0 2px 4px rgba(var(--clay-sh), 0.09),
-    inset 0 6px 10px rgba(255, 255, 255, 0.7),
-    inset 0 -6px 10px rgba(var(--clay-sh), 0.12);
-  transition: transform 0.28s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
-}
-
-.ledger .btnPrimary {
-  background: var(--clay-accent);
-  color: #fff;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
-}
-
-.ledger .btn:hover,
-.ledger .btnPrimary:hover {
-  transform: translateY(-2px);
-  box-shadow:
-    0 14px 22px rgba(var(--clay-sh), 0.2),
-    0 4px 8px rgba(var(--clay-sh), 0.11),
-    inset 0 7px 12px rgba(255, 255, 255, 0.7),
-    inset 0 -7px 12px rgba(var(--clay-sh), 0.12);
-}
-
-.ledger .btn:active,
-.ledger .btnPrimary:active {
-  transform: translateY(1px) scale(0.97);
-  box-shadow:
-    0 2px 4px rgba(var(--clay-sh), 0.09),
-    inset 0 6px 12px rgba(var(--clay-sh), 0.22),
-    inset 0 -3px 6px rgba(255, 255, 255, 0.45);
-}
-
-.ledger .btn:disabled,
-.ledger .btnPrimary:disabled {
-  opacity: 0.55;
-  transform: none;
-  box-shadow: inset 0 4px 8px rgba(var(--clay-sh), 0.12);
-}
-
-.ledger .worktreeBanner {
-  border: none;
-  border-radius: 999px;
-  background: var(--clay-card);
-  color: var(--clay-ink);
-  box-shadow:
-    0 6px 12px rgba(var(--clay-sh), 0.11),
-    inset 0 5px 9px rgba(255, 255, 255, 0.6),
-    inset 0 -6px 10px rgba(var(--clay-sh), 0.09);
-}
-
-.ledger .worktreeBannerKind { color: var(--clay-ink2); }
-.ledger .worktreeBannerMain { color: var(--clay-ink); font-weight: 700; }
-.ledger .worktreeBannerMeta { color: var(--clay-ink3); }
-
-.ledger .worktreeLane {
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.45);
-  box-shadow:
-    0 6px 12px rgba(var(--clay-sh), 0.09),
-    inset 0 5px 9px rgba(255, 255, 255, 0.55),
-    inset 0 -7px 12px rgba(var(--clay-sh), 0.07);
-  transition: transform 0.25s cubic-bezier(0.34, 1.56, 0.64, 1), box-shadow 0.25s;
-}
-
-.ledger .worktreeLane:hover {
-  transform: translateY(-1px);
-  box-shadow:
-    0 10px 16px rgba(var(--clay-sh), 0.12),
-    inset 0 6px 10px rgba(255, 255, 255, 0.55),
-    inset 0 -8px 12px rgba(var(--clay-sh), 0.08);
-}
-
-.ledger .worktreeLaneLabel { color: var(--clay-ink); font-weight: 600; }
-.ledger .worktreeLaneMeta { color: var(--clay-ink2); }
-.ledger .worktreeGroupTitle { color: var(--clay-ink3); letter-spacing: 0.08em; }
-.ledger .worktreeReason { color: var(--clay-ink2); }
-.ledger .worktreeParentLabel { color: var(--clay-ink3); }
-
-.ledger .worktreeGlyph {
-  width: 28px;
-  height: 28px;
-  min-width: 28px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  background: var(--clay-btn);
-  color: var(--clay-ink);
-  box-shadow:
-    0 4px 8px rgba(var(--clay-sh), 0.15),
-    inset 0 4px 6px rgba(255, 255, 255, 0.7),
-    inset 0 -5px 8px rgba(var(--clay-sh), 0.16);
-}
-
-.ledger .worktreeGlyph[data-status='failed'] { color: #a2573f; }
-.ledger .worktreeGlyph[data-status='adopted'] { color: #7fa189; }
-
-.ledger .worktreeMainBadge {
-  border: none;
-  border-radius: 999px;
-  background: var(--clay-accent);
-  color: #fff;
-  font-weight: 700;
-  box-shadow:
-    0 4px 8px rgba(var(--clay-sh), 0.17),
-    inset 0 3px 5px rgba(255, 255, 255, 0.35),
-    inset 0 -4px 6px rgba(var(--clay-sh), 0.2);
-}
-
-.ledger .worktreeSelect {
-  border: none;
-  border-radius: 12px;
-  background: var(--clay-tray);
-  color: var(--clay-ink);
-  box-shadow:
-    inset 0 4px 8px rgba(var(--clay-sh), 0.16),
-    inset 0 -2px 4px rgba(255, 255, 255, 0.4);
-}
-
-.ledger .statChip {
-  border: none;
-  border-radius: 999px;
-  background: var(--clay-btn);
-  color: var(--clay-ink2);
-  box-shadow:
-    0 4px 8px rgba(var(--clay-sh), 0.09),
-    inset 0 4px 7px rgba(255, 255, 255, 0.6),
-    inset 0 -4px 7px rgba(var(--clay-sh), 0.1);
-}
-
-.ledger .worktreeCounts { color: var(--clay-ink2); }
-.ledger .foragingBaseline { color: var(--clay-ink2); }
-.ledger .foragingGut { color: var(--clay-ink2); }
-.ledger .foragingNote { color: var(--clay-ink3); }
-
-.ledger .foragingRow {
-  border-radius: 14px;
-  padding: 8px 12px;
-  background: rgba(255, 255, 255, 0.4);
-  box-shadow:
-    inset 0 4px 8px rgba(255, 255, 255, 0.5),
-    inset 0 -5px 8px rgba(var(--clay-sh), 0.06);
-}
-
-.ledger .timelineCard {
-  border: none;
-  border-radius: 26px;
-  background: var(--clay-card);
-  box-shadow:
-    0 14px 24px rgba(var(--clay-sh), 0.14),
-    inset 0 9px 16px rgba(255, 255, 255, 0.65),
-    inset 0 -12px 22px rgba(var(--clay-sh), 0.08);
-}
-
-.ledger .tagPill {
-  border: none;
-  border-radius: 999px;
-  background: var(--clay-btn);
-  color: var(--clay-ink2);
-  box-shadow:
-    0 4px 8px rgba(var(--clay-sh), 0.1),
-    inset 0 3px 6px rgba(255, 255, 255, 0.6),
-    inset 0 -3px 6px rgba(var(--clay-sh), 0.1);
-  cursor: pointer;
-}
-
-.ledger .tagPill[data-active='true'],
-.ledger .tagPill[data-active] {
-  background: var(--clay-accent);
-  color: #fff;
-  font-weight: 700;
-}
-
-.ledger .journalBox {
-  border: none;
-  border-radius: 20px;
-  background: var(--clay-tray);
-  box-shadow:
-    inset 0 6px 12px rgba(var(--clay-sh), 0.14),
-    inset 0 -4px 8px rgba(255, 255, 255, 0.4);
-}
-
-.ledger .journalInput {
-  border: none;
-  border-radius: 14px;
-  background: var(--clay-card);
-  color: var(--clay-ink);
-  box-shadow:
-    inset 0 4px 10px rgba(var(--clay-sh), 0.12),
-    inset 0 -3px 6px rgba(255, 255, 255, 0.55);
-}
-
-.ledger .retry { color: var(--clay-accent); }
-
-/* ── Branch flow (clean branch-graph vocabulary: white canvas, light grey
-      connectors, bright white-ringed nodes) ───────────────────────────── */
+/* ── Branch flow (paper canvas, hairline connectors, ink-ringed nodes) ─── */
 
 .worktreeFlowBox {
   position: relative;
   margin: 0 0 12px;
   border-radius: 16px;
-  background: #ffffff;
-  border: 1px solid #EFEFF2;
+  background: var(--mimir-sheet);
+  border: 1px solid var(--mimir-line-soft);
   padding: 10px 6px 4px;
   overflow: auto;
 }
@@ -5518,6 +5285,7 @@ li.dropIndicator {
 .worktreeFlowAdopted,
 .worktreeFlowDead {
   fill: none;
+  stroke: var(--mimir-line);
   stroke-linecap: round;
 }
 
@@ -5530,7 +5298,7 @@ li.dropIndicator {
 .worktreeFlowBead,
 .worktreeFlowBeadMeta,
 .worktreeFlowBeadTerminal {
-  stroke: #ffffff;
+  stroke: var(--mimir-sheet);
   stroke-width: 2.2;
 }
 
@@ -5541,13 +5309,13 @@ li.dropIndicator {
 }
 
 .worktreeFlowEpoch {
-  stroke: #C9CDD4;
+  stroke: var(--mimir-line);
   stroke-width: 1;
   stroke-dasharray: 3 5;
 }
 
 .worktreeFlowNow {
-  stroke: #FF7F6E;
+  stroke: var(--mimir-accent);
   stroke-width: 1.6;
   opacity: 0.6;
 }
@@ -5555,7 +5323,7 @@ li.dropIndicator {
 .worktreeFlowNote {
   margin: 4px 8px 2px;
   font-size: 11px;
-  color: #9AA0A6;
+  color: var(--dsw-alias-label-tertiary, #857d6c);
 }
 
 /* The highlight strip: memorable beats as soft pills, colour-coded by kind
@@ -5564,8 +5332,8 @@ li.dropIndicator {
   margin: 0 0 14px;
   padding: 10px 12px;
   border-radius: 14px;
-  background: #FAFBFC;
-  border: 1px solid #EFF1F3;
+  background: var(--mimir-paper);
+  border: 1px solid var(--mimir-line-soft);
 }
 
 .worktreeHighlightsTitle {
@@ -5573,7 +5341,7 @@ li.dropIndicator {
   font-size: 11px;
   font-weight: 600;
   letter-spacing: 0.08em;
-  color: #9AA0A6;
+  color: var(--dsw-alias-label-tertiary, #857d6c);
 }
 
 .worktreeHighlightList {
@@ -5588,17 +5356,17 @@ li.dropIndicator {
 .worktreeHighlight {
   padding: 5px 10px;
   border-radius: 999px;
-  background: #FFFFFF;
-  border: 1px solid #E8EAED;
+  background: var(--mimir-sheet);
+  border: 1px solid var(--mimir-line);
   font-size: 12px;
-  color: #4A4F55;
+  color: var(--dsw-alias-label-secondary, #57503f);
 }
 
-.worktreeHighlight[data-kind='eureka'] { border-color: #FFD7D0; background: #FFF6F4; }
-.worktreeHighlight[data-kind='mainline'] { border-color: #D6E9FA; background: #F4F9FE; }
-.worktreeHighlight[data-kind='adopted'] { border-color: #CFEBD6; background: #F3FBF5; }
-.worktreeHighlight[data-kind='failed'] { border-color: #FADCE6; background: #FEF7F9; }
-.worktreeHighlight[data-kind='busiest'] { border-color: #E4E1FA; background: #F7F6FE; }
+.worktreeHighlight[data-kind='eureka'] { border-color: var(--mimir-seal); background: var(--mimir-seal-soft); }
+.worktreeHighlight[data-kind='mainline'] { border-color: var(--mimir-accent); background: var(--mimir-accent-soft); }
+.worktreeHighlight[data-kind='adopted'] { border-color: var(--mimir-success); background: var(--mimir-success-soft); }
+.worktreeHighlight[data-kind='failed'] { border-color: var(--mimir-error); background: var(--mimir-error-soft); }
+.worktreeHighlight[data-kind='busiest'] { border-color: var(--mimir-warn); background: var(--mimir-warn-soft); }
 
 /* The lane pill: a saturated badge carrying the lane's own hue, so the
    label below the graph and the nodes above it are visibly one thing. */
@@ -5612,7 +5380,7 @@ li.dropIndicator {
   margin-top: 2px;
   padding: 0 6px;
   border-radius: 11px;
-  color: #ffffff;
+  color: var(--mimir-sheet);
   font-size: 12px;
   line-height: 1;
   font-weight: 600;
@@ -5625,17 +5393,15 @@ li.dropIndicator {
   gap: 2px;
   padding: 8px 12px;
   border-radius: 12px;
-  background: var(--clay-card, #f9f1ea);
-  color: var(--clay-ink, #5b4a3f);
+  border: 1px solid var(--mimir-line-soft);
+  background: var(--mimir-sheet);
+  color: var(--dsw-alias-label-primary, #211e19);
   font-size: 11px;
   line-height: 1.4;
   white-space: nowrap;
   pointer-events: none;
   z-index: 2;
-  box-shadow:
-    0 10px 18px rgba(92, 72, 58, 0.22),
-    inset 0 4px 8px rgba(255, 255, 255, 0.6),
-    inset 0 -5px 8px rgba(92, 72, 58, 0.1);
+  box-shadow: var(--mimir-edge), var(--mimir-card-shadow);
 }
 
 .worktreeFlowTipLane {
@@ -5643,7 +5409,7 @@ li.dropIndicator {
 }
 
 .worktreeFlowTipMeta {
-  color: var(--clay-ink2, #8a766a);
+  color: var(--dsw-alias-label-tertiary, #857d6c);
   font-variant-numeric: tabular-nums;
 }
 
@@ -5657,7 +5423,7 @@ li.dropIndicator {
 }
 .digestControlLabel {
   margin-left: 10px;
-  color: var(--clay-ink2, #8a766a);
+  color: var(--dsw-alias-label-tertiary, #857d6c);
   font-size: 12px;
 }
 .digestBody { display: block; }
@@ -5665,12 +5431,13 @@ li.dropIndicator {
   margin: 0 0 12px;
   padding: 8px 12px;
   border-radius: 10px;
-  background: var(--clay-sunken, rgba(92, 72, 58, 0.06));
-  color: var(--clay-ink, #5b4a3f);
+  border: 1px solid var(--mimir-line-soft);
+  background: var(--mimir-paper);
+  color: var(--dsw-alias-label-secondary, #57503f);
   font-size: 12px;
   line-height: 1.5;
 }
-.digestSilence { color: var(--clay-ink2, #8a766a); }
+.digestSilence { color: var(--dsw-alias-label-tertiary, #857d6c); }
 .digestSection { margin: 14px 0; }
 .digestTable {
   width: 100%;
@@ -5681,12 +5448,12 @@ li.dropIndicator {
 .digestTable th,
 .digestTable td {
   padding: 5px 8px;
-  border-bottom: 1px solid var(--clay-line, rgba(92, 72, 58, 0.12));
+  border-bottom: 1px solid var(--mimir-line);
   text-align: left;
 }
 .digestTable th[scope='row'] {
   font-weight: 600;
-  color: var(--clay-ink2, #8a766a);
+  color: var(--dsw-alias-label-secondary, #57503f);
   white-space: nowrap;
 }
 .digestCapsuleList {
@@ -5704,19 +5471,20 @@ li.dropIndicator {
   gap: 8px;
   padding: 6px 10px;
   border-radius: 10px;
-  background: var(--clay-card, #fffdf9);
-  box-shadow: 0 2px 5px rgba(92, 72, 58, 0.12), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+  border: 1px solid var(--mimir-line-soft);
+  background: var(--mimir-sheet);
+  box-shadow: var(--mimir-edge);
 }
-.digestCapsuleAt { color: var(--clay-ink2, #8a766a); font-variant-numeric: tabular-nums; }
-.digestCapsuleTheme { font-weight: 600; color: var(--clay-ink, #5b4a3f); }
-.digestCapsuleMetric { font-variant-numeric: tabular-nums; color: var(--clay-ink, #5b4a3f); }
+.digestCapsuleAt { color: var(--dsw-alias-label-tertiary, #857d6c); font-variant-numeric: tabular-nums; }
+.digestCapsuleTheme { font-weight: 600; color: var(--dsw-alias-label-primary, #211e19); }
+.digestCapsuleMetric { font-variant-numeric: tabular-nums; color: var(--dsw-alias-label-primary, #211e19); }
 .digestCapsuleEvidence {
-  color: var(--clay-ink2, #8a766a);
-  font-family: var(--mono, monospace);
+  color: var(--dsw-alias-label-tertiary, #857d6c);
+  font-family: var(--mimir-mono);
   font-size: 11px;
 }
 .digestNote {
-  color: var(--clay-ink2, #8a766a);
+  color: var(--dsw-alias-label-tertiary, #857d6c);
   font-size: 11px;
   font-style: italic;
   margin: 6px 0 0;
@@ -5725,9 +5493,10 @@ li.dropIndicator {
   margin: 8px 0 0;
   padding: 10px 12px;
   border-radius: 10px;
-  background: var(--clay-sunken, rgba(92, 72, 58, 0.06));
+  border: 1px solid var(--mimir-line-soft);
+  background: var(--mimir-paper);
   overflow: auto;
-  font-family: var(--mono, monospace);
+  font-family: var(--mimir-mono);
   font-size: 12px;
   line-height: 1.45;
 }
@@ -5743,7 +5512,7 @@ li.dropIndicator {
   display: flex;
   align-items: center;
   gap: 8px;
-  color: var(--clay-ink, #5b4a3f);
+  color: var(--dsw-alias-label-primary, #211e19);
   font-size: 13px;
 }
 .digestDeclare {
@@ -5758,11 +5527,11 @@ li.dropIndicator {
   min-width: 180px;
   padding: 8px 12px;
   border-radius: 12px;
-  border: 1px solid var(--clay-line, rgba(92, 72, 58, 0.18));
-  background: var(--clay-input, #fffdf9);
-  color: var(--clay-ink, #5b4a3f);
+  border: 1px solid var(--mimir-line);
+  background: var(--mimir-sheet);
+  color: var(--dsw-alias-label-primary, #211e19);
   font-size: 13px;
-  box-shadow: inset 0 2px 4px rgba(92, 72, 58, 0.1);
+  box-shadow: var(--mimir-edge);
 }
 
 /* Import-existing-project dialog: portaled to document.body, so the z-index

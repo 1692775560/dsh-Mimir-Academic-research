@@ -38,6 +38,7 @@ import { TEMPLATE_DIR_NAME } from './services/venue.ts'
 import { meetingDeckPath } from './services/meeting.ts'
 import { ResearchService } from './service.ts'
 import { recoverInterruptedJobs } from './services/server.ts'
+import { recoverPendingWikiImport } from './services/wiki-admin.ts'
 import { registerResearchSkills } from './skills.ts'
 import { registerSxngSkill } from './sxng-skill.ts'
 import { startWikiBackupLoop } from './backup.ts'
@@ -88,6 +89,12 @@ export type {
   ResearchPinMomentResult,
   ResearchSetEurekaOptions,
   ResearchSetEurekaResult,
+  ResearchGetEvidenceGraphResult,
+  ResearchEvidenceGraphView,
+  ResearchAddEvidenceEdgeResult,
+  ResearchRetractEvidenceEdgeResult,
+  AddEvidenceEdgeRequest,
+  RetractEvidenceEdgeRequest,
   ResearchGetHabitsResult,
   ResearchGetLibraryThemesResult,
   ResearchImportPaperResult,
@@ -362,6 +369,47 @@ export {
   CBE_MOMENT_BURST_MIN_EVENTS,
 } from './moment-index.ts'
 export type { CbeCuratedMoment, CbeMomentKind, CbeMomentPin } from './moment-index.ts'
+export {
+  deriveEvidenceGraph,
+  renderEvidenceGraphMarkdown,
+  EVIDENCE_EDGE_ADDED_ACTION,
+  EVIDENCE_EDGE_RETRACTED_ACTION,
+  EVIDENCE_EDGE_RELS,
+  EVIDENCE_GRAPH_DERIVATION_VERSION,
+  isEvidenceEdgeRel,
+} from './evidence-graph.ts'
+export type {
+  EvidenceAliasKeys,
+  EvidenceClaimHistory,
+  EvidenceConflict,
+  EvidenceEdgeRel,
+  EvidenceGraph,
+  EvidenceGraphEdge,
+  EvidenceGraphNode,
+  EvidenceGraphRel,
+  EvidenceGraphStats,
+  EvidenceGraphWindow,
+  EvidenceTimelineEntry,
+  EvidenceTimelineGroup,
+  EvidenceWikiSnapshot,
+} from './evidence-graph.ts'
+export {
+  nodeKeyOf,
+  isValidNodeKey,
+  nodeKindOf,
+  normalizeUrl,
+  normalizeDoi,
+  titleFingerprint,
+  isTitleFingerprint,
+  dedupKeyOf,
+  isDedupKey,
+  queryKeyOf,
+  evidenceScopeOf,
+  NODE_KEY_MAX_CHARS,
+  LABEL_MAX_CHARS,
+  ALIAS_MAX_CHARS,
+  NOTE_MAX_CHARS,
+} from './evidence-identity.ts'
 export {
   deriveMomentCandidates,
   kindOfBurst,
@@ -1137,15 +1185,17 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   const resolved = resolveConfig(config)
   const domain = await ctx.storageDomain.open(researchWikiDomainSpec)
   ctx.effect(() => () => domain.close(), 'mimir.domainClose')
+  const workspaceDir = resolve(process.cwd(), resolved.workspaceDir)
+  await recoverPendingWikiImport({ workspaceDir, domain })
   // Stored paper records with path-unsafe ids predate the whitelist (or were
   // hand-edited); quarantine them before any surface can join them into a
   // filesystem path. The schema stays permissive so their presence can never
   // abort the open itself.
   await quarantineUnsafePaperIds(domain, message => ctx.logger.warn(message))
-  await recoverInterruptedJobs({ workspaceDir: resolve(process.cwd(), resolved.workspaceDir), domain })
+  await recoverInterruptedJobs({ workspaceDir, domain })
 
   const deps: ResearchCommandDeps = {
-    workspaceDir: resolve(process.cwd(), resolved.workspaceDir),
+    workspaceDir,
     domain,
     reviewer: resolved.reviewer,
     latex: resolved.latex,
