@@ -30,7 +30,8 @@ import type {
   ResearchUpdateExperimentResult,
   ResearchUpdateFigureResult,
 } from '../types.ts'
-import { rejected, success } from './common.ts'
+import { nextRecordId, rejected, success } from './common.ts'
+import type { ServiceState } from './common.ts'
 
 /** Everything the Experiment domain functions need from the service scope. */
 export interface ExperimentDeps {
@@ -133,11 +134,13 @@ export async function deleteExperiment(
  * null). Either way `updatedAt` refreshes — ExperimentRecord carries no
  * createdAt.
  * @param deps - open wiki domain.
+ * @param state - per-instance counters backing the collision-safe id.
  * @param request - the full-field payload.
  * @returns the stored record after the upsert.
  */
 export async function saveExperiment(
   deps: ExperimentDeps,
+  state: ServiceState,
   request: { experiment: ExperimentInput },
 ): Promise<ResearchSaveExperimentResult> {
   const input = request.experiment
@@ -181,7 +184,7 @@ export async function saveExperiment(
     return success({ experiment: next })
   }
   const created: ExperimentRecord = {
-    id: `exp-${Date.now().toString(36)}`,
+    id: nextRecordId(state, 'exp'),
     projectId: input.projectId,
     name: input.name,
     status: input.status,

@@ -32,7 +32,7 @@ import type {
   ServerRecord,
   ServerStatusView,
 } from '../types.ts'
-import { rejected, success } from './common.ts'
+import { nextRecordId, rejected, success } from './common.ts'
 import type { ServiceState } from './common.ts'
 
 /** Everything the Server domain functions need from the service scope. */
@@ -217,11 +217,13 @@ export function listServers(deps: ServerDeps): Promise<ResearchListServersResult
  * trimmed, emptied out, and deduped before it replaces the record's tags;
  * an omitted list keeps them.
  * @param deps - open wiki domain.
+ * @param state - per-instance counters backing the collision-safe id.
  * @param request - the server fields, with `id` marking the update form.
  * @returns the stored record.
  */
 export async function saveServer(
   deps: ServerDeps,
+  state: ServiceState,
   request: { server: ServerInput },
 ): Promise<ResearchSaveServerResult> {
   const input = request.server
@@ -256,7 +258,7 @@ export async function saveServer(
     return success({ server: next })
   }
   const created: ServerRecord = {
-    id: `srv-${Date.now().toString(36)}`,
+    id: nextRecordId(state, 'srv'),
     name: input.name,
     host: input.host,
     port: input.port,

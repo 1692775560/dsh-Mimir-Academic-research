@@ -14,7 +14,7 @@ import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { apply, type Config } from '../src/index.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
-import type { ProjectRecord } from '../src/types.ts'
+import type { PaperRecord, ProjectRecord } from '../src/types.ts'
 
 type RouteHandler = (req: IncomingMessage, res: ServerResponse) => Promise<void>
 
@@ -47,6 +47,19 @@ const PROJECT: ProjectRecord = {
   artifacts: [],
   reviewRounds: 0,
   updatedAt: '2026-08-20T00:00:00.000Z',
+}
+
+const PAPER: PaperRecord = {
+  arxivId: '2103.00020v2',
+  title: 'Paper',
+  authors: ['Doe, Jane'],
+  summary: 'Abstract.',
+  url: 'https://arxiv.org/abs/2103.00020v2',
+  notes: '',
+  tags: [],
+  projectIds: [],
+  pdfPath: 'papers/2103.00020v2.pdf',
+  addedAt: '2026-08-20T00:00:00.000Z',
 }
 
 async function bootRoutes(): Promise<{
@@ -139,20 +152,35 @@ describe('research PDF and figure routes', () => {
     }
   })
 
-  it('adds defensive headers to compiled PDF responses', async () => {
+  it('serves both PDF routes with nosniff and without a document CSP (#257)', async () => {
     const { routes, domain, workspaceDir } = await bootRoutes()
     await domain.table('projects').put(PROJECT.id, PROJECT)
+    await domain.table('papers').put(PAPER.arxivId, PAPER)
     await mkdir(join(workspaceDir, 'paper'), { recursive: true })
     await writeFile(join(workspaceDir, 'paper', 'main.pdf'), '%PDF-1.7')
-    const response = new ResponseRecorder()
+    await mkdir(join(workspaceDir, 'papers'), { recursive: true })
+    await writeFile(join(workspaceDir, PAPER.pdfPath!), '%PDF-1.7')
 
-    await routes.get('/research/pdf')!(request('/research/pdf/p1'), response as unknown as ServerResponse)
+    const compiled = new ResponseRecorder()
+    await routes.get('/research/pdf')!(request('/research/pdf/p1'), compiled as unknown as ServerResponse)
+    const fetched = new ResponseRecorder()
+    await routes.get('/research/paper-pdf')!(
+      request(`/research/paper-pdf/${PAPER.arxivId}`),
+      fetched as unknown as ServerResponse,
+    )
 
-    expect(response.statusCode).toBe(200)
-    expect(response.headers).toMatchObject({
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'none'; sandbox",
-    })
+    for (const [label, response] of [['/research/pdf', compiled], ['/research/paper-pdf', fetched]] as const) {
+      expect(response.statusCode, label).toBe(200)
+      expect(response.headers, label).toMatchObject({
+        'Content-Type': 'application/pdf',
+        'X-Content-Type-Options': 'nosniff',
+      })
+      // #257 regression guard: a document CSP breaks browser-native PDF
+      // viewers (`sandbox` disables Chrome's PDFium plugin — the black
+      // reader; WebKit's viewer needs inline styles), and buys nothing
+      // because those viewers run in an isolated plugin/extension origin.
+      expect(response.headers?.['Content-Security-Policy'], label).toBeUndefined()
+    }
   })
 })
 
