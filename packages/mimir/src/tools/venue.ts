@@ -20,8 +20,10 @@ function renderResults(results: readonly {
   title: string; year: number; ccfRank: string; sub: string; description: string
   link: string; date: string; place: string
   nextDeadlineAt: string; nextDeadlineKind: string; daysLeft: number
-  /** Present at runtime; the output schema keeps the rows summary-only. */
-  timeline?: readonly { abstractDeadline: string | null; deadline: string | null; comment: string | null }[] | undefined
+  /** Declared in the output schema (#264); the rounds ride through as loose
+   * records (permissive items — the fields are nullable at runtime), so the
+   * render narrows them field-by-field below. */
+  timeline?: readonly Record<string, unknown>[] | undefined
 }[], fetchedAt: string): string {
   if (results.length === 0) return 'No matching venues in the cached CCF catalog.'
   const lines = results.map((row) => {
@@ -29,11 +31,14 @@ function renderResults(results: readonly {
       ? 'no pending deadline'
       : `${row.nextDeadlineKind === 'abstract' ? 'abstract' : 'paper'} deadline ${row.nextDeadlineAt} (${String(row.daysLeft)}d left)`
     const timeline = (row.timeline ?? []).map((round) => {
+      const abstract = typeof round['abstractDeadline'] === 'string' ? round['abstractDeadline'] as string : null
+      const deadline = typeof round['deadline'] === 'string' ? round['deadline'] as string : null
+      const comment = typeof round['comment'] === 'string' ? round['comment'] as string : null
       const parts = [
-        round.abstractDeadline === null ? null : `abstract ${round.abstractDeadline}`,
-        round.deadline === null ? null : `paper ${round.deadline}`,
+        abstract === null ? null : `abstract ${abstract}`,
+        deadline === null ? null : `paper ${deadline}`,
       ].filter(part => part !== null)
-      return `    - ${parts.join(' · ')}${round.comment === null ? '' : ` (${round.comment})`}`
+      return `    - ${parts.join(' · ')}${comment === null ? '' : ` (${comment})`}`
     })
     return [
       `- ${row.title} ${String(row.year)} [CCF-${row.ccfRank}] (${row.sub}): ${row.description}`,
@@ -86,8 +91,9 @@ export function createVenueSearchTool(workspaceDir: string): ToolDefinition {
                 daysLeft: { type: 'integer', required: true },
                 // #264: the execute path spreads the row's timeline through (the render
                 // shows every round), so the schema must declare it or the strict
-                // additionalProperties check rejects the whole answer. Round fields
-                // are nullable at runtime, hence the permissive items shape.
+                // additionalProperties check rejects the whole answer. The items stay
+                // permissive because the round fields are nullable at runtime; the
+                // render narrows them field-by-field.
                 timeline: { type: 'array', items: { type: 'object', additionalProperties: true } },
               },
             },
