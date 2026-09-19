@@ -273,7 +273,9 @@ describe('venue_search output schema (#264)', () => {
     expect(value.results[0]?.timeline.length).toBe(1)
     // The nullable round fields ride through untouched (schema items stay
     // permissive, so nulls pass the strict envelope).
-    expect(value.results[0]?.timeline[0]?.deadline).toBe('2027-11-14 23:59:59')
+    // searchVenueCache converts each round from the source timezone (AoE =
+    // UTC-12) to a UTC ISO instant - '2027-11-14 23:59:59' AoE lands here.
+    expect(value.results[0]?.timeline[0]?.deadline).toBe('2027-11-15T11:59:59.000Z')
     expect(value.results[0]?.timeline[0]?.abstractDeadline).toBeNull()
   })
 })
