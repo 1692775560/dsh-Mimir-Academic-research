@@ -16,6 +16,7 @@ import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
 import { loadVenueCache } from '../src/services/venue-deadlines.ts'
+import { createVenueSearchTool } from '../src/tools/venue.ts'
 import type { ProjectRecord } from '../src/types.ts'
 
 /** Boot a service over a memory-backed domain and a fresh temp workspace. */
@@ -198,5 +199,83 @@ describe('loadVenueCache (#241)', () => {
     expect(await loadVenueCache(workspaceDir)).toBeNull()
     await writeFile(join(workspaceDir, 'venue-deadlines.cache.json'), 'not json {')
     expect(await loadVenueCache(workspaceDir)).toBeNull()
+  })
+})
+
+describe('venue_search output schema (#264)', () => {
+  /** The tool under test, built over the same temp workspace the cache uses. */
+
+  /** A timeline-bearing series fixture in the cache writer's shape (self-contained:
+   * the #241 block's GOOD_SERIES lives inside its own describe and is not visible here). */
+  const TIMELINE_SERIES = {
+    key: 'cvpr',
+    title: 'CVPR',
+    description: 'Computer vision',
+    sub: 'AI',
+    ccfRank: 'A',
+    dblp: 'cvpr',
+    confs: [{
+      year: 2027,
+      id: 'cvpr27',
+      link: 'https://cvpr.example/',
+      timeline: [{ abstractDeadline: null, deadline: '2027-11-14 23:59:59', comment: null }],
+      timezone: 'AoE',
+      date: 'June 2027',
+      place: 'Nashville',
+    }],
+  }
+  function venueTool(workspaceDir: string) {
+    return createVenueSearchTool(workspaceDir)
+  }
+
+  it('declares every runtime result key — additionalProperties:false cannot reject the answer', async () => {
+    const { workspaceDir } = await harness()
+    await writeFile(join(workspaceDir, 'venue-deadlines.cache.json'), JSON.stringify({
+      fetchedAt: '2026-09-01T00:00:00.000Z',
+      venues: [TIMELINE_SERIES],
+    }))
+
+    const tool = venueTool(workspaceDir)
+    const value = (await tool.execute({ query: 'cvpr' })) as {
+      fetched_at: string
+      results: Record<string, unknown>[]
+    }
+
+    // The regression: execute spreads the row's timeline through, so before
+    // the fix this key set exceeded the declared properties and the strict
+    // additionalProperties:false output schema rejected the entire answer.
+    const declared = Object.keys(
+      (tool.output.schema.properties['results'] as {
+        items: { properties: Record<string, unknown> }
+      }).items.properties,
+    )
+    expect(declared).toContain('timeline')
+    for (const row of value.results) {
+      for (const key of Object.keys(row)) {
+        expect(declared, `runtime key '${key}' must be declared in the output schema`).toContain(key)
+      }
+    }
+  })
+
+  it('keeps the timeline rounds (nullable fields intact) in the execute output', async () => {
+    const { workspaceDir } = await harness()
+    await writeFile(join(workspaceDir, 'venue-deadlines.cache.json'), JSON.stringify({
+      fetchedAt: '2026-09-01T00:00:00.000Z',
+      venues: [TIMELINE_SERIES],
+    }))
+
+    const tool = venueTool(workspaceDir)
+    const value = (await tool.execute({ query: 'cvpr' })) as {
+      results: { title: string; timeline: { abstractDeadline: string | null; deadline: string | null }[] }[]
+    }
+    expect(value.results.length).toBeGreaterThan(0)
+    expect(value.results[0]?.title).toBe('CVPR')
+    expect(value.results[0]?.timeline.length).toBe(1)
+    // The nullable round fields ride through untouched (schema items stay
+    // permissive, so nulls pass the strict envelope).
+    // searchVenueCache converts each round from the source timezone (AoE =
+    // UTC-12) to a UTC ISO instant - '2027-11-14 23:59:59' AoE lands here.
+    expect(value.results[0]?.timeline[0]?.deadline).toBe('2027-11-15T11:59:59.000Z')
+    expect(value.results[0]?.timeline[0]?.abstractDeadline).toBeNull()
   })
 })
