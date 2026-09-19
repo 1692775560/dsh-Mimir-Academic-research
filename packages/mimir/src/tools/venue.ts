@@ -84,6 +84,11 @@ export function createVenueSearchTool(workspaceDir: string): ToolDefinition {
                 nextDeadlineAt: { type: 'string', required: true },
                 nextDeadlineKind: { type: 'string', required: true },
                 daysLeft: { type: 'integer', required: true },
+                // #264: the execute path spreads the row's timeline through (the render
+                // shows every round), so the schema must declare it or the strict
+                // additionalProperties check rejects the whole answer. Round fields
+                // are nullable at runtime, hence the permissive items shape.
+                timeline: { type: 'array', items: { type: 'object', additionalProperties: true } },
               },
             },
           },
