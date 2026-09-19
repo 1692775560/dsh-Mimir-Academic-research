@@ -204,6 +204,26 @@ describe('loadVenueCache (#241)', () => {
 
 describe('venue_search output schema (#264)', () => {
   /** The tool under test, built over the same temp workspace the cache uses. */
+
+  /** A timeline-bearing series fixture in the cache writer's shape (self-contained:
+   * the #241 block's GOOD_SERIES lives inside its own describe and is not visible here). */
+  const TIMELINE_SERIES = {
+    key: 'cvpr',
+    title: 'CVPR',
+    description: 'Computer vision',
+    sub: 'AI',
+    ccfRank: 'A',
+    dblp: 'cvpr',
+    confs: [{
+      year: 2027,
+      id: 'cvpr27',
+      link: 'https://cvpr.example/',
+      timeline: [{ abstractDeadline: null, deadline: '2027-11-14 23:59:59', comment: null }],
+      timezone: 'AoE',
+      date: 'June 2027',
+      place: 'Nashville',
+    }],
+  }
   function venueTool(workspaceDir: string) {
     return createVenueSearchTool(workspaceDir)
   }
@@ -212,7 +232,7 @@ describe('venue_search output schema (#264)', () => {
     const { workspaceDir } = await harness()
     await writeFile(join(workspaceDir, 'venue-deadlines.cache.json'), JSON.stringify({
       fetchedAt: '2026-09-01T00:00:00.000Z',
-      venues: [GOOD_SERIES],
+      venues: [TIMELINE_SERIES],
     }))
 
     const tool = venueTool(workspaceDir)
@@ -241,7 +261,7 @@ describe('venue_search output schema (#264)', () => {
     const { workspaceDir } = await harness()
     await writeFile(join(workspaceDir, 'venue-deadlines.cache.json'), JSON.stringify({
       fetchedAt: '2026-09-01T00:00:00.000Z',
-      venues: [GOOD_SERIES],
+      venues: [TIMELINE_SERIES],
     }))
 
     const tool = venueTool(workspaceDir)
