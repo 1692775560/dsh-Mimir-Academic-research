@@ -111,12 +111,25 @@ export function createVenueSearchTool(workspaceDir: string): ToolDefinition {
       }
       return {
         fetched_at: answer.fetchedAt,
+        // Project the declared fields ONE BY ONE rather than spreading the row
+        // (#264): the search fold also carries `timeline`, and spreading it
+        // into a rows schema that is `additionalProperties: false` made the
+        // host reject every non-empty result. The rounds stay summary-only on
+        // the wire and reach the reader through `render` above.
         // The output schema is null-free: a fully past edition reports ''/-1.
         results: answer.results.slice(0, VENUE_SEARCH_MAX_RESULTS).map(row => ({
-          ...row,
+          title: row.title,
+          description: row.description,
+          sub: row.sub,
+          ccfRank: row.ccfRank,
+          year: row.year,
+          link: row.link,
+          date: row.date,
+          place: row.place,
           nextDeadlineAt: row.nextDeadlineAt ?? '',
           nextDeadlineKind: row.nextDeadlineKind ?? '',
           daysLeft: row.daysLeft ?? -1,
+          // `timeline` is deliberately absent — see the note above.
         })),
       }
     },

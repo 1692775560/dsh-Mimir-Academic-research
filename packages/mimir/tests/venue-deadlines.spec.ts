@@ -477,6 +477,41 @@ describe('searchVenueCache / venue_search tool', () => {
     expect(value.results[0]?.daysLeft).toBe(-1)
   })
 
+  // #264: the rows schema is `additionalProperties: false`, so ANY field the
+  // execute returns but the schema does not declare makes the host reject the
+  // whole tool result — venue_search failed for every non-empty query. These
+  // read the declared key set off the tool itself, so a field added to one
+  // side and not the other fails here rather than at a user's call site.
+  it('returns exactly the fields its own output schema declares', async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'mimir-venue-search-'))
+    await seedCache(workspaceDir, '2099-01-01 00:00:00')
+    const tool = createVenueSearchTool(workspaceDir)
+    const value = await tool.execute({}, { signal: new AbortController().signal } as never) as {
+      readonly fetched_at: string
+      readonly results: readonly Record<string, unknown>[]
+    }
+
+    const schema = (tool.output as {
+      schema: {
+        properties: {
+          results: { items: { properties: Record<string, unknown>, additionalProperties?: boolean } }
+          [key: string]: unknown
+        }
+      }
+    }).schema
+    // The guard only means something while the rows stay closed.
+    expect(schema.properties.results.items.additionalProperties).toBe(false)
+
+    const declared = Object.keys(schema.properties.results.items.properties).sort()
+    expect(value.results.length).toBeGreaterThan(0)
+    for (const row of value.results) {
+      expect(Object.keys(row).sort()).toEqual(declared)
+    }
+    // The rounds live in the rendered text, not in the structured rows.
+    expect(value.results[0]).not.toHaveProperty('timeline')
+    expect(Object.keys(value).sort()).toEqual(Object.keys(schema.properties).sort())
+  })
+
   it('execute answers a pending deadline with kind and day count', async () => {
     const workspaceDir = await mkdtemp(join(tmpdir(), 'mimir-venue-search-'))
     await seedCache(workspaceDir, '2099-01-01 00:00:00')
