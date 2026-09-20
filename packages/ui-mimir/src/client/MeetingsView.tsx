@@ -3,9 +3,11 @@
  * project's wiki material. The form carries the deck title/presenter/date,
  * the four section switches (progress/experiments/figures/papers), an AI
  * illustration switch (cover + per-paper concept images, host-side when the
- * image API is configured), a paper multi-select (empty = top 12 by the
- * project's AI relevance verdicts), and a figure multi-select (empty = every
- * figure with a raster sibling). Below the form a collapsible section edits
+ * image API is configured), a paper multi-select (pre-picked to the top 5 by
+ * the project's AI relevance verdicts, with a title/author/tag search box,
+ * the verdict score + reason per row, and a picked-count line; unpicking all
+ * means the deck has no papers section), and a figure multi-select (empty =
+ * every figure with a raster sibling). Below the form a collapsible section edits
  * the image-gen API config (baseUrl/model/size/key, key masked host-side).
  * Generate calls the host's deterministic renderer (no agent round-trip);
  * the produced deck lands in `meetings/<projectId>/` and lists below with
@@ -14,7 +16,7 @@
  */
 
 import { useEffect, useMemo, useState } from 'react'
-import type { FigureEntry, MeetingDeckView, MeetingInclude, PaperRecord } from 'dsh-mimir/types'
+import type { FigureEntry, MeetingDeckView, MeetingInclude } from 'dsh-mimir/types'
 import type {
   ResearchFailureView,
   ResearchImageGenView,
@@ -22,6 +24,11 @@ import type {
   ResearchProjectSlice,
 } from './controller.ts'
 import type { ResearchKey } from './locales.ts'
+import {
+  defaultMeetingPicks,
+  filterMeetingPapers,
+  sortMeetingPapers,
+} from './meeting-picks.ts'
 import {
   failureCopy, figureUrl, formatSize, meetingDeckUrl, relativeTime, type ResearchT,
 } from './view-common.ts'
@@ -43,11 +50,6 @@ const SECTION_LABELS: Record<keyof MeetingInclude, ResearchKey> = {
 /** Today's date as YYYY-MM-DD, the date input's initial value. */
 function today(): string {
   return new Date().toISOString().slice(0, 10)
-}
-
-/** The paper relevance score the deck's default ordering would use. */
-function scoreOf(paper: PaperRecord, projectId: string): number {
-  return paper.relevance?.[projectId]?.score ?? -1
 }
 
 /**
@@ -128,6 +130,9 @@ export function MeetingsView({
     progress: true, experiments: true, figures: true, papers: true,
   })
   const [pickedPapers, setPickedPapers] = useState<ReadonlySet<string>>(new Set())
+  /** Project the current picks were defaulted for (re-defaults on switch). */
+  const [picksProject, setPicksProject] = useState<string | null>(null)
+  const [paperQuery, setPaperQuery] = useState('')
   const [pickedFigures, setPickedFigures] = useState<ReadonlySet<string>>(new Set())
   const [aiIllustrations, setAiIllustrations] = useState(false)
   const [configOpen, setConfigOpen] = useState(false)
@@ -156,10 +161,22 @@ export function MeetingsView({
 
   const projectPapers = useMemo(() => projectId === null || papers.status !== 'ready'
     ? []
-    : papers.list
-      .filter(paper => paper.projectIds.includes(projectId))
-      .sort((left, right) => scoreOf(right, projectId) - scoreOf(left, projectId)),
+    : sortMeetingPapers(papers.list, projectId),
   [papers, projectId])
+
+  // A fresh project form pre-picks the relevance top 5 (the deck's own
+  // default ordering); the user's edits then stick until the next switch.
+  useEffect(() => {
+    if (projectId === null || papers.status !== 'ready' || picksProject === projectId) return
+    setPickedPapers(new Set(defaultMeetingPicks(papers.list, projectId)))
+    setPicksProject(projectId)
+    setPaperQuery('')
+  }, [projectId, papers, picksProject])
+
+  const visiblePapers = useMemo(
+    () => filterMeetingPapers(projectPapers, paperQuery),
+    [projectPapers, paperQuery],
+  )
 
   // The deck embeds raster siblings only (svg is skipped host-side), so the
   // pick grid offers exactly the files that can make it into the deck.
@@ -181,11 +198,13 @@ export function MeetingsView({
     if (projectId === null || busy) return
     setBusy(true)
     setFailure(null)
+    // Explicit picks always win (unpicking every paper = no papers section);
+    // the ids go in the list's relevance order, so the deck reads best-first.
     void generateMeetingDeck(projectId, {
       title: title.trim() === '' ? undefined : title.trim(),
       presenter: presenter.trim() === '' ? undefined : presenter.trim(),
       date: date === '' ? undefined : date,
-      paperIds: pickedPapers.size === 0 ? undefined : [...pickedPapers],
+      paperIds: projectPapers.filter(paper => pickedPapers.has(paper.arxivId)).map(paper => paper.arxivId),
       figureRelPaths: pickedFigures.size === 0 ? undefined : [...pickedFigures],
       include,
       aiIllustrations,
@@ -378,29 +397,72 @@ export function MeetingsView({
           {projectPapers.length === 0 ? (
             <p className={css.hint}>{t('papers.empty')}</p>
           ) : (
-            <ul className={css.meetingPickList}>
-              {projectPapers.map(paper => {
-                const score = paper.relevance?.[projectId]?.score
-                const band = score === undefined ? undefined : score >= 7 ? 'high' : score >= 4 ? 'mid' : 'low'
-                return (
-                  <li key={paper.arxivId}>
-                    <label className={css.meetingPickItem} data-picked={pickedPapers.has(paper.arxivId) || undefined}>
-                      <input
-                        type="checkbox"
-                        checked={pickedPapers.has(paper.arxivId)}
-                        onChange={() => { setPickedPapers(current => toggle(current, paper.arxivId)) }}
-                      />
-                      <span className={css.meetingPickTitle} title={paper.title}>{paper.title}</span>
-                      {score !== undefined && (
-                        <span className={css.relevanceChip} data-band={band}>
-                          {score.toFixed(score % 1 === 0 ? 0 : 1)}/10
-                        </span>
-                      )}
-                    </label>
-                  </li>
-                )
-              })}
-            </ul>
+            <>
+              <div className={css.meetingFormRow}>
+                <input
+                  className={css.input}
+                  value={paperQuery}
+                  placeholder={t('meetings.searchPapers')}
+                  aria-label={t('meetings.searchPapers')}
+                  onChange={event => { setPaperQuery(event.target.value) }}
+                />
+                <span className={css.hint}>
+                  {t('meetings.pickedCount', { picked: pickedPapers.size, total: projectPapers.length })}
+                </span>
+                <button
+                  type="button"
+                  className={css.btn}
+                  onClick={() => { setPickedPapers(new Set(defaultMeetingPicks(papers.status === 'ready' ? papers.list : [], projectId))) }}
+                >
+                  {t('meetings.pickRecommended')}
+                </button>
+                <button type="button" className={css.btn} onClick={() => { setPickedPapers(new Set()) }}>
+                  {t('meetings.clearPicks')}
+                </button>
+              </div>
+              {pickedPapers.size === 0 && (
+                <p className={css.hint}>{t('meetings.noPicksHint')}</p>
+              )}
+              {visiblePapers.length === 0 ? (
+                <p className={css.hint}>{t('meetings.noMatch')}</p>
+              ) : (
+                <ul className={css.meetingPickList}>
+                  {visiblePapers.map(paper => {
+                    const verdict = paper.relevance?.[projectId]
+                    const score = verdict?.score
+                    const band = score === undefined ? undefined : score >= 7 ? 'high' : score >= 4 ? 'mid' : 'low'
+                    const meta = [
+                      paper.authors.slice(0, 2).join(', ') + (paper.authors.length > 2 ? ' et al.' : ''),
+                      verdict?.reason ?? '',
+                    ].filter(part => part !== '').join(' — ')
+                    return (
+                      <li key={paper.arxivId}>
+                        <label className={css.meetingPickItem} data-picked={pickedPapers.has(paper.arxivId) || undefined}>
+                          <input
+                            type="checkbox"
+                            checked={pickedPapers.has(paper.arxivId)}
+                            onChange={() => { setPickedPapers(current => toggle(current, paper.arxivId)) }}
+                          />
+                          <span className={css.meetingPickBody}>
+                            <span className={css.meetingPickTitleRow}>
+                              <span className={css.meetingPickTitle} title={paper.title}>{paper.title}</span>
+                              {score !== undefined && (
+                                <span className={css.relevanceChip} data-band={band}>
+                                  {score.toFixed(score % 1 === 0 ? 0 : 1)}/10
+                                </span>
+                              )}
+                            </span>
+                            {meta !== '' && (
+                              <span className={css.meetingPickMeta} title={meta}>{meta}</span>
+                            )}
+                          </span>
+                        </label>
+                      </li>
+                    )
+                  })}
+                </ul>
+              )}
+            </>
           )}
         </>
       )}
