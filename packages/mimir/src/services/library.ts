@@ -38,10 +38,14 @@ export interface LibraryDeps {
     /** Test hook replacing the real child process. */
     readonly run?: WebSearchRunner
   }
+  /** Resolved arXiv fetch knobs; absent falls back to the module default timeout. */
+  readonly arxiv?: {
+    readonly timeoutMs: number
+  }
 }
 
-/** Timeout of one arXiv API request made on the panel's behalf. */
-const ARXIV_FETCH_TIMEOUT_MS = 15_000
+/** Timeout of one arXiv API request made on the panel's behalf when the plugin config does not set one. */
+const ARXIV_FETCH_TIMEOUT_MS = 30_000
 /** Timeout of one panel-driven arXiv PDF download. */
 const ARXIV_PDF_FETCH_TIMEOUT_MS = 60_000
 /** Workspace-relative directory the fetched paper PDFs land in. */
@@ -151,17 +155,17 @@ export function listPapers(deps: LibraryDeps): Promise<ResearchPapersResult> {
 
 /**
  * Search arXiv on the panel's behalf. The query must be non-empty
- * (`invalid-input` otherwise); the request carries a hard 15s timeout and
- * transport/HTTP failures settle as `operation-failed` with the underlying
- * message.
- * @param _deps - retained for signature uniformity (future arXiv knobs); the
- * call itself is pure network.
+ * (`invalid-input` otherwise); the request carries the configured timeout
+ * (default 30s; the Atom API attempt inside fails fast and falls back to the
+ * web search page within the same budget) and transport/HTTP failures settle
+ * as `operation-failed` with the underlying message.
+ * @param deps - the resolved arXiv knobs (absent = the module default timeout).
  * @param request - the free-text query and an optional result cap
  * (default 10, hard cap 50).
  * @returns the parsed entries, newest API order preserved.
  */
 export async function searchArxiv(
-  _deps: LibraryDeps,
+  deps: LibraryDeps,
   request: { query: string; maxResults?: number },
 ): Promise<ResearchSearchArxivResult> {
   const query = request.query.trim()
@@ -171,7 +175,8 @@ export async function searchArxiv(
     return rejected({ code: 'invalid-input', message: `maxResults must be an integer between 1 and ${ARXIV_SEARCH_MAX_RESULTS}` })
   }
   try {
-    const results = await fetchArxivSearch(query, maxResults, AbortSignal.timeout(ARXIV_FETCH_TIMEOUT_MS))
+    const timeoutMs = deps.arxiv?.timeoutMs ?? ARXIV_FETCH_TIMEOUT_MS
+    const results = await fetchArxivSearch(query, maxResults, AbortSignal.timeout(timeoutMs))
     return success({ results: Object.freeze(results) })
   } catch (error) {
     return rejected({

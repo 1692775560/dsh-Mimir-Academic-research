@@ -20,20 +20,19 @@ function renderResults(results: readonly {
   title: string; year: number; ccfRank: string; sub: string; description: string
   link: string; date: string; place: string
   nextDeadlineAt: string; nextDeadlineKind: string; daysLeft: number
-  /** Present at runtime; the output schema keeps the rows summary-only. */
-  timeline?: readonly { abstractDeadline: string | null; deadline: string | null; comment: string | null }[] | undefined
+  timeline: readonly { abstractDeadline: string; deadline: string; comment: string }[]
 }[], fetchedAt: string): string {
   if (results.length === 0) return 'No matching venues in the cached CCF catalog.'
   const lines = results.map((row) => {
     const ddl = row.nextDeadlineAt === ''
       ? 'no pending deadline'
       : `${row.nextDeadlineKind === 'abstract' ? 'abstract' : 'paper'} deadline ${row.nextDeadlineAt} (${String(row.daysLeft)}d left)`
-    const timeline = (row.timeline ?? []).map((round) => {
+    const timeline = row.timeline.map((round) => {
       const parts = [
-        round.abstractDeadline === null ? null : `abstract ${round.abstractDeadline}`,
-        round.deadline === null ? null : `paper ${round.deadline}`,
+        round.abstractDeadline === '' ? null : `abstract ${round.abstractDeadline}`,
+        round.deadline === '' ? null : `paper ${round.deadline}`,
       ].filter(part => part !== null)
-      return `    - ${parts.join(' · ')}${round.comment === null ? '' : ` (${round.comment})`}`
+      return `    - ${parts.join(' · ')}${round.comment === '' ? '' : ` (${round.comment})`}`
     })
     return [
       `- ${row.title} ${String(row.year)} [CCF-${row.ccfRank}] (${row.sub}): ${row.description}`,
@@ -84,6 +83,19 @@ export function createVenueSearchTool(workspaceDir: string): ToolDefinition {
                 nextDeadlineAt: { type: 'string', required: true },
                 nextDeadlineKind: { type: 'string', required: true },
                 daysLeft: { type: 'integer', required: true },
+                timeline: {
+                  type: 'array',
+                  required: true,
+                  items: {
+                    type: 'object',
+                    additionalProperties: false,
+                    properties: {
+                      abstractDeadline: { type: 'string', required: true },
+                      deadline: { type: 'string', required: true },
+                      comment: { type: 'string', required: true },
+                    },
+                  },
+                },
               },
             },
           },
@@ -111,12 +123,18 @@ export function createVenueSearchTool(workspaceDir: string): ToolDefinition {
       }
       return {
         fetched_at: answer.fetchedAt,
-        // The output schema is null-free: a fully past edition reports ''/-1.
+        // The output schema is null-free: a fully past edition reports ''/-1,
+        // and a round with no abstract deadline / comment reports ''.
         results: answer.results.slice(0, VENUE_SEARCH_MAX_RESULTS).map(row => ({
           ...row,
           nextDeadlineAt: row.nextDeadlineAt ?? '',
           nextDeadlineKind: row.nextDeadlineKind ?? '',
           daysLeft: row.daysLeft ?? -1,
+          timeline: row.timeline.map(round => ({
+            abstractDeadline: round.abstractDeadline ?? '',
+            deadline: round.deadline ?? '',
+            comment: round.comment ?? '',
+          })),
         })),
       }
     },

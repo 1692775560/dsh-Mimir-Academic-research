@@ -23,7 +23,8 @@ import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
 import type { ResearchServiceConfig } from '../src/service.ts'
-import { ARXIV_PDF_MAX_BYTES, paperPdfFileName, parseArxivFeed } from '../src/tools/arxiv.ts'
+import { ARXIV_PDF_MAX_BYTES, fetchArxivSearch, paperPdfFileName, parseArxivFeed, parseArxivSearchHtml } from '../src/tools/arxiv.ts'
+import { Config } from '../src/index.ts'
 import type { ProjectRecord } from '../src/types.ts'
 
 /** Boot a service over a memory-backed domain and a fresh temp workspace. */
@@ -459,10 +460,104 @@ const ARXIV_ENTRY = {
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 
+/**
+ * One arxiv.org/search result block, shaped like the real page (list-title
+ * abs link, mathjax title, authors anchors, abstract-full span, and the
+ * "Submitted <d Month, yyyy>" line).
+ */
+const ARXIV_SEARCH_HTML = `<html><body><ol>
+<li class="arxiv-result">
+  <div class="is-marginless">
+    <p class="list-title is-inline-block">
+      <a href="https://arxiv.org/abs/2103.00020">arXiv:2103.00020</a>
+      <span>(<a href="https://arxiv.org/pdf/2103.00020">pdf</a>)</span>
+    </p>
+    <p class="title is-5 mathjax">
+      EgoSync &amp; Friends: A Study
+    </p>
+    <p class="authors">
+      <span class="has-text-black-bis has-text-weight-semibold">Authors:</span>
+      <a href="/search/?searchtype=author&amp;query=Doe">Doe, Jane</a>,
+      <a href="/search/?searchtype=author&amp;query=Roe">Roe, John</a>
+    </p>
+    <p class="abstract mathjax">
+      <span class="search-hits">Found in: abstract</span>
+      <span class="abstract-full has-text-grey-dark mathjax">
+        Multi <b>line</b> &lt;abstract&gt; body.
+        <a href="#">△ Less</a>
+      </span>
+    </p>
+    <p class="is-size-7">
+      <span class="has-text-black-bis has-text-weight-semibold">Submitted</span> 1 March, 2021;
+      <span class="has-text-black-bis has-text-weight-semibold">originally announced</span> March 2021.
+    </p>
+  </div>
+</li>
+</ol></body></html>`
+
+const ARXIV_HTML_ENTRY = {
+  id: '2103.00020',
+  title: 'EgoSync & Friends: A Study',
+  authors: ['Doe, Jane', 'Roe, John'],
+  summary: 'Multi line <abstract> body.',
+  published: '2021-03-01',
+  url: 'https://arxiv.org/abs/2103.00020',
+}
+
 describe('parseArxivFeed', () => {
   it('parses entries, unescapes entities, and derives abs urls', () => {
     expect(parseArxivFeed(ARXIV_FEED)).toEqual([ARXIV_ENTRY])
     expect(parseArxivFeed('<feed xmlns="http://www.w3.org/2005/Atom"></feed>')).toEqual([])
+  })
+})
+
+describe('parseArxivSearchHtml', () => {
+  it('parses result blocks and normalizes the submission date', () => {
+    expect(parseArxivSearchHtml(ARXIV_SEARCH_HTML)).toEqual([ARXIV_HTML_ENTRY])
+    expect(parseArxivSearchHtml('<html><body>no results</body></html>')).toEqual([])
+  })
+
+  it('skips a block without an abs link and passes odd dates through', () => {
+    const noId = '<li class="arxiv-result"><p class="title is-5 mathjax">Ghost</p></li>'
+    expect(parseArxivSearchHtml(noId)).toEqual([])
+    const oddDate = ARXIV_SEARCH_HTML.replace('1 March, 2021;', 'sometime last week;')
+    expect(parseArxivSearchHtml(oddDate)[0]?.published).toBe('sometime last week')
+  })
+})
+
+describe('arxiv config', () => {
+  it('defaults timeoutMs to 30s and validates the knob (issue #264)', () => {
+    expect(Config({}).arxiv).toEqual({ maxResults: 10, timeoutMs: 30_000 })
+    expect(Config({ arxiv: { timeoutMs: 5_000 } }).arxiv.timeoutMs).toBe(5_000)
+    expect(() => Config({ arxiv: { timeoutMs: 0 } })).toThrow()
+    expect(() => Config({ arxiv: { timeoutMs: 1.5 } })).toThrow()
+  })
+})
+
+describe('fetchArxivSearch fallback', () => {
+  it('falls back to the web search page when the Atom API fails', async () => {
+    const urls: string[] = []
+    vi.stubGlobal('fetch', async (url: string) => {
+      urls.push(url)
+      if (url.includes('export.arxiv.org')) return new Response('slow down', { status: 429 })
+      return new Response(ARXIV_SEARCH_HTML, { status: 200 })
+    })
+    const results = await fetchArxivSearch('egosync', 5, new AbortController().signal, { sortBySubmittedDate: true })
+    expect(results).toEqual([ARXIV_HTML_ENTRY])
+    expect(urls.length).toBe(2)
+    expect(urls[0]).toContain('export.arxiv.org/api/query')
+    expect(urls[0]).toContain('sortBy=submittedDate')
+    expect(urls[1]).toContain('arxiv.org/search/')
+    expect(urls[1]).toContain('order=-announced_date_first')
+  })
+
+  it('never falls back on a genuine caller abort', async () => {
+    let calls = 0
+    vi.stubGlobal('fetch', async () => { calls += 1; throw new Error('boom') })
+    const controller = new AbortController()
+    controller.abort()
+    await expect(fetchArxivSearch('q', 5, controller.signal)).rejects.toThrow('boom')
+    expect(calls).toBe(1)
   })
 })
 
