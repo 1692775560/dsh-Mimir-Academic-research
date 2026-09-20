@@ -2,8 +2,10 @@
  * arXiv API tools: `arxiv_search` (query → paper list) and `paper_fetch`
  * (id → one paper). The Atom response is parsed with plain string handling;
  * both tools honor the execution's abort signal and reject on transport or
- * HTTP failure. {@link fetchArxivPdf} downloads one paper's PDF bytes for the
- * panel's literature workbench.
+ * HTTP failure. Search falls back to the arxiv.org/search HTML page when the
+ * Atom API rate-limits or stalls ({@link parseArxivSearchHtml}).
+ * {@link fetchArxivPdf} downloads one paper's PDF bytes for the panel's
+ * literature workbench.
  * @module dsh-mimir/src/tools/arxiv
  */
 
@@ -69,6 +71,62 @@ async function fetchArxiv(url: string, signal: AbortSignal): Promise<string> {
   return response.text()
 }
 
+/** Month-name → number table for the web page's "25 March, 2021" dates. */
+const MONTH_NUMBERS: Record<string, string> = {
+  january: '01', february: '02', march: '03', april: '04', may: '05', june: '06',
+  july: '07', august: '08', september: '09', october: '10', november: '11', december: '12',
+}
+
+/** Strip markup tags from one extracted HTML fragment. */
+function stripTags(html: string): string {
+  return html.replace(/<[^>]+>/g, '')
+}
+
+/** Turn the web page's "25 March, 2021" submission date into ISO; unparseable shapes pass through trimmed. */
+function normalizeSubmittedDate(raw: string): string {
+  const match = /(\d{1,2})\s+([A-Za-z]+),?\s+(\d{4})/.exec(raw)
+  const month = match?.[2] === undefined ? undefined : MONTH_NUMBERS[match[2].toLowerCase()]
+  if (match === null || month === undefined) return raw.trim()
+  return `${match[3] ?? ''}-${month}-${(match[1] ?? '').padStart(2, '0')}`
+}
+
+/**
+ * Parse the arxiv.org/search HTML page into entries — the fallback channel
+ * when the Atom API rate-limits or stalls. The page's result `<li>` blocks
+ * carry the same fields as the feed; markup drift simply yields fewer
+ * entries (never a throw), and a block without an id is skipped.
+ */
+export function parseArxivSearchHtml(html: string): ArxivEntry[] {
+  const entries: ArxivEntry[] = []
+  const blocks = html.match(/<li class="arxiv-result">[\s\S]*?<\/li>/g) ?? []
+  for (const block of blocks) {
+    const id = /arxiv\.org\/abs\/([a-zA-Z0-9._/-]+)/.exec(block)?.[1]
+    if (id === undefined) continue
+    const title = normalizeField(stripTags(/<p class="title is-5 mathjax">([\s\S]*?)<\/p>/.exec(block)?.[1] ?? ''))
+    const authorsBlock = /<p class="authors">([\s\S]*?)<\/p>/.exec(block)?.[1] ?? ''
+    const authors = [...authorsBlock.matchAll(/<a[^>]*>([\s\S]*?)<\/a>/g)]
+      .map(match => normalizeField(stripTags(match[1] ?? '')))
+      .filter(name => name.length > 0)
+    const summary = normalizeField(stripTags(/<span class="abstract-full[^"]*">([\s\S]*?)<a/.exec(block)?.[1] ?? ''))
+    const submitted = /Submitted<\/span>\s*([^;<]+)/.exec(block)?.[1] ?? ''
+    entries.push({
+      id,
+      title,
+      authors,
+      summary,
+      published: submitted === '' ? '' : normalizeSubmittedDate(submitted),
+      url: `https://arxiv.org/abs/${id}`,
+    })
+  }
+  return entries
+}
+
+/** Budget of the primary Atom-API attempt inside one search call. */
+export const ARXIV_API_TIMEOUT_MS = 8_000
+
+/** Budget of the web-search fallback attempt inside one search call. */
+export const ARXIV_SEARCH_FALLBACK_TIMEOUT_MS = 20_000
+
 /** Optional knobs of one {@link fetchArxivSearch} call. */
 export interface ArxivSearchOptions {
   /** Sort by submission date, newest first (default: the API's relevance order). */
@@ -76,9 +134,13 @@ export interface ArxivSearchOptions {
 }
 
 /**
- * Run one arXiv full-text search and parse the feed. Shared by the
+ * Run one arXiv full-text search and parse the result. Shared by the
  * `arxiv_search` tool and the panel's `searchArxiv` Remote method; the caller
- * owns query validation and the abort/timeout signal.
+ * owns query validation and the abort/timeout signal. The Atom API attempt
+ * is capped at {@link ARXIV_API_TIMEOUT_MS}; on its failure (rate limit,
+ * outage, stall) the call retries once against the arxiv.org/search HTML
+ * page, which answers from a different serving path. A genuine caller cancel
+ * (`signal.aborted`) never falls back.
  * @param query - free-text query matched against all fields.
  * @param maxResults - result cap forwarded to the API.
  * @param signal - abort/timeout signal of the caller.
@@ -94,7 +156,18 @@ export async function fetchArxivSearch(
 ): Promise<ArxivEntry[]> {
   const sort = options.sortBySubmittedDate === true ? '&sortBy=submittedDate&sortOrder=descending' : ''
   const url = `https://export.arxiv.org/api/query?search_query=all:${encodeURIComponent(query)}&start=0&max_results=${maxResults}${sort}`
-  return parseArxivFeed(await fetchArxiv(url, signal))
+  try {
+    // The API attempt gets its own short leash so a stall leaves budget for
+    // the fallback within the caller's overall timeout.
+    const apiSignal = AbortSignal.any([signal, AbortSignal.timeout(ARXIV_API_TIMEOUT_MS)])
+    return parseArxivFeed(await fetchArxiv(url, apiSignal))
+  } catch (error) {
+    if (signal.aborted) throw error
+  }
+  const order = options.sortBySubmittedDate === true ? '&order=-announced_date_first' : ''
+  const fallbackUrl = `https://arxiv.org/search/?searchtype=all&query=${encodeURIComponent(query)}&size=${maxResults}${order}`
+  const fallbackSignal = AbortSignal.any([signal, AbortSignal.timeout(ARXIV_SEARCH_FALLBACK_TIMEOUT_MS)])
+  return parseArxivSearchHtml(await fetchArxiv(fallbackUrl, fallbackSignal))
 }
 
 /** Hard cap of one downloaded paper PDF (a safety invariant, not a tunable). */

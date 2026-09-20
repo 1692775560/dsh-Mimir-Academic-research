@@ -30,8 +30,8 @@ export const ARXIV_SUBSCRIPTION_NEW_LIMIT = 100
 export const ARXIV_SUBSCRIPTION_QUERY_MAX = 200
 /** How many of the newest submissions one check pulls per subscription. */
 export const ARXIV_SUBSCRIPTION_CHECK_RESULTS = 25
-/** Timeout of one check's arXiv request (same style as the panel's search). */
-export const ARXIV_SUBSCRIPTION_FETCH_TIMEOUT_MS = 15_000
+/** Timeout of one check's arXiv request when the plugin config does not set one (same style as the panel's search). */
+export const ARXIV_SUBSCRIPTION_FETCH_TIMEOUT_MS = 30_000
 /** Polite gap between two subscriptions' requests within one check run. */
 export const ARXIV_SUBSCRIPTION_GAP_MS = 3_000
 /** How long after plugin start the FIRST scheduled check runs. */
@@ -332,6 +332,8 @@ export interface ArxivSubscriptionLoopOptions {
   readonly intervalMs: number
   /** Delay of the FIRST run (default {@link ARXIV_SUBSCRIPTION_FIRST_DELAY_MS}). */
   readonly firstDelayMs?: number
+  /** Per-request timeout of each check's arXiv fetch (default {@link ARXIV_SUBSCRIPTION_FETCH_TIMEOUT_MS}). */
+  readonly timeoutMs?: number
   /** Shared scheduled-task health book (#223); every pass is recorded. */
   readonly health: TaskHealthRegistry
   /** Failure sink: called when a whole run rejects (a per-subscription fetch failure never reaches here); the loop keeps going. */
@@ -356,7 +358,9 @@ export function startArxivSubscriptionLoop(options: ArxivSubscriptionLoopOptions
     health: options.health,
     intervalMs: options.intervalMs,
     firstDelayMs: options.firstDelayMs ?? ARXIV_SUBSCRIPTION_FIRST_DELAY_MS,
-    run: () => runArxivSubscriptionCheck(options.workspaceDir),
+    run: () => runArxivSubscriptionCheck(options.workspaceDir, {
+      ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+    }),
     onError: options.onError,
   })
 }
