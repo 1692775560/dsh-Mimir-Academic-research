@@ -526,6 +526,13 @@ export interface Config {
   arxiv?: {
     /** Default result cap for `arxiv_search` (default 10). */
     maxResults?: number
+    /**
+     * Per-request timeout of arXiv search fetches in milliseconds (default
+     * 30000): the panel's `searchArxiv` and the subscription check both bound
+     * one request with it (the internal API attempt fails fast and falls back
+     * to the web search page within the same budget).
+     */
+    timeoutMs?: number
   }
   /** Web search deployment knobs (the sxng CLI over a self-hosted SearXNG). */
   search?: {
@@ -609,7 +616,8 @@ export const Config: z<Config> = z.object({
   }).default({ engine: 'auto', timeoutMs: 120_000 }),
   arxiv: z.object({
     maxResults: z.number().step(1).min(1).max(100).default(10),
-  }).default({ maxResults: 10 }),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
+  }).default({ maxResults: 10, timeoutMs: 30_000 }),
   search: z.object({
     command: z.string().default('auto'),
     timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
@@ -641,7 +649,7 @@ interface ResolvedConfig {
   readonly workspaceDir: string
   readonly reviewer: { readonly provider: string; readonly maxRounds: number; readonly timeoutMs: number }
   readonly latex: { readonly engine: string; readonly timeoutMs: number }
-  readonly arxiv: { readonly maxResults: number }
+  readonly arxiv: { readonly maxResults: number; readonly timeoutMs: number }
   readonly search: { readonly command: string; readonly timeoutMs: number }
   readonly zotero: { readonly apiKey: string; readonly userId: string }
   readonly subscriptions: {
@@ -663,7 +671,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   const workspaceDir = config.workspaceDir ?? '.research'
   const reviewer = { provider: config.reviewer?.provider ?? 'spawn', maxRounds: config.reviewer?.maxRounds ?? 3, timeoutMs: config.reviewer?.timeoutMs ?? 600_000 }
   const latex = { engine: config.latex?.engine ?? 'auto', timeoutMs: config.latex?.timeoutMs ?? 120_000 }
-  const arxiv = { maxResults: config.arxiv?.maxResults ?? 10 }
+  const arxiv = { maxResults: config.arxiv?.maxResults ?? 10, timeoutMs: config.arxiv?.timeoutMs ?? 30_000 }
   const search = { command: config.search?.command ?? 'auto', timeoutMs: config.search?.timeoutMs ?? 30_000 }
   const zotero = { apiKey: config.zotero?.apiKey ?? '', userId: config.zotero?.userId ?? '' }
   const subscriptions = {
@@ -685,6 +693,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (latex.engine.trim().length === 0) throw new TypeError('latex.engine must be a non-empty engine selection')
   if (!Number.isSafeInteger(latex.timeoutMs) || latex.timeoutMs < 1) throw new TypeError('latex.timeoutMs must be a positive safe integer')
   if (!Number.isSafeInteger(arxiv.maxResults) || arxiv.maxResults < 1) throw new TypeError('arxiv.maxResults must be a positive safe integer')
+  if (!Number.isSafeInteger(arxiv.timeoutMs) || arxiv.timeoutMs < 1) throw new TypeError('arxiv.timeoutMs must be a positive safe integer')
   if (search.command.trim().length === 0) throw new TypeError('search.command must be a non-empty command name')
   if (!Number.isSafeInteger(search.timeoutMs) || search.timeoutMs < 1) throw new TypeError('search.timeoutMs must be a positive safe integer')
   if (!Number.isSafeInteger(subscriptions.intervalMinutes) || subscriptions.intervalMinutes < 1) throw new TypeError('subscriptions.intervalMinutes must be a positive safe integer')
@@ -1265,6 +1274,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     latex: resolved.latex,
     backup: { ...resolved.backup, dir: backupDir },
     ...(searchConfig === undefined ? {} : { search: searchConfig }),
+    arxiv: { timeoutMs: resolved.arxiv.timeoutMs },
     zotero: resolved.zotero,
     taskHealth,
     notifyWikiChange: event => wikiChangeHub.publish(event),
@@ -1307,6 +1317,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       () => startArxivSubscriptionLoop({
         workspaceDir: deps.workspaceDir,
         intervalMs: resolved.subscriptions.intervalMinutes * 60_000,
+        timeoutMs: resolved.arxiv.timeoutMs,
         health: taskHealth,
         onError: (error) => { console.warn('[mimir] arXiv subscription check failed:', error) },
       }),

@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
+import { validateJsonSchemaValue } from '@deepseek-ai/dsh-tools'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
@@ -467,7 +468,10 @@ describe('searchVenueCache / venue_search tool', () => {
     const tool = createVenueSearchTool(workspaceDir)
     const value = await tool.execute({}, { signal: new AbortController().signal } as never) as {
       fetched_at: string
-      results: { title: string, nextDeadlineAt: string, nextDeadlineKind: string, daysLeft: number }[]
+      results: {
+        title: string, nextDeadlineAt: string, nextDeadlineKind: string, daysLeft: number
+        timeline: { abstractDeadline: string, deadline: string, comment: string }[]
+      }[]
     }
     expect(value.fetched_at).toBe('2026-09-01T00:00:00.000Z')
     expect(value.results.length).toBe(1)
@@ -475,6 +479,17 @@ describe('searchVenueCache / venue_search tool', () => {
     expect(value.results[0]?.nextDeadlineAt).toBe('')
     expect(value.results[0]?.nextDeadlineKind).toBe('')
     expect(value.results[0]?.daysLeft).toBe(-1)
+    expect(value.results[0]?.timeline).toEqual([{ abstractDeadline: '', deadline: '2020-01-01T00:00:00.000Z', comment: '' }])
+  })
+
+  it('execute output passes its own declared schema (issue #264)', async () => {
+    const workspaceDir = await mkdtemp(join(tmpdir(), 'mimir-venue-search-'))
+    await seedCache(workspaceDir, '2099-01-01 00:00:00')
+    const tool = createVenueSearchTool(workspaceDir)
+    const value = await tool.execute({}, { signal: new AbortController().signal } as never)
+    const schema = tool.output?.schema
+    expect(schema).toBeDefined()
+    expect(validateJsonSchemaValue(schema as never, value)).toEqual([])
   })
 
   it('execute answers a pending deadline with kind and day count', async () => {

@@ -173,6 +173,13 @@ export interface ResearchServiceConfig {
     readonly run?: (command: string, args: readonly string[], timeoutMs: number) => Promise<string>
   }
   /**
+   * Resolved arXiv fetch timeout; absent in tests and direct constructions —
+   * `searchArxiv` then uses the module default (30s).
+   */
+  readonly arxiv?: {
+    readonly timeoutMs: number
+  }
+  /**
    * Probe/run overrides for the SVG conversion behind `convertFigure` /
    * `saveFigure`; absent outside tests, where the real PATH probe and
    * process runner apply.
@@ -242,6 +249,7 @@ export class ResearchService extends TypertRemoteService {
       latex: config.latex,
       ...(config.backup === undefined ? {} : { backup: config.backup }),
       ...(config.search === undefined ? {} : { search: config.search }),
+      ...(config.arxiv === undefined ? {} : { arxiv: config.arxiv }),
       ...(config.svg === undefined ? {} : { svg: config.svg }),
       ...(config.zotero === undefined ? {} : { zotero: config.zotero }),
       ...(config.meetings === undefined ? {} : { meetings: config.meetings }),
