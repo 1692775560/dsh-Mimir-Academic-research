@@ -48,6 +48,9 @@ import type {
   ResearchDeleteFigureResult,
   ResearchDeleteJobResult,
   ResearchDeleteServerResult,
+  ResearchCreateProjectResult,
+  ResearchDeleteProjectResult,
+  ResearchRenameProjectResult,
   ResearchExperimentsResult,
   ResearchExportWikiResult,
   ResearchFetchPaperPdfResult,
@@ -129,6 +132,7 @@ import * as wikiAdmin from './services/wiki-admin.ts'
 import * as importProject from './services/import-project.ts'
 import * as venue from './services/venue.ts'
 import * as venueDeadlines from './services/venue-deadlines.ts'
+import * as projectAdmin from './services/project-admin.ts'
 import * as meeting from './services/meeting.ts'
 import * as ledger from './services/ledger.ts'
 import * as evidence from './services/evidence.ts'
@@ -288,6 +292,22 @@ export class ResearchService extends TypertRemoteService {
   @Remote('listProjects')
   listProjects(): Promise<ResearchListProjectsResult> {
     return wikiAdmin.listProjects(this.deps)
+  }
+
+  // project-admin domain: panel-driven project lifecycle (#160)
+  @Remote('createProject')
+  createProject(request: { title: string }): Promise<ResearchCreateProjectResult> {
+    return projectAdmin.createProject(this.deps, request)
+  }
+
+  @Remote('renameProject')
+  renameProject(request: { projectId: string; title: string }): Promise<ResearchRenameProjectResult> {
+    return projectAdmin.renameProject(this.deps, request)
+  }
+
+  @Remote('deleteProject')
+  deleteProject(request: { projectId: string; confirm?: boolean }): Promise<ResearchDeleteProjectResult> {
+    return projectAdmin.deleteProject(this.deps, request)
   }
 
   // import-project domain

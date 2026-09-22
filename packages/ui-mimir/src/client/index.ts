@@ -24,6 +24,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 // Type-only: pulls the renderer-owned SlotRegistry service merge (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { ResearchController } from './controller.ts'
+import { sameSessionListView, sessionListView, type ResearchSessionListView } from './project-form.ts'
 import { ResearchPanel } from './ResearchPanel.tsx'
 import { ResearchToggle } from './ResearchToggle.tsx'
 import type { ResearchPanelInjected } from './slots.ts'
@@ -164,6 +165,29 @@ function panelApply(ctx: ClientContext): void {
     },
   }
 
+  // The session switcher's snapshot adapts the sessions service's list
+  // observable into one HostObservable. The projection keeps reference
+  // identity while nothing the switcher renders moved, so an unrelated
+  // session-store bump never re-renders the rail.
+  let sessionSnapshot: ResearchSessionListView = sessionListView(sessions.list.getSnapshot())
+  const sessionListeners = new Set<() => void>()
+  ctx.effect(
+    () => sessions.list.subscribe(() => {
+      const next = sessionListView(sessions.list.getSnapshot())
+      if (sameSessionListView(sessionSnapshot, next)) return
+      sessionSnapshot = next
+      for (const listener of [...sessionListeners]) listener()
+    }),
+    'ui-mimir: sessions snapshot',
+  )
+  const sessionHook = {
+    getSnapshot: (): ResearchSessionListView => sessionSnapshot,
+    subscribe: (listener: () => void): (() => void) => {
+      sessionListeners.add(listener)
+      return () => { sessionListeners.delete(listener) }
+    },
+  }
+
   // A reconnect can only invalidate what was already read; a cold panel stays
   // cold until the first open asks for it.
   ctx.on('connection/reset', () => { controller.resync() })
@@ -224,7 +248,7 @@ function panelApply(ctx: ClientContext): void {
     store: panel,
     locale: NS,
     inject: (actions): ResearchPanelInjected => ({
-      hooks: { research: controller, chrome },
+      hooks: { research: controller, chrome, sessions: sessionHook },
       toggleTheme: () => { ctx.theme.setTheme(nextColorScheme(chromeSnapshot.dark)) },
       toggleLocale: () => { ctx.locale.setLocale(nextLocale(chromeSnapshot.locale)) },
       ensure: () => { controller.ensure() },
@@ -242,6 +266,21 @@ function panelApply(ctx: ClientContext): void {
         controller.select(outcome.projectId)
         return outcome
       },
+      // The sidebar's project management: a successful create lands selected;
+      // rename/delete only refresh (the panel hands the selection off itself,
+      // it knows whether the deleted row was the selected one).
+      createProject: async (title) => {
+        const outcome = await controller.createProject(title)
+        if ('code' in outcome) return outcome
+        actions.select(outcome.id)
+        controller.select(outcome.id)
+        return outcome
+      },
+      renameProject: (projectId, title) => controller.renameProject(projectId, title),
+      deleteProject: (projectId) => controller.deleteProject(projectId),
+      // The session switcher: the current session is the delivery target of
+      // every "… with AI" verb; the wiki itself is shared across sessions.
+      selectSession: (sessionId) => { sessions.open(sessionId as Parameters<ISessions['open']>[0]) },
       compile: (projectId) => { void controller.compile(projectId) },
       // The per-issue "fix with AI" button.
       requestCompileFix: prompt => sendPromptToCurrentSession(prompt, 'toast.fixSent', 'toast.fixSendFailed'),

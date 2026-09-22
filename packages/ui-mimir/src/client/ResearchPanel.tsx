@@ -18,6 +18,9 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ResearchTab } from './store.ts'
 import type { ResearchKey } from './locales.ts'
 import { arrowTab, trapFocusIndex } from './focus.ts'
+import { cleanProjectTitle } from './project-form.ts'
+import { failureCopy } from './view-common.ts'
+import type { ResearchFailureView } from './controller.ts'
 import { readSidebarFolded, SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue } from './sidebar-fold.ts'
 import { readStorageFlag, readStorageValue, storageFlagValue, writeStorageValue } from './storage.ts'
 import { shortcutFor, TABS } from './shortcuts.ts'
@@ -168,8 +171,8 @@ const FOCUSABLE_SELECTOR = 'button:not(:disabled), a[href], input:not(:disabled)
  * @returns the workbench while open, or null while closed.
  */
 export function ResearchPanel({
-  useStore, actions, useResearch, useChrome,
-  ensure, selectProject, importProject, compile, editSource, reloadSource, requestCompileFix,
+  useStore, actions, useResearch, useChrome, useSessions,
+  ensure, selectProject, importProject, createProject, renameProject, deleteProject, selectSession, compile, editSource, reloadSource, requestCompileFix,
   requestRelatedWork, requestPaperScore, requestFigureOrganize,
   ensurePapers, refreshPapers, searchArxiv, searchWeb, importPaper, removePaper, updatePaper, fetchPaperPdf, loadArtifact, loadFigures, uploadFigures, deleteFigure,
   renameFigure, updateFigure,
@@ -236,6 +239,8 @@ export function ResearchPanel({
   const backup = useResearch(view => view.backup)
   const taskHealth = useResearch(view => view.taskHealth)
   const paperJump = useResearch(view => view.paperJump)
+  const sessionList = useSessions(view => view.list)
+  const currentSessionId = useSessions(view => view.current)
   const rootRef = useRef<HTMLDivElement>(null)
 
   // Sidebar project list fold; persists across panel opens like the paper
@@ -245,6 +250,15 @@ export function ResearchPanel({
   )
   // The "import existing project" dialog of the sidebar project list.
   const [importOpen, setImportOpen] = useState(false)
+  // The sidebar's project management: the inline create form, the row being
+  // renamed (with its draft), a mutation in flight (guards double submits),
+  // and the last mutation failure (shown as one line under the list).
+  const [createOpen, setCreateOpen] = useState(false)
+  const [createTitle, setCreateTitle] = useState('')
+  const [renameId, setRenameId] = useState<string | null>(null)
+  const [renameTitle, setRenameTitle] = useState('')
+  const [projectBusy, setProjectBusy] = useState(false)
+  const [projectError, setProjectError] = useState<ResearchFailureView | null>(null)
   useEffect(() => {
     writeStorageValue(PROJECTS_COLLAPSED_STORAGE_KEY, storageFlagValue(projectsCollapsed))
   }, [projectsCollapsed])
@@ -363,6 +377,60 @@ export function ResearchPanel({
   }, [open, activeTab, selectedProjectId, paperFullscreen, actions, compile])
 
   if (!open) return null
+
+  // The sidebar's create form: an invalid title is rejected client-side (the
+  // host re-checks); a success closes the form (the inject mapping has
+  // already selected the new project), a failure shows under the list.
+  const submitCreateProject = async (): Promise<void> => {
+    const title = cleanProjectTitle(createTitle)
+    if (title === null || projectBusy) return
+    setProjectBusy(true)
+    setProjectError(null)
+    const outcome = await createProject(title)
+    setProjectBusy(false)
+    if ('code' in outcome) {
+      setProjectError(outcome)
+      return
+    }
+    setCreateTitle('')
+    setCreateOpen(false)
+  }
+
+  // The row's inline rename: same title rule as create.
+  const submitRenameProject = async (projectId: string): Promise<void> => {
+    const title = cleanProjectTitle(renameTitle)
+    if (title === null || projectBusy) return
+    setProjectBusy(true)
+    setProjectError(null)
+    const outcome = await renameProject(projectId, title)
+    setProjectBusy(false)
+    if ('code' in outcome) {
+      setProjectError(outcome)
+      return
+    }
+    setRenameId(null)
+  }
+
+  // The row's delete: confirmed in place (the cascade is irreversible). After
+  // a successful delete of the SELECTED project the selection moves to the
+  // first remaining one, or to none (the empty list's hint takes over).
+  const confirmDeleteProject = async (projectId: string, title: string): Promise<void> => {
+    if (projectBusy) return
+    if (!window.confirm(t('projects.confirmDelete', { title }))) return
+    setProjectBusy(true)
+    setProjectError(null)
+    const failure = await deleteProject(projectId)
+    setProjectBusy(false)
+    if (failure !== null) {
+      setProjectError(failure)
+      return
+    }
+    if (projectId === selectedProjectId) {
+      const next = projects.find(project => project.id !== projectId)
+      if (next === undefined) actions.select(null)
+      else selectProject(next.id)
+    }
+  }
 
   const selectedProject = selectedProjectId === null
     ? undefined
@@ -508,24 +576,149 @@ export function ResearchPanel({
           {!projectsCollapsed && projectsStatus === 'ready' && projects.length > 0 && (
             <div className={css.projectList}>
               {projects.map(project => (
-                <button
-                  key={project.id}
-                  type="button"
-                  className={css.projectRow}
-                  data-selected={project.id === selectedProjectId || undefined}
-                  title={project.title}
-                  onClick={() => { selectProject(project.id) }}
-                >
-                  <span className={css.projectTitle}>{project.title}</span>
-                </button>
+                renameId === project.id ? (
+                  <div key={project.id} className={css.projectEditRow}>
+                    <input
+                      className={css.projectInput}
+                      value={renameTitle}
+                      aria-label={t('projects.rename')}
+                      disabled={projectBusy}
+                      onChange={(event) => { setRenameTitle(event.target.value) }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter') void submitRenameProject(project.id)
+                        if (event.key === 'Escape') setRenameId(null)
+                      }}
+                      ref={(element) => { element?.focus() }}
+                    />
+                    <button
+                      type="button"
+                      className={css.projectAction}
+                      title={t('projects.renameSave')}
+                      aria-label={t('projects.renameSave')}
+                      disabled={projectBusy || cleanProjectTitle(renameTitle) === null}
+                      onClick={() => { void submitRenameProject(project.id) }}
+                    >
+                      ✓
+                    </button>
+                    <button
+                      type="button"
+                      className={css.projectAction}
+                      title={t('projects.cancel')}
+                      aria-label={t('projects.cancel')}
+                      disabled={projectBusy}
+                      onClick={() => { setRenameId(null) }}
+                    >
+                      ×
+                    </button>
+                  </div>
+                ) : (
+                  <div
+                    key={project.id}
+                    className={css.projectRow}
+                    data-selected={project.id === selectedProjectId || undefined}
+                  >
+                    <button
+                      type="button"
+                      className={css.projectSelect}
+                      title={project.title}
+                      onClick={() => { selectProject(project.id) }}
+                    >
+                      <span className={css.projectTitle}>{project.title}</span>
+                    </button>
+                    <span className={css.projectActions}>
+                      <button
+                        type="button"
+                        className={css.projectAction}
+                        title={t('projects.rename')}
+                        aria-label={t('projects.rename')}
+                        onClick={() => { setRenameId(project.id); setRenameTitle(project.title); setProjectError(null) }}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        type="button"
+                        className={css.projectAction}
+                        data-danger
+                        title={t('projects.delete')}
+                        aria-label={t('projects.delete')}
+                        disabled={projectBusy}
+                        onClick={() => { void confirmDeleteProject(project.id, project.title) }}
+                      >
+                        ×
+                      </button>
+                    </span>
+                  </div>
+                )
               ))}
             </div>
           )}
-          {!projectsCollapsed && projectsStatus === 'ready' && (
-            <button type="button" className={css.btn} onClick={() => { setImportOpen(true) }}>
-              {t('projects.import')}
-            </button>
+          {!projectsCollapsed && projectError !== null && (
+            <p className={css.failure} role="status">{failureCopy(t, projectError)}</p>
           )}
+          {!projectsCollapsed && projectsStatus === 'ready' && createOpen && (
+            <div className={css.projectEditRow}>
+              <input
+                className={css.projectInput}
+                value={createTitle}
+                placeholder={t('projects.newPlaceholder')}
+                aria-label={t('projects.new')}
+                disabled={projectBusy}
+                onChange={(event) => { setCreateTitle(event.target.value) }}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') void submitCreateProject()
+                  if (event.key === 'Escape') setCreateOpen(false)
+                }}
+                ref={(element) => { element?.focus() }}
+              />
+              <button
+                type="button"
+                className={css.projectAction}
+                title={t('projects.create')}
+                aria-label={t('projects.create')}
+                disabled={projectBusy || cleanProjectTitle(createTitle) === null}
+                onClick={() => { void submitCreateProject() }}
+              >
+                ✓
+              </button>
+              <button
+                type="button"
+                className={css.projectAction}
+                title={t('projects.cancel')}
+                aria-label={t('projects.cancel')}
+                disabled={projectBusy}
+                onClick={() => { setCreateOpen(false) }}
+              >
+                ×
+              </button>
+            </div>
+          )}
+          {!projectsCollapsed && projectsStatus === 'ready' && !createOpen && (
+            <div className={css.projectButtons}>
+              <button type="button" className={css.btn} onClick={() => { setCreateOpen(true); setCreateTitle(''); setProjectError(null) }}>
+                {t('projects.new')}
+              </button>
+              <button type="button" className={css.btn} onClick={() => { setImportOpen(true) }}>
+                {t('projects.import')}
+              </button>
+            </div>
+          )}
+        </div>
+        {/* The session switcher: which host session the panel's "… with AI"
+            verbs deliver to. The wiki itself is shared across sessions. */}
+        <div className={css.sessionBar}>
+          <span className={css.sessionLabel}>{t('session.label')}</span>
+          <select
+            className={css.sessionSelect}
+            aria-label={t('session.label')}
+            value={currentSessionId ?? ''}
+            disabled={sessionList.length === 0}
+            onChange={(event) => { if (event.target.value !== '') selectSession(event.target.value) }}
+          >
+            {currentSessionId === null && <option value="">{t('session.none')}</option>}
+            {sessionList.map(session => (
+              <option key={session.id} value={session.id}>{session.title}</option>
+            ))}
+          </select>
         </div>
         <p className={css.sideFoot}>{t('shortcuts.hint')}</p>
       </aside>

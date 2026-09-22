@@ -61,10 +61,12 @@ import type {
   ResearchCompileStatusResult,
   ResearchCompileStatusView,
   ResearchConvertFigureResult,
+  ResearchCreateProjectResult,
   ResearchDeleteArxivSubscriptionResult,
   ResearchDeleteExperimentResult,
   ResearchDeleteFigureResult,
   ResearchDeleteJobResult,
+  ResearchDeleteProjectResult,
   ResearchDeleteServerResult,
   ResearchEventFilter,
   ResearchExperimentsResult,
@@ -116,6 +118,7 @@ import type {
   ResearchProgressReportResult,
   ResearchRemovePaperResult,
   ResearchRenameFigureResult,
+  ResearchRenameProjectResult,
   ResearchRevertPaperSnapshotResult,
   ResearchSaveArxivSubscriptionResult,
   ResearchSaveBibliographyResult,
@@ -176,6 +179,9 @@ export type {
 export interface ResearchRemote {
   listProjects: () => Promise<RemoteResult<ResearchListProjectsResult>>
   importProject: (request: ResearchImportProjectRequest) => Promise<RemoteResult<ResearchImportProjectResult>>
+  createProject: (request: { title: string }) => Promise<RemoteResult<ResearchCreateProjectResult>>
+  renameProject: (request: { projectId: string; title: string }) => Promise<RemoteResult<ResearchRenameProjectResult>>
+  deleteProject: (request: { projectId: string; confirm: true }) => Promise<RemoteResult<ResearchDeleteProjectResult>>
   getPaperOutline: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchOutlineResult>>
   compile: (request: { projectId?: string; dir?: string | undefined }, signal?: AbortSignal) => Promise<RemoteResult<ResearchCompileResult>>
   getCompileStatus: (request: { projectId?: string }) => Promise<RemoteResult<ResearchCompileStatusResult>>
@@ -3142,6 +3148,71 @@ export class ResearchController implements HostObservable<ResearchView> {
       await this.loadProjects()
       this.notify('success', 'toast.projectImported', result.value.title)
       return result.value
+    } catch (error) {
+      return transportFailure(error)
+    }
+  }
+
+  /**
+   * Create one empty project (the sidebar's "new project" row): the host
+   * registers it at the `idea` stage. On success the project list refreshes
+   * BEFORE the view resolves, so the caller can select the new project
+   * against an up-to-date list.
+   * @param title - the project title (trimmed, non-blank, capped host-side).
+   * @returns the created project on success, the settled failure otherwise.
+   */
+  async createProject(title: string): Promise<ResearchProjectView | ResearchFailureView> {
+    try {
+      const carried = await this.remote.createProject({ title })
+      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
+      const result = carried.value
+      if (!result.ok) return businessFailure(result.error)
+      await this.loadProjects()
+      this.notify('success', 'toast.projectCreated', result.value.project.title)
+      return result.value.project
+    } catch (error) {
+      return transportFailure(error)
+    }
+  }
+
+  /**
+   * Rename one project (the sidebar row's inline editor), then refresh the
+   * project list so the sidebar and the overview repaint.
+   * @param projectId - wiki project id.
+   * @param title - the new title (trimmed, non-blank, capped host-side).
+   * @returns the updated project on success, the settled failure otherwise.
+   */
+  async renameProject(projectId: string, title: string): Promise<ResearchProjectView | ResearchFailureView> {
+    try {
+      const carried = await this.remote.renameProject({ projectId, title })
+      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
+      const result = carried.value
+      if (!result.ok) return businessFailure(result.error)
+      await this.loadProjects()
+      this.notify('success', 'toast.projectRenamed', result.value.project.title)
+      return result.value.project
+    } catch (error) {
+      return transportFailure(error)
+    }
+  }
+
+  /**
+   * Delete one project and its project-scoped data (the sidebar row's delete
+   * button; the component confirms first — the verb always sends the
+   * confirmed request), then refresh the project list. The selection hand-off
+   * is the caller's: it knows whether the deleted project was selected.
+   * @param projectId - wiki project id.
+   * @returns null on success, the settled failure otherwise.
+   */
+  async deleteProject(projectId: string): Promise<ResearchFailureView | null> {
+    try {
+      const carried = await this.remote.deleteProject({ projectId, confirm: true })
+      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
+      const result = carried.value
+      if (!result.ok) return businessFailure(result.error)
+      await this.loadProjects()
+      this.notify('success', 'toast.projectDeleted')
+      return null
     } catch (error) {
       return transportFailure(error)
     }
