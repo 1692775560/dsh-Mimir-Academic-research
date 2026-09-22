@@ -50,10 +50,12 @@ export interface ResearchPanelInjected {
   ensure: () => void
   /**
    * Select one project: writes the store selection AND fetches its outline
-   * and compile status, so the row click is the single entry point.
-   * @param projectId - wiki project id.
+   * and compile status, so the row click is the single entry point. Null
+   * clears the selection (the deleted-last-project path) and empties every
+   * per-project slice.
+   * @param projectId - wiki project id, or null to deselect.
    */
-  selectProject: (projectId: string) => void
+  selectProject: (projectId: string | null) => void
   /**
    * Import one existing local LaTeX project into the workspace (the project
    * list's "import existing project" dialog): the host copies the tree into
@@ -90,9 +92,10 @@ export interface ResearchPanelInjected {
    */
   deleteProject: (projectId: string) => Promise<ResearchFailureView | null>
   /**
-   * Make one host session the current one (the session switcher): every
-   * "… with AI" verb of the panel delivers to the current session. The wiki
-   * itself is shared across sessions.
+   * Make one host session the current one (the session switcher): this is
+   * the host-GLOBAL current session — the whole client follows it, and every
+   * "… with AI" verb of the panel delivers there. The wiki itself is shared
+   * across sessions.
    * @param sessionId - host session id.
    */
   selectSession: (sessionId: string) => void
