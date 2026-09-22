@@ -370,6 +370,30 @@ export type ResearchResult<T> = ResearchSuccess<T> | ResearchRejected<ResearchFa
 /** `listProjects` result: every wiki project, most recently updated first. */
 export type ResearchListProjectsResult = ResearchResult<{ readonly projects: readonly ResearchProjectView[] }>
 
+/** `createProject` result: the newly created project row. */
+export type ResearchCreateProjectResult = ResearchResult<{ readonly project: ResearchProjectView }>
+
+/** `renameProject` result: the updated project row. */
+export type ResearchRenameProjectResult = ResearchResult<{ readonly project: ResearchProjectView }>
+
+/** Per-kind removal counts of one project delete cascade. */
+export interface ResearchDeleteProjectCounts {
+  readonly experiments: number
+  readonly figures: number
+  readonly venueWatches: number
+  readonly ideas: number
+  /** Papers unlinked from the project (the paper records themselves stay). */
+  readonly paperLinks: number
+  /** Whether an on-disk generated-decks directory was removed. */
+  readonly meetingsRemoved: boolean
+}
+
+/** `deleteProject` result: the deleted id plus the cascade counts. */
+export type ResearchDeleteProjectResult = ResearchResult<{
+  readonly projectId: string
+  readonly removed: ResearchDeleteProjectCounts
+}>
+
 /** `importProject` request: one existing local directory holding a LaTeX project. */
 export interface ResearchImportProjectRequest {
   /** Absolute or `~`-prefixed path of the source directory (copied, never referenced). */
