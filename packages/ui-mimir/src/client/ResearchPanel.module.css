@@ -316,7 +316,9 @@
 .navItem:focus-visible,
 .iconButton:focus-visible,
 .close:focus-visible,
-.projectRow:focus-visible,
+.projectSelect:focus-visible,
+.projectAction:focus-visible,
+.sessionSelect:focus-visible,
 .btn:focus-visible,
 .btnPrimary:focus-visible,
 .retry:focus-visible,
@@ -572,6 +574,7 @@
   .side[data-folded] .navLabel,
   .side[data-folded] .navCount,
   .side[data-folded] .sideProjects,
+  .side[data-folded] .sessionBar,
   .side[data-folded] .sideFoot {
     display: none;
   }
@@ -646,16 +649,12 @@
 }
 
 .projectRow {
+  position: relative;
   display: flex;
-  flex-direction: column;
-  gap: 2px;
   width: 100%;
-  padding: 7px 10px;
   border: 1px solid transparent;
   border-radius: 10px;
   background: transparent;
-  text-align: left;
-  cursor: pointer;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
@@ -667,6 +666,128 @@
   border-color: rgb(160 82 45 / 28%);
   background: var(--dsw-specific-menu, #fff);
   box-shadow: 0 6px 18px rgb(33 30 25 / 8%);
+}
+
+/* The row's main click target (selection); the hover actions float above
+   its right edge. */
+.projectSelect {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+/* The row's hover actions (rename/delete): hidden until the row is hovered
+   or keyboard focus lands inside it. */
+.projectActions {
+  position: absolute;
+  top: 5px;
+  right: 6px;
+  display: none;
+  gap: 2px;
+}
+
+.projectRow:hover .projectActions,
+.projectRow:focus-within .projectActions {
+  display: flex;
+}
+
+.projectAction {
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  border-radius: 6px;
+  background: var(--dsw-specific-menu, #fff);
+  color: var(--dsw-alias-label-tertiary, #5b6474);
+  font-size: 12px;
+  line-height: 1;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.projectAction:hover:not(:disabled) {
+  color: var(--dsw-alias-label-primary, #17233d);
+  border-color: var(--dsw-alias-border-l3, rgb(0 0 0 / 12%));
+}
+
+.projectAction[data-danger]:hover:not(:disabled) {
+  color: var(--dsw-alias-state-error-primary, #d93026);
+  border-color: var(--dsw-alias-state-error-secondary, rgb(236 19 19 / 30%));
+}
+
+.projectAction:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+/* The inline create/rename form row of the project list. */
+.projectEditRow {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.projectInput {
+  flex: 1;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  border-radius: 8px;
+  background: var(--dsw-specific-menu, #fff);
+  color: var(--dsw-alias-label-primary, #17233d);
+  font-size: 13px;
+}
+
+/* The list's bottom button row (new / import). */
+.projectButtons {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.projectButtons .btn {
+  flex: 1;
+}
+
+/* The rail's session switcher: the delivery target of the panel's
+   "… with AI" verbs (the wiki itself is shared across sessions). */
+.sessionBar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-top: 1px solid var(--dsw-alias-border-l1, rgb(0 0 0 / 4%));
+}
+
+.sessionLabel {
+  flex: 0 0 auto;
+  color: var(--dsw-alias-label-tertiary, #5b6474);
+  font-size: 11px;
+}
+
+.sessionSelect {
+  flex: 1;
+  min-width: 0;
+  height: 26px;
+  padding: 0 6px;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  border-radius: 8px;
+  background: var(--dsw-specific-menu, #fff);
+  color: var(--dsw-alias-label-secondary, #3c4557);
+  font-size: 12px;
 }
 
 /* Project titles wrap to two lines before clamping, so a long title like a
@@ -3539,6 +3660,11 @@ li.dropIndicator {
     display: none;
   }
 
+  /* Top-bar mode: the session switcher gives way to the horizontal nav. */
+  .sessionBar {
+    display: none;
+  }
+
   /* Top-bar mode: the fold control would fight the horizontal nav. */
   .sideFold {
     display: none;
@@ -4300,7 +4426,9 @@ li.dropIndicator {
 .navItem:focus-visible,
 .iconButton:focus-visible,
 .close:focus-visible,
-.projectRow:focus-visible,
+.projectSelect:focus-visible,
+.projectAction:focus-visible,
+.sessionSelect:focus-visible,
 .btn:focus-visible,
 .btnPrimary:focus-visible,
 .retry:focus-visible,

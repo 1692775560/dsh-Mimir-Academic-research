@@ -21,9 +21,10 @@ import type {} from './locales.ts'
 import type {
   ArxivEntry, BibEntry, ExperimentInput, FigureEntry, MeetingInclude, MetricDirection, ResearchEventFilter,
   ResearchGenerateBriefOptions, ResearchImportWikiMode, ResearchImportedProject, ResearchJournalQuestionRef, ResearchProgressReportOptions,
-  ResearchWikiSnapshot, SectionMove, SectionOutlineTitles, ServerInput, SubsectionMove,
+  ResearchProjectView, ResearchWikiSnapshot, SectionMove, SectionOutlineTitles, ServerInput, SubsectionMove,
 } from 'dsh-mimir/types'
 import type { ResearchFailureView, ResearchImportCounts, ResearchView } from './controller.ts'
+import type { ResearchSessionListView } from './project-form.ts'
 import type { MetricChartRow } from './view-common.ts'
 import type { WorkbenchChrome } from './shortcuts.ts'
 import type { createResearchPanelStore } from './store.ts'
@@ -38,6 +39,8 @@ export interface ResearchPanelInjected {
     research: HostObservable<ResearchView>
     /** The header chrome snapshot: resolved color scheme and active locale. */
     chrome: HostObservable<WorkbenchChrome>
+    /** The session switcher's view: the host's session list + current pick. */
+    sessions: HostObservable<ResearchSessionListView>
   }
   /** Toggle the host theme between light and dark (durable via Host settings). */
   toggleTheme: () => void
@@ -62,6 +65,37 @@ export interface ResearchPanelInjected {
    * @returns the import summary on success, the settled failure otherwise.
    */
   importProject: (path: string, title?: string) => Promise<ResearchImportedProject | ResearchFailureView>
+  /**
+   * Create one empty project (the sidebar's "new project" inline form); on
+   * success the list has already refreshed and the new project is selected
+   * before the view resolves.
+   * @param title - the project title.
+   * @returns the created project on success, the settled failure otherwise.
+   */
+  createProject: (title: string) => Promise<ResearchProjectView | ResearchFailureView>
+  /**
+   * Rename one project (the sidebar row's inline editor); the refreshed list
+   * carries the new title before the view resolves.
+   * @param projectId - wiki project id.
+   * @param title - the new title.
+   * @returns the updated project on success, the settled failure otherwise.
+   */
+  renameProject: (projectId: string, title: string) => Promise<ResearchProjectView | ResearchFailureView>
+  /**
+   * Delete one project and its project-scoped data (the sidebar row's delete
+   * button; the component confirms first). The selection hand-off after a
+   * successful delete is the caller's.
+   * @param projectId - wiki project id.
+   * @returns null on success, the settled failure otherwise.
+   */
+  deleteProject: (projectId: string) => Promise<ResearchFailureView | null>
+  /**
+   * Make one host session the current one (the session switcher): every
+   * "… with AI" verb of the panel delivers to the current session. The wiki
+   * itself is shared across sessions.
+   * @param sessionId - host session id.
+   */
+  selectSession: (sessionId: string) => void
   /**
    * Compile the paper for one project; while a run is in flight the request
    * is queued and fired when it settles.

@@ -124,8 +124,8 @@ export async function recoverPendingWikiImport(deps: WikiAdminDeps): Promise<voi
   })
 }
 
-/** Project one wiki record into the panel's row shape. */
-function projectView(record: {
+/** Project one wiki record into the panel's row shape (shared with project-admin). */
+export function projectView(record: {
   id: string
   title: string
   stage: ResearchProjectView['stage']
