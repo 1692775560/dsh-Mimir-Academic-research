@@ -4004,13 +4004,16 @@ export class ResearchController implements HostObservable<ResearchView> {
   }
 
   /**
-   * Select one project: load its paper outline, last compile status, and
-   * source. A newer selection supersedes in-flight older reads, whose late
-   * replies are discarded by generation; pending autosave/auto-compile timers
-   * of the previous selection are cancelled.
-   * @param projectId - wiki project id.
+   * Select one project — or clear the selection with null (the deleted-last-
+   * project path): load its paper outline, last compile status, and source.
+   * A newer selection supersedes in-flight older reads, whose late replies
+   * are discarded by generation; pending autosave/auto-compile timers of the
+   * previous selection are cancelled. Null flushes a dirty draft exactly like
+   * a switch (the same losing-it-is-not-an-option rule), then empties every
+   * per-project slice so no later write can aim at the removed project.
+   * @param projectId - wiki project id, or null to deselect.
    */
-  select(projectId: string): void {
+  select(projectId: string | null): void {
     // Flush a dirty draft of the project being left BEFORE the sweep below:
     // the generation bump stale-marks any later save reply and clearTimers()
     // kills the debounce, so a draft not flushed now is lost for good.
@@ -4045,6 +4048,21 @@ export class ResearchController implements HostObservable<ResearchView> {
     // selected project's compile lane when the in-flight run settles.
     this.compileQueued.clear()
     this.clearTimers()
+    if (projectId === null) {
+      // Deselect: every per-project slice empties; nothing is fetched.
+      this.publish({
+        outline: null,
+        source: null,
+        experiments: null,
+        compile: Object.freeze({ projectId: null, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null, observed: false }),
+        figures: null,
+        meetings: null,
+        artifact: null,
+        snapshots: null,
+        snapshotDetail: null,
+      })
+      return
+    }
     this.publish({
       outline: Object.freeze({ projectId, status: 'loading', nodes: Object.freeze([]), failure: null }),
       source: Object.freeze({
@@ -4308,24 +4326,27 @@ export class ResearchController implements HostObservable<ResearchView> {
   }
 
   /** Fetch the project list and publish it. */
+  /** Fetch the project list and publish it. A refresh over a ready list keeps the list on screen (no sidebar flash); only the first load shows the loading state. */
   private async loadProjects(): Promise<void> {
-    this.publish({ projectsStatus: 'loading', projectsFailure: null })
+    const refreshing = this.view.projectsStatus === 'ready'
+    if (!refreshing) this.publish({ projectsStatus: 'loading', projectsFailure: null })
     try {
       const carried = await this.remote.listProjects()
       if (this.disposed) return
       if (!carried.ok) {
-        this.publish({ projectsStatus: 'error', projectsFailure: failureOf(carried.error.code, carried.error.message) })
+        // A failed refresh keeps the last good list; the next live refresh retries.
+        if (!refreshing) this.publish({ projectsStatus: 'error', projectsFailure: failureOf(carried.error.code, carried.error.message) })
         return
       }
       const result = carried.value
       if (!result.ok) {
-        this.publish({ projectsStatus: 'error', projectsFailure: businessFailure(result.error) })
+        if (!refreshing) this.publish({ projectsStatus: 'error', projectsFailure: businessFailure(result.error) })
         return
       }
       this.publish({ projects: result.value.projects, projectsStatus: 'ready', projectsFailure: null })
     } catch (error) {
       if (this.disposed) return
-      this.publish({ projectsStatus: 'error', projectsFailure: transportFailure(error) })
+      if (!refreshing) this.publish({ projectsStatus: 'error', projectsFailure: transportFailure(error) })
     }
   }
 
