@@ -18,7 +18,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react'
 import type { ResearchTab } from './store.ts'
 import type { ResearchKey } from './locales.ts'
 import { arrowTab, trapFocusIndex } from './focus.ts'
-import { cleanProjectTitle } from './project-form.ts'
+import { cleanProjectTitle, nextSelectionAfterDelete } from './project-form.ts'
 import { failureCopy } from './view-common.ts'
 import type { ResearchFailureView } from './controller.ts'
 import { readSidebarFolded, SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue } from './sidebar-fold.ts'
@@ -259,6 +259,10 @@ export function ResearchPanel({
   const [renameTitle, setRenameTitle] = useState('')
   const [projectBusy, setProjectBusy] = useState(false)
   const [projectError, setProjectError] = useState<ResearchFailureView | null>(null)
+  // The async delete hand-off must decide against the LATEST selection and
+  // list; a handler closure would freeze the click-time values.
+  const selectionRef = useRef({ selectedProjectId, projects })
+  selectionRef.current = { selectedProjectId, projects }
   useEffect(() => {
     writeStorageValue(PROJECTS_COLLAPSED_STORAGE_KEY, storageFlagValue(projectsCollapsed))
   }, [projectsCollapsed])
@@ -411,25 +415,28 @@ export function ResearchPanel({
     setRenameId(null)
   }
 
-  // The row's delete: confirmed in place (the cascade is irreversible). After
-  // a successful delete of the SELECTED project the selection moves to the
-  // first remaining one, or to none (the empty list's hint takes over).
-  const confirmDeleteProject = async (projectId: string, title: string): Promise<void> => {
+  // The row's delete: confirmed in place (the cascade is irreversible). The
+  // confirm copy says whether the source directory goes too (only a paper
+  // directory under `imported/` is removed; the user's own tree stays). The
+  // selection hand-off after a successful delete reads the LATEST list and
+  // selection through the ref — never this render's closure.
+  const confirmDeleteProject = async (project: { id: string; title: string; paperDir?: string | undefined }): Promise<void> => {
     if (projectBusy) return
-    if (!window.confirm(t('projects.confirmDelete', { title }))) return
+    const copyKey: ResearchKey = project.paperDir?.startsWith('imported/') === true
+      ? 'projects.confirmDeleteImported'
+      : 'projects.confirmDelete'
+    if (!window.confirm(t(copyKey, { title: project.title }))) return
     setProjectBusy(true)
     setProjectError(null)
-    const failure = await deleteProject(projectId)
+    const failure = await deleteProject(project.id)
     setProjectBusy(false)
     if (failure !== null) {
       setProjectError(failure)
       return
     }
-    if (projectId === selectedProjectId) {
-      const next = projects.find(project => project.id !== projectId)
-      if (next === undefined) actions.select(null)
-      else selectProject(next.id)
-    }
+    const latest = selectionRef.current
+    const next = nextSelectionAfterDelete(latest.projects, project.id, latest.selectedProjectId)
+    if (next !== undefined) selectProject(next)
   }
 
   const selectedProject = selectedProjectId === null
@@ -621,6 +628,7 @@ export function ResearchPanel({
                       type="button"
                       className={css.projectSelect}
                       title={project.title}
+                      disabled={projectBusy}
                       onClick={() => { selectProject(project.id) }}
                     >
                       <span className={css.projectTitle}>{project.title}</span>
@@ -642,7 +650,7 @@ export function ResearchPanel({
                         title={t('projects.delete')}
                         aria-label={t('projects.delete')}
                         disabled={projectBusy}
-                        onClick={() => { void confirmDeleteProject(project.id, project.title) }}
+                        onClick={() => { void confirmDeleteProject(project) }}
                       >
                         ×
                       </button>
@@ -703,8 +711,9 @@ export function ResearchPanel({
             </div>
           )}
         </div>
-        {/* The session switcher: which host session the panel's "… with AI"
-            verbs deliver to. The wiki itself is shared across sessions. */}
+        {/* The session switcher: picks the host-GLOBAL current session — the
+            whole client follows it, and the panel's "… with AI" verbs deliver
+            there. The wiki itself is shared across sessions. */}
         <div className={css.sessionBar}>
           <span className={css.sessionLabel}>{t('session.label')}</span>
           <select

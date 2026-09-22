@@ -53,6 +53,11 @@ export const ideaRecord = z.object({
   hypothesis: z.string(),
   status: z.enum(['active', 'failed', 'adopted']),
   failureReason: z.string().optional(),
+  // Added WITHOUT a version bump: `.optional()` leaves the field absent on
+  // records that predate it, so existing v2 JSON stores keep loading. Without
+  // it the parser STRIPS the project registration `add_idea` writes, and the
+  // project-delete cascade loses every idea after one host restart.
+  projectId: z.string().optional(),
   createdAt: z.string(),
 })
 
