@@ -26,4 +26,7 @@ export function isValidProjectId(projectId: string): boolean {
   return /^[a-zA-Z0-9._-]+$/.test(projectId)
     && !projectId.includes('..')
     && !projectId.startsWith('/')
+    // `.` / dot-prefixed ids pass the charset but resolve to the directory
+    // itself or a hidden entry when joined — never a project.
+    && !projectId.startsWith('.')
 }

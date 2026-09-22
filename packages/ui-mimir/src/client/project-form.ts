@@ -20,6 +20,26 @@ export function cleanProjectTitle(title: string): string | null {
   return cleaned.length > 0 && cleaned.length <= PROJECT_TITLE_MAX_LENGTH ? cleaned : null
 }
 
+/**
+ * The selection hand-off after a successful delete, decided against the
+ * LATEST list and selection (the caller re-reads them after the await, never
+ * its click-time closure): undefined leaves the selection alone (another
+ * project was deleted), an id selects the first remaining project, null
+ * deselects (nothing remains).
+ * @param projects - the post-delete project list.
+ * @param deletedId - the deleted project's id.
+ * @param selectedProjectId - the current selection.
+ * @returns the selection action to apply.
+ */
+export function nextSelectionAfterDelete(
+  projects: readonly { readonly id: string }[],
+  deletedId: string,
+  selectedProjectId: string | null,
+): string | null | undefined {
+  if (selectedProjectId !== deletedId) return undefined
+  return projects.find(project => project.id !== deletedId)?.id ?? null
+}
+
 /** One session row of the switcher: the delivery target of "… with AI" verbs. */
 export interface ResearchSessionEntry {
   readonly id: string

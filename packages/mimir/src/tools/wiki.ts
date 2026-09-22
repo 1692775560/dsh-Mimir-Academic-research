@@ -18,6 +18,7 @@ import { addEvidenceEdge, retractEvidenceEdge } from '../services/evidence.ts'
 import type { AddEvidenceEdgeRequest } from '../types.ts'
 import { evidenceScopeOf, queryKeyOf } from '../evidence-identity.ts'
 import { mergePaperRecord } from '../services/library.ts'
+import { withProjectMutationLock } from '../services/mutation-locks.ts'
 
 const ACTIONS = [
   'add_paper', 'set_paper', 'add_idea', 'fail_idea', 'add_claim', 'set_claim', 'set_project',
@@ -182,29 +183,36 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
     case 'add_idea': {
       const id = randomUUID()
       const projectId = args.project_id
-      if (projectId !== undefined && domain.table('projects').get(projectId) === undefined) {
-        throw new Error(`wiki_note: no project with id '${projectId}'`)
+      // Project-registered writes hold the per-project mutation lock: a
+      // delete cascade holds it for its whole run, so this write lands before
+      // the cascade (and is cleaned by it) or after it (existence check
+      // fails) — never inside it.
+      const run = async (): Promise<{ ok: true; table: string; id: string; record: JsonValue }> => {
+        if (projectId !== undefined && domain.table('projects').get(projectId) === undefined) {
+          throw new Error(`wiki_note: no project with id '${projectId}'`)
+        }
+        // An idea registered into a project is auto-adopted (status `adopted`)
+        // at creation — it is already part of that project's research process,
+        // so the worktree and brief surface it without a separate manual merge.
+        // A standalone idea stays `active` for the user to adopt later.
+        const status: 'active' | 'adopted' = projectId !== undefined ? 'adopted' : 'active'
+        const record = {
+          id,
+          title: requireField(args.title, 'title', args.action),
+          hypothesis: requireField(args.hypothesis, 'hypothesis', args.action),
+          status,
+          projectId: projectId ?? undefined,
+          createdAt: new Date().toISOString(),
+        }
+        await domain.table('ideas').put(id, record)
+        if (projectId !== undefined) {
+          await emit(domain, 'knowledge.idea.adopted', { ideaId: id, projectId }, { title: record.title })
+        } else {
+          await emit(domain, 'knowledge.idea.added', { ideaId: id }, { title: record.title })
+        }
+        return { ok: true, table: 'ideas', id, record: record as unknown as JsonValue }
       }
-      // An idea registered into a project is auto-adopted (status `adopted`)
-      // at creation — it is already part of that project's research process,
-      // so the worktree and brief surface it without a separate manual merge.
-      // A standalone idea stays `active` for the user to adopt later.
-      const status: 'active' | 'adopted' = projectId !== undefined ? 'adopted' : 'active'
-      const record = {
-        id,
-        title: requireField(args.title, 'title', args.action),
-        hypothesis: requireField(args.hypothesis, 'hypothesis', args.action),
-        status,
-        projectId: projectId ?? undefined,
-        createdAt: new Date().toISOString(),
-      }
-      await domain.table('ideas').put(id, record)
-      if (projectId !== undefined) {
-        await emit(domain, 'knowledge.idea.adopted', { ideaId: id, projectId }, { title: record.title })
-      } else {
-        await emit(domain, 'knowledge.idea.added', { ideaId: id }, { title: record.title })
-      }
-      return { ok: true, table: 'ideas', id, record: record as unknown as JsonValue }
+      return projectId === undefined ? run() : withProjectMutationLock(projectId, run)
     }
     case 'fail_idea': {
       const id = requireField(args.id, 'id', args.action)
@@ -269,24 +277,28 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
     }
     case 'add_experiment': {
       const projectId = requireField(args.project_id, 'project_id', args.action)
-      if (domain.table('projects').get(projectId) === undefined) {
-        throw new Error(`wiki_note: no project with id '${projectId}'`)
-      }
-      const id = randomUUID()
-      const record = {
-        id,
-        projectId,
-        name: requireField(args.name, 'name', args.action),
-        status: requireExperimentStatus(args.status, args.action),
-        metrics: metricsOf(args.metrics) ?? {},
-        ...(args.log_path === undefined ? {} : { logPath: args.log_path }),
-        updatedAt: new Date().toISOString(),
-      }
-      await domain.table('experiments').put(id, record)
-      await emit(domain, 'experiments.saved', { experimentId: id, projectId }, {
-        name: record.name, status: record.status, created: true, metricCount: Object.keys(record.metrics).length,
+      // Same per-project lock as add_idea: the write serializes against a
+      // delete cascade of the target project.
+      return withProjectMutationLock(projectId, async () => {
+        if (domain.table('projects').get(projectId) === undefined) {
+          throw new Error(`wiki_note: no project with id '${projectId}'`)
+        }
+        const id = randomUUID()
+        const record = {
+          id,
+          projectId,
+          name: requireField(args.name, 'name', args.action),
+          status: requireExperimentStatus(args.status, args.action),
+          metrics: metricsOf(args.metrics) ?? {},
+          ...(args.log_path === undefined ? {} : { logPath: args.log_path }),
+          updatedAt: new Date().toISOString(),
+        }
+        await domain.table('experiments').put(id, record)
+        await emit(domain, 'experiments.saved', { experimentId: id, projectId }, {
+          name: record.name, status: record.status, created: true, metricCount: Object.keys(record.metrics).length,
+        })
+        return { ok: true, table: 'experiments', id, record: record as unknown as JsonValue }
       })
-      return { ok: true, table: 'experiments', id, record: record as unknown as JsonValue }
     }
     case 'set_experiment': {
       const id = requireField(args.id, 'id', args.action)

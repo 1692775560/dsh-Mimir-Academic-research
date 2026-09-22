@@ -4,15 +4,29 @@
  * list, and toast; failures surface as failure views without a refresh.
  */
 
-import { describe, expect, it, vi } from 'vitest'
-import { ResearchController } from '../src/client/controller.ts'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { AUTOSAVE_DEBOUNCE_MS, COMPILE_DEBOUNCE_MS, ResearchController } from '../src/client/controller.ts'
 import type { ResearchRemote } from '../src/client/controller.ts'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
+
+declare module '@deepseek-ai/dsh-typert-protocol' {
+  interface RemoteErrorDetailsMap {
+    /** Test-only carrier failure code for unreachable-host simulations. */
+    'unavailable': {}
+  }
+}
 import type {
+  ResearchCompileResult,
+  ResearchCompileStatusResult,
   ResearchCreateProjectResult,
   ResearchDeleteProjectResult,
+  ResearchExperimentsResult,
   ResearchListProjectsResult,
+  ResearchOutlineResult,
+  ResearchPaperSourceResult,
   ResearchRenameProjectResult,
+  ResearchSavePaperSourceResult,
 } from 'dsh-mimir/types'
 
 /** Wrap one business result in the carrier's success branch. */
@@ -131,5 +145,128 @@ describe('ResearchController project management', () => {
     const controller = new ResearchController(remote)
     const failure = await controller.deleteProject('ghost')
     expect(failure).toMatchObject({ code: 'project-not-found' })
+  })
+
+  it('keeps the ready list on screen while a verb-triggered refresh is in flight', async () => {
+    const statuses: string[] = []
+    const remote = stubRemote({
+      listProjects: listProjectsReturning([
+        { ok: true, value: { projects: [PROJECT] } },
+        { ok: true, value: { projects: [PROJECT, { ...PROJECT, id: 'p2', title: 'Paper Two' }] } },
+      ]),
+      createProject: ({ title }) => Promise.resolve(carried<ResearchCreateProjectResult>({
+        ok: true, value: { project: { ...PROJECT, id: 'p2', title } },
+      })),
+    })
+    const controller = new ResearchController(remote)
+    controller.ensure()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().projectsStatus).toBe('ready')
+    controller.subscribe(() => { statuses.push(controller.getSnapshot().projectsStatus) })
+    await controller.createProject('Paper Two')
+    expect(controller.getSnapshot().projects.map(project => project.id)).toEqual(['p1', 'p2'])
+    // The refresh over a ready list repaints without a loading detour (no
+    // sidebar flash); only the first-ever load shows the loading state.
+    expect(statuses).not.toContain('loading')
+  })
+
+  it('keeps the last good list when a quiet refresh fails', async () => {
+    const remote = stubRemote({
+      listProjects: listProjectsReturning([
+        { ok: true, value: { projects: [PROJECT] } },
+        { ok: false, error: { code: 'operation-failed', message: 'disk hiccup' } },
+      ]),
+      createProject: () => Promise.resolve(carried<ResearchCreateProjectResult>({
+        ok: true, value: { project: PROJECT },
+      })),
+    })
+    const controller = new ResearchController(remote)
+    controller.ensure()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().projectsStatus).toBe('ready')
+    // A business failure on the quiet refresh keeps the old list and status.
+    await controller.createProject('Paper One')
+    expect(controller.getSnapshot()).toMatchObject({ projectsStatus: 'ready', projectsFailure: null })
+    expect(controller.getSnapshot().projects.map(project => project.id)).toEqual(['p1'])
+    // A carrier failure on the quiet refresh is just as silent.
+    const carrying = stubRemote({
+      listProjects: listProjectsReturning([{ ok: true, value: { projects: [PROJECT] } }]),
+      createProject: () => Promise.resolve(carried<ResearchCreateProjectResult>({
+        ok: true, value: { project: PROJECT },
+      })),
+    })
+    const second = new ResearchController(carrying)
+    second.ensure()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(second.getSnapshot().projectsStatus).toBe('ready')
+    ;(carrying as { listProjects: ResearchRemote['listProjects'] }).listProjects =
+      () => Promise.resolve({ ok: false, error: new RemoteError('unavailable', 'host down', {}) })
+    await second.createProject('Paper One')
+    expect(second.getSnapshot()).toMatchObject({ projectsStatus: 'ready', projectsFailure: null })
+    expect(second.getSnapshot().projects.map(project => project.id)).toEqual(['p1'])
+  })
+})
+
+describe('ResearchController project deselection', () => {
+  beforeEach(() => { vi.useFakeTimers() })
+  afterEach(() => { vi.useRealTimers() })
+
+  const IDLE: ResearchCompileStatusResult = {
+    ok: true,
+    value: { state: 'idle', issues: [], engine: null, pdfUpdatedAt: null },
+  }
+
+  it('flushes the dirty draft and empties every per-project slice', async () => {
+    const saved: Array<{ projectId: string; content: string; baseMtimeMs: number }> = []
+    let compiles = 0
+    const controller = new ResearchController(stubRemote({
+      getPaperOutline: ({ projectId }: { projectId: string }) => Promise.resolve(
+        carried<ResearchOutlineResult>({ ok: true, value: { projectId, nodes: [] } }),
+      ),
+      getCompileStatus: () => Promise.resolve(carried(IDLE)),
+      getPaperSource: () => Promise.resolve(
+        carried<ResearchPaperSourceResult>({ ok: true, value: { content: 'v1', mtimeMs: 1000 } }),
+      ),
+      listExperiments: () => Promise.resolve(
+        carried<ResearchExperimentsResult>({ ok: true, value: { experiments: [] } }),
+      ),
+      savePaperSource: (request) => {
+        saved.push(request)
+        return Promise.resolve(carried<ResearchSavePaperSourceResult>({ ok: true, value: { mtimeMs: 2000 } }))
+      },
+      compile: () => {
+        compiles += 1
+        return Promise.resolve(carried<ResearchCompileResult>({
+          ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 3 },
+        }))
+      },
+    }))
+    controller.select('p1')
+    await vi.advanceTimersByTimeAsync(0)
+    expect(controller.getSnapshot().source).toMatchObject({ projectId: 'p1', status: 'ready', saveState: 'clean' })
+    expect(controller.getSnapshot().experiments).toMatchObject({ projectId: 'p1', status: 'ready' })
+    controller.edit('v1 edited')
+    // Deselect before the autosave debounce fires: the draft rides out with
+    // the deselect instead of dying with the cleared timer.
+    controller.select(null)
+    expect(saved).toEqual([{ projectId: 'p1', content: 'v1 edited', baseMtimeMs: 1000 }])
+    const view = controller.getSnapshot()
+    expect(view.outline).toBeNull()
+    expect(view.source).toBeNull()
+    expect(view.experiments).toBeNull()
+    expect(view.figures).toBeNull()
+    expect(view.meetings).toBeNull()
+    expect(view.artifact).toBeNull()
+    expect(view.snapshots).toBeNull()
+    expect(view.snapshotDetail).toBeNull()
+    expect(view.compile).toMatchObject({ projectId: null, state: 'idle', issues: [] })
+    await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS + COMPILE_DEBOUNCE_MS)
+    // The deselect cleared the pending debounces: no second save, and the
+    // flushed save's auto-compile is stale-marked away by the generation bump.
+    expect(saved).toHaveLength(1)
+    expect(compiles).toBe(0)
   })
 })

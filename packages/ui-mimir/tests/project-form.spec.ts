@@ -7,6 +7,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   cleanProjectTitle,
+  nextSelectionAfterDelete,
   PROJECT_TITLE_MAX_LENGTH,
   sameSessionListView,
   sessionListView,
@@ -25,6 +26,24 @@ describe('cleanProjectTitle', () => {
   it('rejects titles over the cap and accepts the cap itself', () => {
     expect(cleanProjectTitle('x'.repeat(PROJECT_TITLE_MAX_LENGTH))).toHaveLength(PROJECT_TITLE_MAX_LENGTH)
     expect(cleanProjectTitle('x'.repeat(PROJECT_TITLE_MAX_LENGTH + 1))).toBeNull()
+  })
+})
+
+describe('nextSelectionAfterDelete', () => {
+  const projects = [{ id: 'p1' }, { id: 'p2' }]
+
+  it('leaves the selection alone when another project was deleted', () => {
+    expect(nextSelectionAfterDelete(projects, 'p2', 'p1')).toBeUndefined()
+    expect(nextSelectionAfterDelete(projects, 'p2', null)).toBeUndefined()
+  })
+
+  it('hands the selection to the first remaining project', () => {
+    expect(nextSelectionAfterDelete(projects, 'p1', 'p1')).toBe('p2')
+  })
+
+  it('clears the selection when the deleted project was the last one', () => {
+    expect(nextSelectionAfterDelete([{ id: 'p1' }], 'p1', 'p1')).toBeNull()
+    expect(nextSelectionAfterDelete([], 'p1', 'p1')).toBeNull()
   })
 })
 
