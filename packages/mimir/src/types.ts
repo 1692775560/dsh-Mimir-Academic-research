@@ -386,6 +386,8 @@ export interface ResearchDeleteProjectCounts {
   readonly paperLinks: number
   /** Whether an on-disk generated-decks directory was removed. */
   readonly meetingsRemoved: boolean
+  /** Whether the paper directory was removed (only ever true for a tree resolving inside `imported/`; any other directory stays). */
+  readonly paperDirRemoved: boolean
 }
 
 /** `deleteProject` result: the deleted id plus the cascade counts. */

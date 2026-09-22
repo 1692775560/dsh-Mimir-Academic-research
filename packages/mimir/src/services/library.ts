@@ -14,6 +14,7 @@ import type { WebSearchRunner } from '../tools/web-search.ts'
 import { detectPackageManager, installCommandFor } from '../pm-detect.ts'
 import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
+import { withPaperMutationLock } from './mutation-locks.ts'
 import type {
   ArxivEntry,
   PaperRecord,
@@ -54,26 +55,6 @@ const PAPER_PDF_DIR = 'papers'
 const ARXIV_SEARCH_DEFAULT_MAX_RESULTS = 10
 /** Hard result cap of one panel-driven arXiv search. */
 const ARXIV_SEARCH_MAX_RESULTS = 50
-
-/**
- * Serialize paper read-modify-write commits within this host process.
- * ponytail: process-wide per-id lock; split by domain only if contention is measurable.
- */
-const paperMutationTails = new Map<string, Promise<void>>()
-
-async function withPaperMutationLock<T>(arxivId: string, mutation: () => Promise<T>): Promise<T> {
-  const previous = paperMutationTails.get(arxivId) ?? Promise.resolve()
-  let release!: () => void
-  const current = new Promise<void>(resolve => { release = resolve })
-  paperMutationTails.set(arxivId, current)
-  await previous
-  try {
-    return await mutation()
-  } finally {
-    release()
-    if (paperMutationTails.get(arxivId) === current) paperMutationTails.delete(arxivId)
-  }
-}
 
 /** Atomically replace one binary file through a unique same-directory sibling. */
 async function writeBytesAtomic(filePath: string, bytes: Uint8Array): Promise<void> {
