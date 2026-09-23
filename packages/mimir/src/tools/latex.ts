@@ -169,7 +169,9 @@ const TECTONIC_LOCATION_RE = /^(\S+\.tex):(\d+):\s+(.*)$/
  */
 export function parseTectonicErrors(log: string): LatexIssue[] {
   const issues: LatexIssue[] = []
-  for (const line of log.split('\n')) {
+  // Tectonic on Windows emits CRLF stdout; a bare \n split would leave a
+  // trailing \r on every line and defeat the anchored regexes below (#267).
+  for (const line of log.split(/\r?\n/)) {
     const match = TECTONIC_DIAGNOSTIC_RE.exec(line)
     if (match === null) continue
     const severity = match[1] === 'error' ? 'error' as const : 'warning' as const

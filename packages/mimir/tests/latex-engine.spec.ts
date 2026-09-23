@@ -99,6 +99,26 @@ describe('parseTectonicErrors', () => {
       { severity: 'warning', file: 'main.tex', line: 17, message: 'Citation \'doe2024\' on page 1 undefined' },
     ])
   })
+
+  it('parses CRLF diagnostics on Windows without leaking \r (#267)', () => {
+    const log = [
+      'note: running TeX ...',
+      'error: main.tex:42: Undefined control sequence',
+      'error: halted on potentially-recoverable error as specified',
+      'warning: main.tex:17: Citation \'doe2024\' on page 1 undefined',
+      'note: writing main.log',
+    ].join('\r\n')
+    const issues = parseTectonicErrors(log)
+    expect(issues.length).toBe(3)
+    for (const issue of issues) {
+      expect(issue.message).not.toContain('\r')
+    }
+    expect(issues).toEqual([
+      { severity: 'error', file: 'main.tex', line: 42, message: 'Undefined control sequence' },
+      { severity: 'error', message: 'halted on potentially-recoverable error as specified' },
+      { severity: 'warning', file: 'main.tex', line: 17, message: 'Citation \'doe2024\' on page 1 undefined' },
+    ])
+  })
 })
 
 describe('readLogTail (#234)', () => {
