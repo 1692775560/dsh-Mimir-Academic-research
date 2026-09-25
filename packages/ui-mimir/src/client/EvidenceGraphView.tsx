@@ -12,7 +12,6 @@
  */
 
 import { useMemo, useState } from 'react'
-import type { CSSProperties } from 'react'
 import type {
   EvidenceClaimHistory,
   EvidenceGraphEdge,
@@ -21,6 +20,7 @@ import type {
   EvidenceTimelineGroup,
 } from 'dsh-mimir/types'
 import type { ResearchEvidenceGraphSlice } from './controller.ts'
+import type { ResearchKey } from './locales.ts'
 import type { ResearchT } from './view-common.ts'
 import {
   evidenceRelKey,
@@ -35,12 +35,28 @@ import {
 } from './evidence-lane-graph.ts'
 import css from './ResearchPanel.module.css'
 
-/** Horizontal distance between two claim lanes (px). */
-const LANE_W = 26
-/** Vertical distance between two dots (px) — also the click-target height. */
-const ROW_H = 28
-/** Structure palette: lane spines/chips cycle these by lane index. */
+/** Workflow-diagram geometry (px): tab column, time columns, rail rhythm. */
+const TAB_W = 196
+const COL_W = 78
+const RAIL_H = 62
+const AXIS_H = 32
+const NODE_R = 7
+/** Claim-tab palette (structure color, like branch labels in a git graph). */
 const LANE_PALETTE = ['#4176e6', '#1a9e63', '#b06000', '#8250df', '#d93026', '#0e7490']
+/** Node fill per relation class — shape carries semantics, color backs it up. */
+const REL_FILL: Record<string, string> = {
+  supports: '#1f9d55',
+  contradicts: '#e5484d',
+  tests: '#0e9888',
+  retract: '#64748b',
+  neutral: '#8a919e',
+}
+/** Status milestone tag fill per terminal claim status. */
+const STATUS_FILL: Record<string, string> = {
+  supported: '#1f9d55',
+  invalidated: '#e5484d',
+  pending: '#f59e0b',
+}
 
 /** One entry row of a claim's history: time, spine, rel pill, note. */
 function HistoryRow({ entry, onJump, t }: {
@@ -129,90 +145,223 @@ function TimelineGroupBlock({ group, onJump, t }: {
   )
 }
 
-const laneX = (lane: number): number => lane * LANE_W + LANE_W / 2 + 4
-const rowY = (row: number): number => row * ROW_H + ROW_H / 2
+const railY = (lane: number): number => AXIS_H + lane * RAIL_H + RAIL_H / 2
+const colX = (col: number): number => TAB_W + 28 + col * COL_W
+const shortLabel = (label: string): string => (label.length > 13 ? `${label.slice(0, 12)}…` : label)
 
-/** One lane dot: a real button (focusable, provenance jump on click). */
-function LaneDotButton({ dot, onJump }: {
-  readonly dot: LaneDot
-  readonly onJump: (ts: string) => void
-}) {
-  const label = `${dot.dateLabel} ${dot.timeLabel} · ${dot.rel}${dot.note !== null ? ` · ${dot.note}` : ''}`
+/**
+ * One node's glyph: shape first (disc / ×-disc / bullseye / hollow /
+ * diamond), relation color second — the pair is recognizable at a glance
+ * without any text. A slashed hollow disc marks a retracted edge.
+ */
+function NodeGlyph({ dot, selected }: { readonly dot: LaneDot; readonly selected: boolean }) {
+  const fill = REL_FILL[dot.relClass] ?? REL_FILL.neutral
+  const slashed = dot.shape === 'hollow' && dot.retracted
   return (
-    <button
-      type="button"
-      className={css.laneDot}
-      data-shape={dot.shape}
-      data-rel={dot.relClass}
-      data-conflict={dot.conflict || undefined}
-      style={{
-        left: laneX(dot.lane) - 14,
-        top: dot.row * ROW_H,
-        '--lane-c': LANE_PALETTE[dot.lane % LANE_PALETTE.length],
-      } as CSSProperties}
-      title={label}
-      aria-label={label}
-      onClick={() => { onJump(dot.ts) }}
-    />
+    <g transform={`translate(${colX(dot.col)} ${railY(dot.lane)})`}>
+      {dot.conflict && <circle r={11.5} fill="none" stroke="#e5484d" strokeWidth={1.8} opacity={0.9} />}
+      {selected && <circle r={12.5} fill="none" stroke="#4176e6" strokeWidth={2} />}
+      {dot.shape === 'dot' && (
+        <>
+          <circle r={NODE_R} fill={fill} />
+          <path d="M -3 0 L -0.8 2.4 L 3.4 -2.2" stroke="#fff" strokeWidth={1.8} fill="none" strokeLinecap="round" strokeLinejoin="round" />
+        </>
+      )}
+      {dot.shape === 'cross' && (
+        <>
+          <circle r={NODE_R} fill={fill} />
+          <path d="M -2.6 -2.6 L 2.6 2.6 M 2.6 -2.6 L -2.6 2.6" stroke="#fff" strokeWidth={1.8} strokeLinecap="round" />
+        </>
+      )}
+      {dot.shape === 'bullseye' && (
+        <>
+          <circle r={NODE_R} fill="none" stroke={fill} strokeWidth={2.2} />
+          <circle r={2.6} fill={fill} />
+        </>
+      )}
+      {dot.shape === 'hollow' && (
+        <>
+          <circle r={NODE_R - 0.5} fill="var(--dsw-specific-menu, #fff)" stroke={fill} strokeWidth={1.8} />
+          {slashed && <line x1={-3.4} y1={3.4} x2={3.4} y2={-3.4} stroke={fill} strokeWidth={1.4} strokeLinecap="round" />}
+        </>
+      )}
+      {dot.shape === 'diamond' && (
+        <>
+          <rect x={-5} y={-5} width={10} height={10} rx={1.5} transform="rotate(45)" fill={fill} />
+          <path d="M -2.4 0 L 2.4 0" stroke="#fff" strokeWidth={1.6} strokeLinecap="round" />
+        </>
+      )}
+    </g>
   )
 }
 
-/** The wires + spines layer: one SVG behind the dot rows. */
-function LaneWires({ layout }: { readonly layout: LaneGroupGraph }) {
-  const width = layout.laneCount * LANE_W + 8
-  const height = Math.max(layout.rowCount * ROW_H, ROW_H)
+/**
+ * The workflow diagram of one research line — the whole group as ONE self
+ * contained SVG (the v2 HTML/SVG mix taught us: one coordinate system beats
+ * two). Dashed gridlines set the rhythm, colored tabs name the rails, S
+ * curves carry cross-claim inflow at the event's own time column, a dashed
+ * arch loops a retraction back onto its retracted node, and each claim's
+ * terminal status becomes a milestone tag with an arrow onto its rail.
+ */
+function WorkflowDiagram({ layout, selectedId, onSelect, t }: {
+  readonly layout: LaneGroupGraph
+  readonly selectedId: string | null
+  readonly onSelect: (id: string) => void
+  readonly t: ResearchT
+}) {
+  const width = Math.max(TAB_W + 28 + layout.colCount * COL_W + 132, 560)
+  const height = AXIS_H + layout.laneCount * RAIL_H + 16
+  const markerId = `arrow-${layout.key.replace(/[^a-zA-Z0-9]/g, '')}`
   return (
-    <svg className={css.laneWires} width={width} height={height} aria-hidden>
+    <svg className={css.laneSvg} width={width} height={height} role="img" aria-label={layout.label ?? layout.key}>
+      <defs>
+        <marker id={markerId} viewBox="0 0 8 8" refX={6} refY={4} markerWidth={7} markerHeight={7} orient="auto-start-reverse">
+          <path d="M 0 0 L 8 4 L 0 8 z" fill="#8a919e" />
+        </marker>
+      </defs>
+      {/* Dashed gridlines: one per rail, the reference diagram's rhythm. */}
+      {layout.headers.map((header, lane) => (
+        <line key={`grid-${header.claimKey}`} x1={0} x2={width} y1={railY(lane)} y2={railY(lane)} stroke="#e4e7ec" strokeDasharray="4 5" />
+      ))}
+      {/* Date axis: a tick + label at every first-of-date column. */}
+      {layout.dots.filter(dot => dot.dateFirst).map(dot => (
+        <g key={`tick-${dot.id}`}>
+          <line x1={colX(dot.col)} x2={colX(dot.col)} y1={AXIS_H - 6} y2={height - 8} stroke="#eef1f5" strokeWidth={1.5} />
+          <text x={colX(dot.col) + 4} y={AXIS_H - 12} fontSize={10} fill="#8a919e">{dot.dateLabel}</text>
+        </g>
+      ))}
+      {/* Rails: from the tab's right edge to the rail's last node. */}
       {layout.spans.map(span => (
         <line
-          key={`spine-${span.lane}`}
-          x1={laneX(span.lane)} x2={laneX(span.lane)}
-          y1={rowY(span.firstRow)} y2={rowY(span.lastRow)}
+          key={`rail-${span.lane}`}
+          x1={TAB_W + 4} x2={colX(span.lastCol) + 26}
+          y1={railY(span.lane)} y2={railY(span.lane)}
           stroke={LANE_PALETTE[span.lane % LANE_PALETTE.length]}
-          strokeWidth={2}
-          strokeLinecap="round"
-          opacity={0.45}
+          strokeWidth={2} strokeLinecap="round" opacity={0.5}
         />
       ))}
+      {/* Wires under the nodes. */}
       {layout.wires.map(wire => {
-        const x1 = laneX(wire.fromLane)
-        const x2 = laneX(wire.toLane)
-        const y1 = rowY(wire.fromRow)
-        const y2 = rowY(wire.toRow)
+        const x1 = colX(wire.fromCol)
+        const x2 = colX(wire.toCol)
+        const y1 = railY(wire.fromLane)
+        const y2 = railY(wire.toLane)
         if (wire.kind === 'retract') {
-          // A right-side loop back onto the lane: reads like a revert bump.
-          const bulge = Math.max(x1 + 14, x2 + 14)
+          // Dashed arch above the rail, arrowing back onto the retracted node.
           return (
             <path
-              key={`retract-${wire.fromRow}-${wire.toRow}`}
-              d={`M ${x1} ${y1} C ${bulge} ${y1}, ${bulge} ${y2}, ${x2} ${y2}`}
-              fill="none"
-              stroke="#8a919e"
-              strokeWidth={1.5}
-              strokeDasharray="3 2"
+              key={`retract-${wire.fromCol}-${wire.toCol}`}
+              d={`M ${x2} ${y2 - 10} C ${x2 + 18} ${y2 - 26}, ${x1 + 18} ${y1 - 26}, ${x1} ${y1 - 10}`}
+              fill="none" stroke="#8a919e" strokeWidth={1.5} strokeDasharray="4 3"
+              markerEnd={`url(#${markerId})`}
             />
           )
         }
-        const mid = (x1 + x2) / 2
+        const mid = (y1 + y2) / 2
         return (
           <path
-            key={`cross-${wire.fromLane}-${wire.toLane}-${wire.fromRow}`}
-            d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`}
+            key={`cross-${wire.fromLane}-${wire.toLane}-${wire.fromCol}`}
+            d={`M ${x1} ${y1} C ${x1} ${mid}, ${x2} ${mid}, ${x2} ${y2}`}
             fill="none"
             stroke={LANE_PALETTE[wire.fromLane % LANE_PALETTE.length]}
-            strokeWidth={2}
-            opacity={0.9}
+            strokeWidth={2} opacity={0.85}
           />
+        )
+      })}
+      {/* Claim tabs: the colored rail labels. */}
+      {layout.headers.map((header, lane) => (
+        <g key={header.claimKey}>
+          <rect x={8} y={railY(lane) - 14} width={TAB_W} height={28} rx={7} fill={LANE_PALETTE[header.hue % LANE_PALETTE.length]} opacity={0.92} />
+          <text x={18} y={railY(lane) + 4} fill="#fff" fontSize={11.5}>{shortLabel(header.label)}</text>
+          {header.conflict && <circle cx={TAB_W - 10} cy={railY(lane)} r={4} fill="none" stroke="#fff" strokeWidth={1.6} />}
+          <title>{header.label}</title>
+        </g>
+      ))}
+      {/* Status milestone tags with a down-arrow onto the rail's head node. */}
+      {layout.headers.filter(header => header.status !== null).map((header, lane) => {
+        const tagX = colX(header.lastCol) + 30
+        const tagY = railY(lane) - 31
+        const fill = STATUS_FILL[header.status ?? ''] ?? '#8a919e'
+        return (
+          <g key={`tag-${header.claimKey}`}>
+            <line x1={tagX + 22} y1={tagY + 18} x2={colX(header.lastCol) + 8} y2={railY(lane) - 10} stroke={fill} strokeWidth={1.2} />
+            <rect x={tagX} y={tagY} width={44} height={18} rx={4} fill={fill} />
+            <text x={tagX + 22} y={tagY + 13} textAnchor="middle" fill="#fff" fontSize={10.5}>{t(`evidence.tag.${header.status}` as ResearchKey)}</text>
+          </g>
+        )
+      })}
+      {/* Nodes: focusable SVG buttons (the list view remains the full a11y
+          surface with every write affordance). */}
+      {layout.dots.map(dot => {
+        const label = `${dot.dateLabel} ${dot.timeLabel} · ${t(evidenceRelKey(dot.rel))} · ${dot.actorLabel}${dot.note !== null ? ` · ${dot.note}` : ''}`
+        return (
+          <g
+            key={dot.id}
+            className={css.laneNode}
+            role="button"
+            tabIndex={0}
+            aria-label={label}
+            onClick={() => { onSelect(dot.id === selectedId ? '' : dot.id) }}
+            onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') onSelect(dot.id === selectedId ? '' : dot.id) }}
+          >
+            <title>{label}</title>
+            <circle cx={colX(dot.col)} cy={railY(dot.lane)} r={13} fill="transparent" />
+            <NodeGlyph dot={dot} selected={dot.id === selectedId} />
+          </g>
         )
       })}
     </svg>
   )
 }
 
-/** The graph rendering of one timeline group: lane chips + the dot grid. */
-function LaneGroupBlock({ layout, onJump, t }: {
-  readonly layout: LaneGroupGraph
+/** The progressive-disclosure detail card of one selected node. */
+function DotDetailCard({ dot, edge, onJump, onConfirm, onClose, t }: {
+  readonly dot: LaneDot
+  readonly edge: EvidenceGraphEdge | null
   readonly onJump: (ts: string) => void
+  readonly onConfirm: (confirm: EvidenceRetractConfirm) => void
+  readonly onClose: () => void
+  readonly t: ResearchT
+}) {
+  const confirm = edge === null ? null : retractConfirmOf(edge)
+  return (
+    <div className={css.reportCard}>
+      <div className={css.reportCardHead}>
+        <h4 className={css.reportCardTitle}>
+          <span className={css.tagPill} data-active={!dot.retracted || undefined} data-struck={dot.retracted || undefined}>
+            {t(evidenceRelKey(dot.rel))}
+          </span>
+          <span className={css.actorBadge} data-hue={dot.actorHue}>{dot.actorLabel}</span>
+          <span className={css.laneTime}>{dot.dateLabel} {dot.timeLabel}</span>
+        </h4>
+        <button type="button" className={css.retry} onClick={onClose}>{t('evidence.retractCancel')}</button>
+      </div>
+      {edge !== null && (
+        <p className={css.ledgerDetail}>
+          <code className={css.ledgerAction}>{edge.src} → {edge.dst}</code>
+        </p>
+      )}
+      {dot.note !== null && <p className={css.ledgerDetail} data-struck={dot.retracted || undefined}>{dot.note}</p>}
+      {edge?.retracted && (
+        <p className={css.ledgerDetail}>
+          {t('evidence.retractedAt', { at: edge.retractedAt ?? '', reason: edge.retractReason ?? '' })}
+        </p>
+      )}
+      <div className={css.viewActions}>
+        <button type="button" className={css.retry} onClick={() => { onJump(dot.ts) }}>{t('evidence.provenance')}</button>
+        {confirm !== null && (
+          <button type="button" className={css.btn} onClick={() => { onConfirm(confirm) }}>{t('evidence.retract')}</button>
+        )}
+      </div>
+    </div>
+  )
+}
+
+/** The graph rendering of one timeline group: title + the workflow SVG. */
+function LaneGroupBlock({ layout, selectedId, onSelect, t }: {
+  readonly layout: LaneGroupGraph
+  readonly selectedId: string | null
+  readonly onSelect: (id: string) => void
   readonly t: ResearchT
 }) {
   return (
@@ -223,45 +372,8 @@ function LaneGroupBlock({ layout, onJump, t }: {
         </span>
         {layout.label ?? layout.key}
       </h4>
-      <div className={css.laneLegend}>
-        {layout.headers.map(header => (
-          <span key={header.claimKey} className={css.laneChip}>
-            <span
-              className={css.laneChipDot}
-              style={{ '--lane-c': LANE_PALETTE[header.hue % LANE_PALETTE.length] } as CSSProperties}
-              aria-hidden
-            />
-            <span className={css.laneChipLabel}>{header.label}</span>
-            {header.status !== null && <span className={css.actorBadge}>{t('evidence.claim.status', { status: header.status })}</span>}
-            <span className={css.actorBadge}>
-              {t('evidence.claim.counts', { supports: header.supports, contradicts: header.contradicts })}
-            </span>
-            {header.conflict && <span className={css.ledgerMark}>{t('evidence.conflict')}</span>}
-          </span>
-        ))}
-      </div>
-      <div className={css.laneGraph} style={{ height: Math.max(layout.rowCount * ROW_H, ROW_H) }}>
-        <LaneWires layout={layout} />
-        {/* Dots live directly on the lane grid (not inside the rows), so
-            their lane-x coordinate is the single source of alignment with
-            the spines and wires behind them. */}
-        {layout.dots.map(dot => (
-          <LaneDotButton key={dot.id} dot={dot} onJump={onJump} />
-        ))}
-        {layout.dots.map(dot => (
-          <div key={`row-${dot.id}`} className={css.laneRow} style={{ top: dot.row * ROW_H, left: layout.laneCount * LANE_W + 16 }}>
-            {dot.dateFirst && <span className={css.laneDay}>{dot.dateLabel}</span>}
-            <span className={css.laneTime}>{dot.timeLabel}</span>
-            <span className={css.tagPill} data-active={!dot.retracted || undefined} data-struck={dot.retracted || undefined}>
-              {t(evidenceRelKey(dot.rel))}
-            </span>
-            <span className={css.actorBadge} data-hue={dot.actorHue}>{dot.actorLabel}</span>
-            {dot.note !== null && (
-              <span className={css.laneNote} data-struck={dot.retracted || undefined}>{dot.note}</span>
-            )}
-          </div>
-        ))}
-        {layout.rowCount === 0 && <p className={css.hint}>{t('evidence.empty')}</p>}
+      <div className={css.laneGraph}>
+        <WorkflowDiagram layout={layout} selectedId={selectedId} onSelect={onSelect} t={t} />
       </div>
     </section>
   )
@@ -358,11 +470,18 @@ export function EvidenceGraphView({
   // The timeline's two renderings: the lane graph (structure at a glance)
   // and the v1 list (full affordances, screen-reader friendly).
   const [layout, setLayout] = useState<'graph' | 'list'>('graph')
+  // The selected node id (progressive disclosure: the diagram carries
+  // structure only, details open in the card below).
+  const [selectedId, setSelectedId] = useState<string | null>(null)
   const view = evidence.view
   const laneGroups = useMemo(
     () => (view === null ? [] : buildLaneGroups(view.graph.timeline, view.graph.edges, view.graph.conflicts)),
     [view],
   )
+  const selectedDot = selectedId === null ? null : laneGroups.flatMap(group => group.dots).find(dot => dot.id === selectedId) ?? null
+  const selectedEdge = selectedDot === null || view === null
+    ? null
+    : view.graph.edges.find(edge => edge.sourceEventId === selectedDot.id) ?? null
 
   const onConfirmRetract = async (): Promise<void> => {
     if (confirming === null) return
@@ -430,9 +549,29 @@ export function EvidenceGraphView({
           {/* The main view: lane graph (structure at a glance) or the v1
               list (full inline history + affordances). */}
           {layout === 'graph'
-            ? laneGroups.map(group => (
-              <LaneGroupBlock key={group.key} layout={group} onJump={jumpToProvenance} t={t} />
-            ))
+            ? (
+              <>
+                {laneGroups.map(group => (
+                  <LaneGroupBlock
+                    key={group.key}
+                    layout={group}
+                    selectedId={selectedId}
+                    onSelect={setSelectedId}
+                    t={t}
+                  />
+                ))}
+                {selectedDot !== null && (
+                  <DotDetailCard
+                    dot={selectedDot}
+                    edge={selectedEdge}
+                    onJump={jumpToProvenance}
+                    onConfirm={confirm => { setConfirming(confirm); setSelectedId(null) }}
+                    onClose={() => { setSelectedId(null) }}
+                    t={t}
+                  />
+                )}
+              </>
+            )
             : view.graph.timeline.map(group => (
               <TimelineGroupBlock
                 key={group.key}

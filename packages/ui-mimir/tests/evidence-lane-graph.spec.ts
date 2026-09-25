@@ -1,9 +1,10 @@
 /**
- * Behavior tests for the evidence lane-graph view-model: deterministic lane
- * assignment (first activity leftmost), global chronological rows, cross
- * claim wires, retract loops through the retracted edge's declaration,
- * conflict marks, and stable actor hues. Pure functions over frozen
- * fixtures — no DOM, no mocks.
+ * Behavior tests for the evidence lane-graph view-model (v3 horizontal
+ * workflow diagram): deterministic rail assignment (first activity on the
+ * top rail), globally chronological columns, cross-claim inflow wires,
+ * retract loops through the retracted edge's declaration, conflict marks,
+ * per-rail extents for the status milestone tags, and stable actor hues.
+ * Pure functions over frozen fixtures — no DOM, no mocks.
  * @module dsh-client-ui-mimir/tests/evidence-lane-graph
  */
 
@@ -42,7 +43,7 @@ function group(partial: Partial<EvidenceTimelineGroup> & { readonly key: string;
   return Object.freeze({
     kind: 'idea',
     label: null,
-    lastActiveAt: '2026-09-01T00:00:00.000Z',
+    lastActiveAt: '2026-09-06T00:00:00.000Z',
     ...partial,
   })
 }
@@ -67,7 +68,7 @@ function edge(partial: Partial<EvidenceGraphEdge> & { readonly id: string; reado
 }
 
 describe('buildLaneGroups', () => {
-  it('assigns one lane per claim ordered by first activity, rows globally chronological', () => {
+  it('assigns one rail per claim ordered by first activity, columns globally chronological', () => {
     const layout = buildLaneGroups(
       [group({
         key: 'idea:1',
@@ -85,15 +86,19 @@ describe('buildLaneGroups', () => {
       [],
     )
     expect(layout).toHaveLength(1)
-    const lanes = layout[0]?.headers ?? []
-    expect(lanes.map(lane => lane.claimKey)).toEqual(['claim:early', 'claim:late'])
-    // Rows interleave the two lanes chronologically: e1(lane0) e3(lane1) e4(lane0).
-    expect((layout[0]?.dots ?? []).map(dot => `${dot.id}@${dot.lane}:${dot.row}`))
+    const headers = layout[0]?.headers ?? []
+    expect(headers.map(header => header.claimKey)).toEqual(['claim:early', 'claim:late'])
+    // Columns interleave the two rails chronologically:
+    // e1(rail0,col0) e3(rail1,col1) e4(rail0,col2).
+    expect((layout[0]?.dots ?? []).map(dot => `${dot.id}@${dot.lane}:${dot.col}`))
       .toEqual(['e1@0:0', 'e3@1:1', 'e4@0:2'])
-    expect(layout[0]?.rowCount).toBe(3)
+    expect(layout[0]?.colCount).toBe(3)
+    // Rail extents drive the status milestone tag placement.
+    expect(layout[0]?.headers[0]?.lastCol).toBe(2)
+    expect(layout[0]?.headers[1]?.lastCol).toBe(1)
   })
 
-  it('ties rows deterministically by event id at equal timestamps', () => {
+  it('ties columns deterministically by event id at equal timestamps', () => {
     const layout = buildLaneGroups(
       [group({
         key: 'idea:1',
@@ -108,7 +113,7 @@ describe('buildLaneGroups', () => {
     expect((layout[0]?.dots ?? []).map(dot => dot.id)).toEqual(['a', 'b'])
   })
 
-  it('wires a cross-claim source lane and skips non-claim sources', () => {
+  it('wires a cross-claim source rail and skips non-claim sources', () => {
     const edges = [
       edge({ id: 'e1', sourceEventId: 'e1', src: 'claim:c2', dst: 'claim:c1' }),
       edge({ id: 'e2', sourceEventId: 'e2', src: 'lit:arxiv:2401.00002', dst: 'claim:c1', rel: 'cites' }),
@@ -131,12 +136,13 @@ describe('buildLaneGroups', () => {
     )
     const wires = layout[0]?.wires ?? []
     expect(wires).toHaveLength(1)
-    // Lanes sort by first activity: c2 (09:00) is lane 0, c1 is lane 1, and
-    // e1's row is 1 (between e9@0 and e2@2).
-    expect(wires[0]).toMatchObject({ kind: 'cross', fromLane: 0, toLane: 1, fromRow: 1, toRow: 1 })
+    // Rails sort by first activity: c2 (09:00) is rail 0, c1 is rail 1, and
+    // e1's column is 1 (between e9@0 and e2@2). The inflow is drawn at the
+    // event's own time column.
+    expect(wires[0]).toMatchObject({ kind: 'cross', fromLane: 0, toLane: 1, fromCol: 1, toCol: 1 })
   })
 
-  it('omits the cross wire when the source claim has no lane in the group', () => {
+  it('omits the cross wire when the source claim has no rail in the group', () => {
     const edges = [edge({ id: 'e1', sourceEventId: 'e1', src: 'claim:elsewhere', dst: 'claim:c1' })]
     const layout = buildLaneGroups(
       [group({
@@ -151,7 +157,7 @@ describe('buildLaneGroups', () => {
     expect(layout[0]?.wires).toEqual([])
   })
 
-  it('draws the retract loop back to the retracted declaration dot', () => {
+  it('draws the retract loop back to the retracted declaration node', () => {
     const edges = [
       edge({ id: 'e1', sourceEventId: 'e1', dst: 'claim:c1', retractEventId: 'r1', retracted: true, retractedAt: '2026-09-05T10:00:00.000Z' }),
     ]
@@ -167,12 +173,13 @@ describe('buildLaneGroups', () => {
       [],
     )
     const dots = layout[0]?.dots ?? []
+    // The retracted declaration renders hollow; the retraction is a diamond.
     expect(dots.map(dot => dot.shape)).toEqual(['hollow', 'diamond'])
     expect((layout[0]?.wires ?? [])).toHaveLength(1)
-    expect((layout[0]?.wires ?? [])[0]).toMatchObject({ kind: 'retract', fromLane: 0, toLane: 0, fromRow: 0, toRow: 1 })
+    expect((layout[0]?.wires ?? [])[0]).toMatchObject({ kind: 'retract', fromLane: 0, toLane: 0, fromCol: 0, toCol: 1 })
   })
 
-  it('marks the active conflict pair dots', () => {
+  it('marks the active conflict pair nodes and their shapes', () => {
     const edges = [
       edge({ id: 'sup', sourceEventId: 'sup', rel: 'supports', dst: 'claim:c1' }),
       edge({ id: 'con', sourceEventId: 'con', rel: 'contradicts', dst: 'claim:c1' }),
@@ -194,10 +201,30 @@ describe('buildLaneGroups', () => {
       conflicts,
     )
     expect((layout[0]?.dots ?? []).map(dot => dot.conflict)).toEqual([true, true])
+    expect((layout[0]?.dots ?? []).map(dot => dot.shape)).toEqual(['dot', 'cross'])
     expect((layout[0]?.dots ?? []).map(dot => dot.relClass)).toEqual(['supports', 'contradicts'])
   })
 
-  it('flags the first dot of every calendar date', () => {
+  it('maps the three headline relations to distinct shapes and classes', () => {
+    const layout = buildLaneGroups(
+      [group({
+        key: 'idea:1',
+        claims: [claim({ claimKey: 'claim:c1', history: [
+          entry({ sourceEventId: 's', ts: '2026-09-01T10:00:00.000Z', rel: 'supports' }),
+          entry({ sourceEventId: 'c', ts: '2026-09-02T10:00:00.000Z', rel: 'contradicts' }),
+          entry({ sourceEventId: 't', ts: '2026-09-03T10:00:00.000Z', rel: 'tests' }),
+          entry({ sourceEventId: 'u', ts: '2026-09-04T10:00:00.000Z', rel: 'uses' }),
+        ] })],
+      })],
+      [],
+      [],
+    )
+    expect((layout[0]?.dots ?? []).map(dot => dot.shape)).toEqual(['dot', 'cross', 'bullseye', 'hollow'])
+    expect((layout[0]?.dots ?? []).map(dot => dot.relClass))
+      .toEqual(['supports', 'contradicts', 'tests', 'neutral'])
+  })
+
+  it('flags the first node of every calendar date', () => {
     const layout = buildLaneGroups(
       [group({
         key: 'idea:1',

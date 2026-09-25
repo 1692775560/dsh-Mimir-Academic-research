@@ -1,17 +1,17 @@
 /**
- * Evidence lane-graph view-model (v2): turns the fold's claim-centric
- * timeline into a git-worktree-style lane layout — one lane per claim, dots
- * for declarations/retractions, wires for cross-claim evidence and retract
- * loops — so the ledger reads like a commit graph at a glance while every
- * dot keeps its provenance jump. Pure glue over the fold product: no
+ * Evidence lane-graph view-model (v3, horizontal workflow diagram): turns
+ * the fold's claim-centric timeline into a classic git-workflow layout —
+ * one horizontal rail per claim with a colored claim tab at the left, time
+ * flowing left → right, semantic nodes on the rails, S-curves for evidence
+ * flowing in from other claims, a dashed loop for retractions, and a status
+ * milestone tag at each claim's head. Pure glue over the fold product: no
  * layout library, no DOM, deterministic for a given input (the same
  * re-derivable discipline as the v1 card helpers).
  *
- * Lane semantics (borrowing the cognitive-map's structure-first reading):
- * a lane is one claim's accumulation story; a curve leaving another lane is
- * evidence flowing in from elsewhere; a diamond is the human retraction
- * riding back on the lane. Color belongs to STRUCTURE (the lane), actor
- * identity rides a stable hue on the row badge.
+ * Reading order (the cognitive-map's structure-first reading): rails top →
+ * bottom by first activity, time left → right within a rail; the diagram
+ * carries structure only — details live behind each node (progressive
+ * disclosure) and in the v1 list.
  * @module dsh-client-ui-mimir/client/evidence-lane-graph
  */
 
@@ -25,24 +25,30 @@ import type {
 /** The retraction pseudo-rel a retract row carries (v1.1 §2.1). */
 const RETRACT_REL = 'evidence.edge.retracted'
 
-/** The stable hue palette size (lane fills and actor badge tints cycle it). */
+/** The stable hue palette size (claim tabs cycle it, like branch labels). */
 export const LANE_HUES = 6
 
-/** The visual kind of one lane dot. */
+/** The visual kind of one lane node. */
 export type LaneDotKind = 'edge' | 'retract'
 
-/** The rendered dot shape: filled, hollow (retracted), diamond (retraction). */
-export type LaneDotShape = 'dot' | 'hollow' | 'diamond'
+/**
+ * The rendered node shape — shape carries the semantics first, color backs
+ * it up: filled disc (supports), disc with a bold × (contradicts), bullseye
+ * (检验 tests), small hollow disc (other relations), diamond (retraction).
+ */
+export type LaneDotShape = 'dot' | 'cross' | 'bullseye' | 'hollow' | 'diamond'
 
-/** The CSS color class of one dot's relation. */
-export type LaneDotRelClass = 'supports' | 'contradicts' | 'retract' | 'neutral'
+/** The CSS color class of one node's relation. */
+export type LaneDotRelClass = 'supports' | 'contradicts' | 'tests' | 'retract' | 'neutral'
 
-/** One declaration/retraction dot on the lane grid. */
+/** One declaration/retraction node on the workflow grid. */
 export interface LaneDot {
   /** The ledger event id — stable React key and provenance anchor. */
   readonly id: string
+  /** The claim rail index (0 = top rail). */
   readonly lane: number
-  readonly row: number
+  /** The time column (chronological index across the whole group). */
+  readonly col: number
   /** The raw relation (or the retraction action for retract rows). */
   readonly rel: string
   readonly kind: LaneDotKind
@@ -57,21 +63,21 @@ export interface LaneDot {
   readonly ts: string
   readonly dateLabel: string
   readonly timeLabel: string
-  /** First dot of its calendar date (the view prints the day chip here). */
+  /** First node of its calendar date (the axis prints the day label here). */
   readonly dateFirst: boolean
   readonly note: string | null
 }
 
-/** One wire of the lane diagram: a cross-claim edge or a retract loop. */
+/** One wire of the diagram: a cross-claim inflow or a retraction loop. */
 export interface LaneWire {
   readonly kind: 'cross' | 'retract'
   readonly fromLane: number
   readonly toLane: number
-  readonly fromRow: number
-  readonly toRow: number
+  readonly fromCol: number
+  readonly toCol: number
 }
 
-/** One claim lane's header chip (color = structure, badges = state). */
+/** One claim rail's colored tab (structure identity + state). */
 export interface LaneHeader {
   readonly claimKey: string
   readonly label: string
@@ -80,26 +86,28 @@ export interface LaneHeader {
   readonly contradicts: number
   readonly conflict: boolean
   readonly hue: number
+  /** The rail's last activity column — where the status milestone tag goes. */
+  readonly lastCol: number
 }
 
-/** The vertical extent of one lane's spine (first..last dot row). */
+/** The horizontal extent of one rail (first..last node column). */
 export interface LaneSpan {
   readonly lane: number
-  readonly firstRow: number
-  readonly lastRow: number
+  readonly firstCol: number
+  readonly lastCol: number
 }
 
-/** One research line's lane layout (the graph rendering of one timeline group). */
+/** One research line's workflow layout (the diagram of one timeline group). */
 export interface LaneGroupGraph {
   readonly key: string
   readonly kind: 'idea' | 'project'
   readonly label: string | null
   readonly laneCount: number
+  readonly colCount: number
   readonly headers: readonly LaneHeader[]
   readonly dots: readonly LaneDot[]
   readonly wires: readonly LaneWire[]
   readonly spans: readonly LaneSpan[]
-  readonly rowCount: number
 }
 
 /**
@@ -116,25 +124,30 @@ export function actorHueOf(kind: string, id: string): number {
   return Math.abs(hash) % LANE_HUES
 }
 
-/** The CSS color class of one dot (retract rows own their class). */
+/** The CSS color class of one node (retract rows own their class). */
 function relClassOf(kind: LaneDotKind, rel: string): LaneDotRelClass {
   if (kind === 'retract') return 'retract'
   if (rel === 'supports') return 'supports'
   if (rel === 'contradicts') return 'contradicts'
+  if (rel === 'tests') return 'tests'
   return 'neutral'
 }
 
-/** The dot shape of one timeline entry. */
-function shapeOf(kind: LaneDotKind, retracted: boolean): LaneDotShape {
+/** The node shape of one timeline entry (shape = semantics at a glance). */
+function shapeOf(kind: LaneDotKind, rel: string, retracted: boolean): LaneDotShape {
   if (kind === 'retract') return 'diamond'
-  return retracted ? 'hollow' : 'dot'
+  if (retracted) return 'hollow'
+  if (rel === 'supports') return 'dot'
+  if (rel === 'contradicts') return 'cross'
+  if (rel === 'tests') return 'bullseye'
+  return 'hollow'
 }
 
 /**
- * Build the lane layouts for every timeline group, newest-active group
+ * Build the workflow layouts for every timeline group, newest-active group
  * first (the fold's own order). `edges` resolve timeline entries back to
  * their src/dst (the timeline entry carries neither), and `conflicts` mark
- * the active pair dots.
+ * the active pair nodes.
  */
 export function buildLaneGroups(
   timeline: readonly EvidenceTimelineGroup[],
@@ -161,8 +174,8 @@ function buildGroup(
   edgeByRetractEvent: Map<string, EvidenceGraphEdge>,
   conflictEdgeIds: Set<string>,
 ): LaneGroupGraph {
-  // Lanes ordered by first activity (oldest claim leftmost), claimKey as the
-  // deterministic tiebreak — the same input always yields the same layout.
+  // Rails ordered by first activity (oldest claim on the top rail), claimKey
+  // as the deterministic tiebreak — same input, same layout, always.
   const laneClaims = [...group.claims].sort((left, right) => {
     const leftTs = left.history[0]?.ts ?? ''
     const rightTs = right.history[0]?.ts ?? ''
@@ -182,30 +195,20 @@ function buildGroup(
     left.entry.ts.localeCompare(right.entry.ts) || left.entry.sourceEventId.localeCompare(right.entry.sourceEventId),
   )
 
-  const headers: LaneHeader[] = laneClaims.map((claim, index) => Object.freeze({
-    claimKey: claim.claimKey,
-    label: claim.claimLabel,
-    status: claim.status,
-    supports: claim.supportsCount,
-    contradicts: claim.contradictsCount,
-    conflict: claim.hasConflict,
-    hue: index % LANE_HUES,
-  }))
-
-  // Pass 1: dots (row order = global chronological order across lanes).
+  // Pass 1: nodes (columns = global chronological order across rails).
   const dots: LaneDot[] = []
-  const rowByDotId = new Map<string, { readonly lane: number; readonly row: number }>()
+  const nodeByDotId = new Map<string, { readonly lane: number; readonly col: number }>()
   let previousDate = ''
-  items.forEach((item, row) => {
+  items.forEach((item, col) => {
     const kind: LaneDotKind = item.entry.rel === RETRACT_REL ? 'retract' : 'edge'
     const dateLabel = item.entry.ts.slice(0, 10)
     const dot: LaneDot = Object.freeze({
       id: item.entry.sourceEventId,
       lane: item.lane,
-      row,
+      col,
       rel: item.entry.rel,
       kind,
-      shape: shapeOf(kind, item.entry.retracted),
+      shape: shapeOf(kind, item.entry.rel, item.entry.retracted),
       retracted: item.entry.retracted || kind === 'retract',
       relClass: relClassOf(kind, item.entry.rel),
       conflict: conflictEdgeIds.has(item.entry.sourceEventId),
@@ -219,63 +222,78 @@ function buildGroup(
     })
     previousDate = dateLabel
     dots.push(dot)
-    rowByDotId.set(dot.id, { lane: dot.lane, row: dot.row })
+    nodeByDotId.set(dot.id, { lane: dot.lane, col: dot.col })
   })
 
-  // Pass 2: wires. Cross — the declared edge's src is another claim lane in
-  // this group (evidence flowing in). Retract — the retracted edge's earliest
-  // declaration dot is in this group (the loop back; when the declaration
-  // lives in another group the wire is omitted, the flat list still tells it).
+  // Pass 2: wires. Cross — the declared edge's src is another claim rail in
+  // this group (evidence flowing in, drawn at the event's own time column).
+  // Retract — the retracted edge's earliest declaration node is in this
+  // group (the dashed loop back; otherwise the flat list still tells it).
   const wires: LaneWire[] = []
   for (const dot of dots) {
     if (dot.kind === 'edge') {
       const edge = edgeBySourceEvent.get(dot.id)
       const srcLane = edge === undefined ? undefined : laneByClaimKey.get(edge.src)
       if (srcLane !== undefined && srcLane !== dot.lane) {
-        wires.push(Object.freeze({ kind: 'cross', fromLane: srcLane, toLane: dot.lane, fromRow: dot.row, toRow: dot.row }))
+        wires.push(Object.freeze({ kind: 'cross', fromLane: srcLane, toLane: dot.lane, fromCol: dot.col, toCol: dot.col }))
       }
     } else {
       const edge = edgeByRetractEvent.get(dot.id)
-      const origin = edge === undefined ? undefined : rowByDotId.get(edge.id)
+      const origin = edge === undefined ? undefined : nodeByDotId.get(edge.id)
       if (origin !== undefined) {
         wires.push(Object.freeze({
           kind: 'retract',
           fromLane: origin.lane,
           toLane: dot.lane,
-          fromRow: origin.row,
-          toRow: dot.row,
+          fromCol: origin.col,
+          toCol: dot.col,
         }))
       }
     }
   }
   wires.sort((left, right) =>
-    left.fromRow - right.fromRow || left.toRow - right.toRow
+    left.fromCol - right.fromCol || left.toCol - right.toCol
       || left.fromLane - right.fromLane || left.kind.localeCompare(right.kind),
   )
 
-  // Spans: each lane's spine runs from its first to its last dot.
-  const spanByLane = new Map<number, { firstRow: number; lastRow: number }>()
+  // Rail extents: each rail runs from its first to its last node column.
+  const spanByLane = new Map<number, { firstCol: number; lastCol: number }>()
   for (const dot of dots) {
     const span = spanByLane.get(dot.lane)
     if (span === undefined) {
-      spanByLane.set(dot.lane, { firstRow: dot.row, lastRow: dot.row })
-    } else if (dot.row > span.lastRow) {
-      span.lastRow = dot.row
+      spanByLane.set(dot.lane, { firstCol: dot.col, lastCol: dot.col })
+    } else if (dot.col > span.lastCol) {
+      span.lastCol = dot.col
     }
   }
   const spans: LaneSpan[] = [...spanByLane.entries()]
-    .map(([lane, span]) => Object.freeze({ lane, firstRow: span.firstRow, lastRow: span.lastRow }))
+    .map(([lane, span]) => Object.freeze({ lane, firstCol: span.firstCol, lastCol: span.lastCol }))
     .sort((left, right) => left.lane - right.lane)
+
+  const headers: LaneHeader[] = laneClaims.map((claim, index) => {
+    const lane = index
+    const span = spans.find(span => span.lane === lane)
+    return Object.freeze({
+      claimKey: claim.claimKey,
+      label: claim.claimLabel,
+      status: claim.status,
+      supports: claim.supportsCount,
+      contradicts: claim.contradictsCount,
+      conflict: claim.hasConflict,
+      hue: index % LANE_HUES,
+      lastCol: span?.lastCol ?? 0,
+    })
+  })
 
   return Object.freeze({
     key: group.key,
     kind: group.kind,
     label: group.label,
     laneCount: laneClaims.length,
+    colCount: dots.length,
     headers: Object.freeze(headers),
     dots: Object.freeze(dots),
     wires: Object.freeze(wires),
     spans: Object.freeze(spans),
-    rowCount: dots.length,
   })
 }

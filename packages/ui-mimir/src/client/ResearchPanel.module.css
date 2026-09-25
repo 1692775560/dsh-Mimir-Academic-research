@@ -5937,9 +5937,9 @@ li.dropIndicator {
   text-decoration: underline;
 }
 
-/* ===== Evidence lane graph (git-worktree-style view of a claim timeline).
-   Structure color lives on the lane spines/chips; dot fill encodes the
-   relation; actor identity rides the badge hue. ===== */
+/* ===== Evidence workflow diagram (v3): the git-workflow rendering. The
+   diagram is one self-contained SVG; the view only frames it and styles the
+   progressive-disclosure detail card. ===== */
 
 .viewSwitch {
   display: inline-flex;
@@ -5968,148 +5968,34 @@ li.dropIndicator {
   font-weight: 500;
 }
 
-.laneLegend {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px;
-  margin: 8px 0 4px;
-}
-
-.laneLegend .laneChip {
-  padding: 3px 10px 3px 6px;
-  border-radius: 999px;
-  background: var(--dsw-alias-markdown-code-block, #f1f3f5);
-}
-
-.laneChip {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  max-width: 100%;
-  font-size: 12px;
-  color: var(--dsw-alias-label-secondary, #3c4557);
-}
-
-.laneChipDot {
-  flex: none;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--lane-c, #4176e6);
-}
-
-.laneChipLabel {
-  overflow: hidden;
-  max-width: 340px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .laneGraph {
-  position: relative;
   margin-top: 4px;
   overflow-x: auto;
   overflow-y: hidden;
 }
 
-.laneWires {
-  position: absolute;
-  top: 0;
-  left: 0;
-  pointer-events: none;
+.laneSvg {
+  display: block;
 }
 
-.laneRow {
-  position: absolute;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  width: max(100%, 480px);
-  height: 28px;
-  white-space: nowrap;
-}
-
-.laneDay {
-  flex: none;
-  padding: 1px 8px;
-  border-radius: 999px;
-  background: var(--dsw-alias-markdown-code-block, #f1f3f5);
-  color: var(--dsw-alias-label-tertiary, #5b6474);
-  font-size: 11px;
-}
-
-.laneDot {
-  flex: none;
-  position: absolute;
-  width: 28px;
-  height: 28px;
-  padding: 0;
-  border: none;
-  background: transparent;
+.laneNode {
   cursor: pointer;
 }
 
-.laneDot::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  margin: auto;
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: var(--rel-c, #5b6474);
-  transition: transform 0.12s ease;
-}
-
-.laneDot[data-rel='supports'] { --rel-c: #4176e6; }
-.laneDot[data-rel='contradicts'] { --rel-c: #d93026; }
-.laneDot[data-rel='retract'] { --rel-c: #8a919e; }
-.laneDot[data-rel='neutral'] { --rel-c: #5b6474; }
-
-.laneDot[data-shape='hollow']::before {
-  background: var(--dsw-specific-menu, #fff);
-  border: 2px solid var(--rel-c, #5b6474);
-}
-
-.laneDot[data-shape='diamond']::before {
-  border-radius: 2px;
-  transform: rotate(45deg);
-}
-
-.laneDot[data-conflict]::before {
-  box-shadow: 0 0 0 2px rgb(217 48 38 / 55%);
-}
-
-.laneDot:hover::before {
-  transform: scale(1.35);
-}
-
-.laneDot[data-shape='diamond']:hover::before {
-  transform: rotate(45deg) scale(1.25);
-}
-
-.laneDot:focus-visible {
+.laneNode:focus-visible {
   outline: 2px solid var(--dsw-alias-state-business-primary, #4176e6);
-  border-radius: 8px;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.laneAxisText {
+  font-variant-numeric: tabular-nums;
 }
 
 .laneTime {
   flex: none;
+  margin-left: 8px;
   color: var(--dsw-alias-label-tertiary, #5b6474);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-}
-
-.laneNote {
-  overflow: hidden;
-  max-width: 420px;
-  text-overflow: ellipsis;
-  color: var(--dsw-alias-label-secondary, #3c4557);
-  font-size: 12px;
-}
-
-.laneNote[data-struck] {
-  color: var(--dsw-alias-label-tertiary, #5b6474);
-  text-decoration: line-through;
 }
