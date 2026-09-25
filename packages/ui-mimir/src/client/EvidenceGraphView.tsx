@@ -200,8 +200,8 @@ function LaneWires({ layout }: { readonly layout: LaneGroupGraph }) {
             d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`}
             fill="none"
             stroke={LANE_PALETTE[wire.fromLane % LANE_PALETTE.length]}
-            strokeWidth={1.5}
-            opacity={0.8}
+            strokeWidth={2}
+            opacity={0.9}
           />
         )
       })}
@@ -240,12 +240,17 @@ function LaneGroupBlock({ layout, onJump, t }: {
           </span>
         ))}
       </div>
-      <div className={css.laneGraph}>
+      <div className={css.laneGraph} style={{ height: Math.max(layout.rowCount * ROW_H, ROW_H) }}>
         <LaneWires layout={layout} />
+        {/* Dots live directly on the lane grid (not inside the rows), so
+            their lane-x coordinate is the single source of alignment with
+            the spines and wires behind them. */}
         {layout.dots.map(dot => (
-          <div key={dot.id} className={css.laneRow} style={{ top: dot.row * ROW_H, left: layout.laneCount * LANE_W + 16 }}>
+          <LaneDotButton key={dot.id} dot={dot} onJump={onJump} />
+        ))}
+        {layout.dots.map(dot => (
+          <div key={`row-${dot.id}`} className={css.laneRow} style={{ top: dot.row * ROW_H, left: layout.laneCount * LANE_W + 16 }}>
             {dot.dateFirst && <span className={css.laneDay}>{dot.dateLabel}</span>}
-            <LaneDotButton dot={dot} onJump={onJump} />
             <span className={css.laneTime}>{dot.timeLabel}</span>
             <span className={css.tagPill} data-active={!dot.retracted || undefined} data-struck={dot.retracted || undefined}>
               {t(evidenceRelKey(dot.rel))}
@@ -445,6 +450,9 @@ export function EvidenceGraphView({
               <ul className={css.ledgerList}>
                 {view.graph.conflicts.map(conflict => (
                   <li key={conflict.nodeKey} className={css.ledgerRow}>
+                    {/* The row grid expects the time cell first; conflicts
+                        span a window, so theirs stays blank. */}
+                    <span aria-hidden />
                     <span className={css.ledgerNode} aria-hidden />
                     <div className={css.ledgerBody}>
                       <div className={css.ledgerLine}>

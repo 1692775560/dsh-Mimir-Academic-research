@@ -5970,9 +5970,16 @@ li.dropIndicator {
 
 .laneLegend {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
   margin: 8px 0 4px;
+}
+
+.laneLegend .laneChip {
+  padding: 3px 10px 3px 6px;
+  border-radius: 999px;
+  background: var(--dsw-alias-markdown-code-block, #f1f3f5);
 }
 
 .laneChip {
@@ -6034,7 +6041,7 @@ li.dropIndicator {
 
 .laneDot {
   flex: none;
-  position: relative;
+  position: absolute;
   width: 28px;
   height: 28px;
   padding: 0;
