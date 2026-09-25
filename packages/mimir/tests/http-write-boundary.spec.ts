@@ -1,3 +1,4 @@
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { isSameOriginWrite, isTrustedRead, projectPaperDir } from '../src/http-write-boundary.ts'
 
@@ -40,8 +41,10 @@ describe('isTrustedRead (#210)', () => {
 
 describe('projectPaperDir', () => {
   it('uses the project directory and never accepts a request-selected override', () => {
-    expect(projectPaperDir('/research', 'projects/p1')).toBe('/research/projects/p1')
-    expect(projectPaperDir('/research', undefined)).toBe('/research/paper')
+    // Expected values go through resolve() so the assertion holds on both
+    // POSIX and Windows (where resolve('/research', …) gains the drive).
+    expect(projectPaperDir('/research', 'projects/p1')).toBe(resolve('/research', 'projects/p1'))
+    expect(projectPaperDir('/research', undefined)).toBe(resolve('/research', 'paper'))
   })
 
   it('rejects invalid project paper directories', () => {

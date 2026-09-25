@@ -14,6 +14,7 @@ import { Context } from '@deepseek-ai/cordis'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
+import { canCreateSymlink } from './helpers/symlink-capability.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
 import { buildDeckModel, meetingDeckPath, DECK_MAX_PAPERS, localToday } from '../src/services/meeting.ts'
@@ -249,12 +250,15 @@ describe('generateMeetingDeck', () => {
     expect(lexical).toMatchObject({ ok: false, error: { code: 'invalid-dir', dir: '../outside' } })
 
     // Symlink escape: workspace/paper is a symlink to a directory outside
-    // the workspace — lexically fine, realpath-confined invalid.
-    const outside = await mkdtemp(join(tmpdir(), 'mimir-meeting-outside-'))
-    await symlink(outside, join(workspaceDir, 'paper'), 'dir')
-    await domain.table('projects').put(PROJECT.id, PROJECT)
-    const linked = await service.generateMeetingDeck({ projectId: 'p1', aiIllustrations: true })
-    expect(linked).toMatchObject({ ok: false, error: { code: 'invalid-dir' } })
+    // the workspace — lexically fine, realpath-confined invalid. Needs real
+    // symlinks (Windows without Developer Mode cannot create them).
+    if (canCreateSymlink()) {
+      const outside = await mkdtemp(join(tmpdir(), 'mimir-meeting-outside-'))
+      await symlink(outside, join(workspaceDir, 'paper'), 'dir')
+      await domain.table('projects').put(PROJECT.id, PROJECT)
+      const linked = await service.generateMeetingDeck({ projectId: 'p1', aiIllustrations: true })
+      expect(linked).toMatchObject({ ok: false, error: { code: 'invalid-dir' } })
+    }
   })
 
   it('renders a real pptx from the wiki and lists it afterwards', async () => {

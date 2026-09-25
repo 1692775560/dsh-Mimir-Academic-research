@@ -36,7 +36,11 @@ describe('sxng config', () => {
     const raw = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
     expect(raw.custom).toBe('keep')
     expect(raw.ollamaApiKey).toBe('ollama-abcdefgh1234')
-    expect((await stat(path)).mode & 0o777).toBe(0o600)
+    // POSIX honors the 0o600 write mode; Windows maps it to ACLs and stat
+    // always reports 0o666, so the permission assertion is POSIX-only.
+    if (process.platform !== 'win32') {
+      expect((await stat(path)).mode & 0o777).toBe(0o600)
+    }
 
     await setSxngConfig({ defaultLimit: 5 })
     expect((await readSxngConfig()).ollamaApiKey).toBe('ollama-abcdefgh1234')
