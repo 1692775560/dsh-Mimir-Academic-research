@@ -11,7 +11,8 @@
  * @module dsh-client-ui-mimir/client/EvidenceGraphView
  */
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
+import type { CSSProperties } from 'react'
 import type {
   EvidenceClaimHistory,
   EvidenceGraphEdge,
@@ -27,7 +28,19 @@ import {
   retractConfirmOf,
   type EvidenceRetractConfirm,
 } from './evidence-graph-view.ts'
+import {
+  buildLaneGroups,
+  type LaneDot,
+  type LaneGroupGraph,
+} from './evidence-lane-graph.ts'
 import css from './ResearchPanel.module.css'
+
+/** Horizontal distance between two claim lanes (px). */
+const LANE_W = 26
+/** Vertical distance between two dots (px) — also the click-target height. */
+const ROW_H = 28
+/** Structure palette: lane spines/chips cycle these by lane index. */
+const LANE_PALETTE = ['#4176e6', '#1a9e63', '#b06000', '#8250df', '#d93026', '#0e7490']
 
 /** One entry row of a claim's history: time, spine, rel pill, note. */
 function HistoryRow({ entry, onJump, t }: {
@@ -112,6 +125,139 @@ function TimelineGroupBlock({ group, onJump, t }: {
       {group.claims.map(claim => (
         <ClaimBlock key={claim.claimKey} claim={claim} onJump={onJump} t={t} />
       ))}
+    </section>
+  )
+}
+
+const laneX = (lane: number): number => lane * LANE_W + LANE_W / 2 + 4
+const rowY = (row: number): number => row * ROW_H + ROW_H / 2
+
+/** One lane dot: a real button (focusable, provenance jump on click). */
+function LaneDotButton({ dot, onJump }: {
+  readonly dot: LaneDot
+  readonly onJump: (ts: string) => void
+}) {
+  const label = `${dot.dateLabel} ${dot.timeLabel} · ${dot.rel}${dot.note !== null ? ` · ${dot.note}` : ''}`
+  return (
+    <button
+      type="button"
+      className={css.laneDot}
+      data-shape={dot.shape}
+      data-rel={dot.relClass}
+      data-conflict={dot.conflict || undefined}
+      style={{
+        left: laneX(dot.lane) - 14,
+        top: dot.row * ROW_H,
+        '--lane-c': LANE_PALETTE[dot.lane % LANE_PALETTE.length],
+      } as CSSProperties}
+      title={label}
+      aria-label={label}
+      onClick={() => { onJump(dot.ts) }}
+    />
+  )
+}
+
+/** The wires + spines layer: one SVG behind the dot rows. */
+function LaneWires({ layout }: { readonly layout: LaneGroupGraph }) {
+  const width = layout.laneCount * LANE_W + 8
+  const height = Math.max(layout.rowCount * ROW_H, ROW_H)
+  return (
+    <svg className={css.laneWires} width={width} height={height} aria-hidden>
+      {layout.spans.map(span => (
+        <line
+          key={`spine-${span.lane}`}
+          x1={laneX(span.lane)} x2={laneX(span.lane)}
+          y1={rowY(span.firstRow)} y2={rowY(span.lastRow)}
+          stroke={LANE_PALETTE[span.lane % LANE_PALETTE.length]}
+          strokeWidth={2}
+          strokeLinecap="round"
+          opacity={0.45}
+        />
+      ))}
+      {layout.wires.map(wire => {
+        const x1 = laneX(wire.fromLane)
+        const x2 = laneX(wire.toLane)
+        const y1 = rowY(wire.fromRow)
+        const y2 = rowY(wire.toRow)
+        if (wire.kind === 'retract') {
+          // A right-side loop back onto the lane: reads like a revert bump.
+          const bulge = Math.max(x1 + 14, x2 + 14)
+          return (
+            <path
+              key={`retract-${wire.fromRow}-${wire.toRow}`}
+              d={`M ${x1} ${y1} C ${bulge} ${y1}, ${bulge} ${y2}, ${x2} ${y2}`}
+              fill="none"
+              stroke="#8a919e"
+              strokeWidth={1.5}
+              strokeDasharray="3 2"
+            />
+          )
+        }
+        const mid = (x1 + x2) / 2
+        return (
+          <path
+            key={`cross-${wire.fromLane}-${wire.toLane}-${wire.fromRow}`}
+            d={`M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`}
+            fill="none"
+            stroke={LANE_PALETTE[wire.fromLane % LANE_PALETTE.length]}
+            strokeWidth={1.5}
+            opacity={0.8}
+          />
+        )
+      })}
+    </svg>
+  )
+}
+
+/** The graph rendering of one timeline group: lane chips + the dot grid. */
+function LaneGroupBlock({ layout, onJump, t }: {
+  readonly layout: LaneGroupGraph
+  readonly onJump: (ts: string) => void
+  readonly t: ResearchT
+}) {
+  return (
+    <section>
+      <h4 className={css.reportCardTitle}>
+        <span className={css.tagPill} data-active={layout.kind === 'idea' || undefined}>
+          {t(layout.kind === 'idea' ? 'evidence.kind.idea' : 'evidence.kind.project')}
+        </span>
+        {layout.label ?? layout.key}
+      </h4>
+      <div className={css.laneLegend}>
+        {layout.headers.map(header => (
+          <span key={header.claimKey} className={css.laneChip}>
+            <span
+              className={css.laneChipDot}
+              style={{ '--lane-c': LANE_PALETTE[header.hue % LANE_PALETTE.length] } as CSSProperties}
+              aria-hidden
+            />
+            <span className={css.laneChipLabel}>{header.label}</span>
+            {header.status !== null && <span className={css.actorBadge}>{t('evidence.claim.status', { status: header.status })}</span>}
+            <span className={css.actorBadge}>
+              {t('evidence.claim.counts', { supports: header.supports, contradicts: header.contradicts })}
+            </span>
+            {header.conflict && <span className={css.ledgerMark}>{t('evidence.conflict')}</span>}
+          </span>
+        ))}
+      </div>
+      <div className={css.laneGraph}>
+        <LaneWires layout={layout} />
+        {layout.dots.map(dot => (
+          <div key={dot.id} className={css.laneRow} style={{ top: dot.row * ROW_H, left: layout.laneCount * LANE_W + 16 }}>
+            {dot.dateFirst && <span className={css.laneDay}>{dot.dateLabel}</span>}
+            <LaneDotButton dot={dot} onJump={onJump} />
+            <span className={css.laneTime}>{dot.timeLabel}</span>
+            <span className={css.tagPill} data-active={!dot.retracted || undefined} data-struck={dot.retracted || undefined}>
+              {t(evidenceRelKey(dot.rel))}
+            </span>
+            <span className={css.actorBadge} data-hue={dot.actorHue}>{dot.actorLabel}</span>
+            {dot.note !== null && (
+              <span className={css.laneNote} data-struck={dot.retracted || undefined}>{dot.note}</span>
+            )}
+          </div>
+        ))}
+        {layout.rowCount === 0 && <p className={css.hint}>{t('evidence.empty')}</p>}
+      </div>
     </section>
   )
 }
@@ -204,7 +350,14 @@ export function EvidenceGraphView({
   // The pending retraction confirmation (null while the card just reads).
   const [confirming, setConfirming] = useState<EvidenceRetractConfirm | null>(null)
   const [reason, setReason] = useState('')
+  // The timeline's two renderings: the lane graph (structure at a glance)
+  // and the v1 list (full affordances, screen-reader friendly).
+  const [layout, setLayout] = useState<'graph' | 'list'>('graph')
   const view = evidence.view
+  const laneGroups = useMemo(
+    () => (view === null ? [] : buildLaneGroups(view.graph.timeline, view.graph.edges, view.graph.conflicts)),
+    [view],
+  )
 
   const onConfirmRetract = async (): Promise<void> => {
     if (confirming === null) return
@@ -218,6 +371,26 @@ export function EvidenceGraphView({
       <div className={css.reportCardHead}>
         <h3 className={css.reportCardTitle}>{t('evidence.title')}</h3>
         <div className={css.viewActions}>
+          <span className={css.viewSwitch} role="tablist" aria-label={t('evidence.title')}>
+            <button
+              type="button"
+              className={css.viewSwitchBtn}
+              data-active={layout === 'graph' || undefined}
+              aria-pressed={layout === 'graph'}
+              onClick={() => { setLayout('graph') }}
+            >
+              {t('evidence.view.graph')}
+            </button>
+            <button
+              type="button"
+              className={css.viewSwitchBtn}
+              data-active={layout === 'list' || undefined}
+              aria-pressed={layout === 'list'}
+              onClick={() => { setLayout('list') }}
+            >
+              {t('evidence.view.list')}
+            </button>
+          </span>
           <button
             type="button"
             className={css.btn}
@@ -243,17 +416,26 @@ export function EvidenceGraphView({
         <>
           <StatsLine stats={view.graph.stats} t={t} />
 
+          {layout === 'graph' && view.graph.timeline.length > 0 && (
+            <p className={css.hint}>{t('evidence.graph.legend')}</p>
+          )}
+
           {view.graph.timeline.length === 0 && <p className={css.hint}>{t('evidence.empty')}</p>}
 
-          {/* The main view: research lines, claims, full inline history. */}
-          {view.graph.timeline.map(group => (
-            <TimelineGroupBlock
-              key={group.key}
-              group={group}
-              onJump={jumpToProvenance}
-              t={t}
-            />
-          ))}
+          {/* The main view: lane graph (structure at a glance) or the v1
+              list (full inline history + affordances). */}
+          {layout === 'graph'
+            ? laneGroups.map(group => (
+              <LaneGroupBlock key={group.key} layout={group} onJump={jumpToProvenance} t={t} />
+            ))
+            : view.graph.timeline.map(group => (
+              <TimelineGroupBlock
+                key={group.key}
+                group={group}
+                onJump={jumpToProvenance}
+                t={t}
+              />
+            ))}
 
           {/* Conflict pairs (active口径 only): the claim where the record
               itself disagrees, with both sides' retract affordances. */}
