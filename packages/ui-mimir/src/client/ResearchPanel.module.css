@@ -536,7 +536,7 @@
   align-items: center;
   justify-content: flex-end;
   margin: 0 12px 10px;
-  height: 26px;
+  height: 28px;
   border: none;
   border-radius: 8px;
   background: transparent;
@@ -627,10 +627,10 @@
 }
 
 .retry {
-  height: 26px;
+  height: 28px;
   padding: 0 12px;
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
-  border-radius: 13px;
+  border-radius: 14px;
   background: var(--dsw-specific-menu, #fff);
   color: var(--dsw-alias-label-secondary, #3c4557);
   font-size: 12px;
@@ -2203,6 +2203,7 @@ li.dropIndicator {
   display: inline-flex;
   align-items: center;
   gap: 4px;
+  min-height: 28px;
   padding: 2px 10px;
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
   border-radius: 999px;
@@ -2238,7 +2239,12 @@ li.dropIndicator {
 }
 
 .tagRemove {
-  padding: 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: none;
   background: transparent;
   color: var(--dsw-alias-label-tertiary, #5b6474);
@@ -2522,6 +2528,9 @@ li.dropIndicator {
 }
 
 .metricsToggle {
+  display: inline-flex;
+  align-items: center;
+  min-height: 28px;
   padding: 2px 12px;
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
   border-radius: 999px;
@@ -2775,7 +2784,7 @@ li.dropIndicator {
 }
 
 .figureAction {
-  height: 24px;
+  height: 28px;
   padding: 0 10px;
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
   border-radius: 8px;
@@ -5868,7 +5877,12 @@ li.dropIndicator {
 
 .venueWatch {
   flex: none;
-  padding: 0 2px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
   border: none;
   background: transparent;
   color: var(--dsw-alias-label-tertiary, #5b6474);

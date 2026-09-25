@@ -12,7 +12,7 @@ import type { EventRecord, LedgerActorKind, ResearchEventFilter, ResearchProgres
 export type LedgerWindow = '7d' | '30d' | '90d' | 'all'
 
 /** The time windows in the control row's order. */
-export const LEDGER_WINDOWS: readonly LedgerWindow[] = ['7d', '30d', '90d', 'all']
+export const LEDGER_WINDOWS: readonly LedgerWindow[] = Object.freeze(['7d', '30d', '90d', 'all'])
 
 /** The ledger view's event cap (the list's newest-first window). */
 export const LEDGER_LIST_LIMIT = 200

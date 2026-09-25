@@ -37,7 +37,7 @@ export const STAGE_KEYS: Record<ProjectStage, ResearchKey> = {
 }
 
 /** Pipeline stages in order (the overview progress bar). */
-export const STAGES: readonly ProjectStage[] = ['idea', 'plan', 'experiment', 'writing', 'done']
+export const STAGES: readonly ProjectStage[] = Object.freeze(['idea', 'plan', 'experiment', 'writing', 'done'])
 
 /**
  * Locale key of one host failure code. Codes absent here carry a

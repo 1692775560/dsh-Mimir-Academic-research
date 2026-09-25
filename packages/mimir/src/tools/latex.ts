@@ -258,7 +258,7 @@ function runEngine(
 export async function compileLatex(projectDir: string, options: LatexToolOptions, signal: AbortSignal): Promise<LatexCompileResult> {
   const stats = await stat(projectDir).catch(() => undefined)
   if (stats === undefined || !stats.isDirectory()) {
-    throw new Error(`latex_compile: '${projectDir}' is not an existing directory containing main.tex`)
+    throw new Error('latex_compile: project_dir is not an existing directory containing main.tex')
   }
   const engine = await resolveLatexEngine(options.engine, options.probe)
   const { ok, log } = await runEngine(engine, projectDir, options.timeoutMs, signal)

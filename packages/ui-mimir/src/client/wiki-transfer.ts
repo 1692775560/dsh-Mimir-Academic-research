@@ -10,9 +10,9 @@
 import type { ResearchWikiTableName } from 'dsh-mimir/types'
 
 /** The six wiki tables, in display order (kept in sync with the Host's list). */
-export const WIKI_TABLE_LABELS: readonly ResearchWikiTableName[] = [
+export const WIKI_TABLE_LABELS: readonly ResearchWikiTableName[] = Object.freeze([
   'papers', 'ideas', 'claims', 'projects', 'experiments', 'servers',
-]
+])
 
 /** The export download's filename: `mimir-wiki-YYYYMMDD.json` (UTC date). */
 export function wikiExportFilename(date: Date): string {

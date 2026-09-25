@@ -8,8 +8,9 @@
  * @module dsh-mimir/src/services/venue
  */
 
-import { readdir, mkdir, writeFile } from 'node:fs/promises'
+import { readdir, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
+import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { resolvePaperDir } from '../paper-source.ts'
 import type {
   ResearchApplyVenueResult,
@@ -115,7 +116,9 @@ export async function applyVenueTemplate(
 
   const localFiles = await templateFilesOf(templateDir)
   await mkdir(templateDir, { recursive: true })
-  await writeFile(join(templateDir, TEMPLATE_BRIEF_NAME), templateBriefOf(heading, url, checklist, localFiles))
+  // Atomic like every other write path: a crash mid-write must not leave a
+  // truncated brief behind for the next apply to trip over.
+  await writeFileAtomic(join(templateDir, TEMPLATE_BRIEF_NAME), templateBriefOf(heading, url, checklist, localFiles), { mode: 0o644 })
 
   const venue: VenueView = Object.freeze({
     id: venueId,

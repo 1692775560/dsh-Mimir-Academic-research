@@ -188,12 +188,20 @@ export async function extractPaperFigures(
       'python', script, 'extract', '--pdf', pdf, '--workdir', scratch, '--pdftoppm', shim,
     ], EXTRACT_TIMEOUT_MS, deps.signal)
 
-    const manifest = JSON.parse(await readFile(join(scratch, 'manifest.json'), 'utf8')) as {
-      figures?: ExtractManifestFigure[]
-    }
-    const figures = (manifest.figures ?? [])
-      .filter(entry => typeof entry.image_path === 'string' && entry.image_path !== '')
-      .sort((left, right) => (left.order ?? 0) - (right.order ?? 0))
+    // Boundary narrowing: the script's manifest is external data — a
+    // malformed one (figures not an array, entries not objects) degrades to
+    // "no figures" instead of a TypeError mid-deck (clean on load, strict on write).
+    const parsedManifest: unknown = JSON.parse(await readFile(join(scratch, 'manifest.json'), 'utf8'))
+    const rawFigures = parsedManifest !== null && typeof parsedManifest === 'object'
+      && Array.isArray((parsedManifest as { figures?: unknown }).figures)
+      ? (parsedManifest as { figures: unknown[] }).figures
+      : []
+    const figures = rawFigures
+      .filter((entry): entry is ExtractManifestFigure =>
+        entry !== null && typeof entry === 'object'
+        && typeof (entry as { image_path?: unknown }).image_path === 'string'
+        && (entry as { image_path?: unknown }).image_path !== '')
+      .sort((left, right) => (typeof left.order === 'number' ? left.order : 0) - (typeof right.order === 'number' ? right.order : 0))
       .slice(0, DECK_MAX_PAPER_FIGURES)
     if (figures.length === 0) return []
 

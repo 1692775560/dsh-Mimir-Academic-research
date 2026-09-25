@@ -1,4 +1,9 @@
-/** `research` namespace dictionaries. */
+/**
+ * `research` namespace dictionaries: the zh dictionary is the key-set source
+ * of truth and en must mirror it key for key (`locales.spec.ts` enforces the
+ * alignment). Views and toasts consume keys, never strings.
+ * @module dsh-client-ui-mimir/src/client/locales
+ */
 
 /** Simplified Chinese dictionary (the key-set source of truth). */
 export const zh = {

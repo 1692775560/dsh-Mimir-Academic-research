@@ -1533,6 +1533,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     })
     try {
       const carried = await this.remote.getWorktree()
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+      if (this.disposed) return
       if (!carried.ok) {
         const failure = failureOf(carried.error.code, carried.error.message)
         this.publish({ worktree: Object.freeze({ status: 'error', view: null, failure }) })
@@ -1548,6 +1550,7 @@ export class ResearchController implements HostObservable<ResearchView> {
         worktree: Object.freeze({ status: 'ready', view: result.value.worktree, failure: null }),
       })
     } catch (error) {
+      if (this.disposed) return
       const failure = transportFailure(error)
       this.publish({ worktree: Object.freeze({ status: 'error', view: null, failure }) })
     }
@@ -1563,6 +1566,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     })
     try {
       const carried = await this.remote.getForaging()
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+      if (this.disposed) return
       if (!carried.ok) {
         const failure = failureOf(carried.error.code, carried.error.message)
         this.publish({ foraging: Object.freeze({ status: 'error', view: null, failure }) })
@@ -1578,6 +1583,7 @@ export class ResearchController implements HostObservable<ResearchView> {
         foraging: Object.freeze({ status: 'ready', view: result.value.foraging, failure: null }),
       })
     } catch (error) {
+      if (this.disposed) return
       const failure = transportFailure(error)
       this.publish({ foraging: Object.freeze({ status: 'error', view: null, failure }) })
     }
@@ -1600,6 +1606,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     })
     try {
       const carried = await this.remote.getMomentIndex({})
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+      if (this.disposed) return
       if (!carried.ok) {
         const failure = failureOf(carried.error.code, carried.error.message)
         this.publish({ moments: Object.freeze({ status: 'error', view: null, failure }) })
@@ -1615,6 +1623,7 @@ export class ResearchController implements HostObservable<ResearchView> {
         moments: Object.freeze({ status: 'ready', view: result.value, failure: null }),
       })
     } catch (error) {
+      if (this.disposed) return
       const failure = transportFailure(error)
       this.publish({ moments: Object.freeze({ status: 'error', view: null, failure }) })
     }
@@ -1641,6 +1650,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     })
     try {
       const carried = await this.remote.getEurekaView()
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+      if (this.disposed) return
       if (!carried.ok) {
         const failure = failureOf(carried.error.code, carried.error.message)
         this.publish({ eureka: Object.freeze({ status: 'error', view: null, failure }) })
@@ -1656,6 +1667,7 @@ export class ResearchController implements HostObservable<ResearchView> {
         eureka: Object.freeze({ status: 'ready', view: result.value, failure: null }),
       })
     } catch (error) {
+      if (this.disposed) return
       const failure = transportFailure(error)
       this.publish({ eureka: Object.freeze({ status: 'error', view: null, failure }) })
     }
