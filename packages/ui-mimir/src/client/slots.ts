@@ -24,6 +24,7 @@ import type {
   ResearchProjectView, ResearchWikiSnapshot, SectionMove, SectionOutlineTitles, ServerInput, SubsectionMove,
 } from 'dsh-mimir/types'
 import type { ResearchFailureView, ResearchImportCounts, ResearchView } from './controller.ts'
+import type { EvidenceGraphRequest } from './evidence-graph-view.ts'
 import type { ResearchSessionListView } from './project-form.ts'
 import type { MetricChartRow } from './view-common.ts'
 import type { WorkbenchChrome } from './shortcuts.ts'
@@ -658,6 +659,11 @@ export interface ResearchPanelInjected {
    */
   declineMoment: (targetEventId: string) => Promise<ResearchFailureView | null>
   /**
+   * Load the researcher-declared Eureka records once, on the ledger view's
+   * first open — the Evidence Graph renders them as markers (§79).
+   */
+  ensureEureka: () => void
+  /**
    * Load the digest (B–F) once, on the ledger view's first open (active push).
    */
   ensureDigest: () => void
@@ -686,10 +692,11 @@ export interface ResearchPanelInjected {
    */
   pinMoment: (targetEventId: string, note?: string | undefined) => Promise<ResearchFailureView | null>
   /**
-   * Load the evidence graph (v1) once, on the ledger view's first open: the
-   * claim-grouped evidence history, the conflicts, and the flat edge list.
+   * Load the evidence graph (v1) for one ledger window request — the
+   * claim-grouped evidence history, the conflicts, and the flat edge list,
+   * following the ledger's authoritative window/project scope.
    */
-  ensureEvidenceGraph: () => void
+  loadEvidenceGraph: (request: EvidenceGraphRequest) => void
   /**
    * Re-fetch the evidence graph (the card's refresh button, or after a write).
    */

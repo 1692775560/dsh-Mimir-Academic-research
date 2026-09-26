@@ -18,6 +18,7 @@ import {
   reportFileName,
   reportWindowOptions,
 } from '../src/client/ledger-view.ts'
+import { evidenceGraphRequestOf } from '../src/client/evidence-graph-view.ts'
 
 /** A fixed wall clock: 2026-08-24T12:00:00Z. */
 const NOW = Date.UTC(2026, 7, 24, 12, 0, 0)
@@ -120,5 +121,31 @@ describe('window and actor tables', () => {
     expect(LEDGER_WINDOWS).toEqual(['7d', '30d', '90d', 'all'])
     expect(Object.keys(ACTOR_KEYS)).toEqual(['user', 'agent', 'subagent', 'module', 'system'])
     for (const key of Object.values(ACTOR_KEYS)) expect(key).toMatch(/^ledger\.actor\./)
+  })
+})
+
+describe('evidenceGraphRequestOf', () => {
+  it('bounds the recent windows with since = now − days and until = now', () => {
+    expect(evidenceGraphRequestOf('7d', null, NOW)).toEqual({
+      since: new Date(NOW - 7 * 86_400_000).toISOString(),
+      until: new Date(NOW).toISOString(),
+    })
+    expect(evidenceGraphRequestOf('90d', null, NOW)).toEqual({
+      since: new Date(NOW - 90 * 86_400_000).toISOString(),
+      until: new Date(NOW).toISOString(),
+    })
+  })
+
+  it('opens the lower bound for all time but keeps the until = now ceiling', () => {
+    expect(evidenceGraphRequestOf('all', null, NOW)).toEqual({
+      until: new Date(NOW).toISOString(),
+    })
+  })
+
+  it('carries the project scope but never list-only fields', () => {
+    const request = evidenceGraphRequestOf('30d', 'p1', NOW)
+    expect(request.projectId).toBe('p1')
+    expect('limit' in request).toBe(false)
+    expect('order' in request).toBe(false)
   })
 })

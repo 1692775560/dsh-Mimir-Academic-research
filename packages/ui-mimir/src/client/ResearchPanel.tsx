@@ -190,8 +190,8 @@ export function ResearchPanel({
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
   ensureForaging, refreshForaging,
   ensureMoments, refreshMoments, declineMoment,
-  ensureEvidenceGraph, refreshEvidenceGraph, retractEvidence,
-  ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
+  loadEvidenceGraph, refreshEvidenceGraph, retractEvidence,
+  ensureEureka, ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
   getSxngConfig, saveSxngConfig,
   exportWiki, importWiki, dismissToast, pruneToasts,
   toggleTheme, toggleLocale, t,
@@ -234,6 +234,7 @@ export function ResearchPanel({
   const foraging = useResearch(view => view.foraging)
   const moments = useResearch(view => view.moments)
   const evidence = useResearch(view => view.evidence)
+  const eureka = useResearch(view => view.eureka)
   const digest = useResearch(view => view.digest)
   const toasts = useResearch(view => view.toasts)
   const backup = useResearch(view => view.backup)
@@ -918,9 +919,11 @@ export function ResearchPanel({
             refreshMoments={refreshMoments}
             declineMoment={declineMoment}
             evidence={evidence}
-            ensureEvidenceGraph={ensureEvidenceGraph}
+            loadEvidenceGraph={loadEvidenceGraph}
             refreshEvidenceGraph={refreshEvidenceGraph}
             retractEvidence={retractEvidence}
+            eureka={eureka}
+            ensureEureka={ensureEureka}
             digest={digest}
             ensureDigest={ensureDigest}
             refreshDigest={refreshDigest}

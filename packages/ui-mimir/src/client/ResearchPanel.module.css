@@ -4411,6 +4411,14 @@ li.dropIndicator {
   white-space: nowrap;
 }
 
+/* Actor hue tints (lane graph): stable per actor, border carries the tint. */
+.actorBadge[data-hue='0'] { color: #4176e6; }
+.actorBadge[data-hue='1'] { color: #1a9e63; }
+.actorBadge[data-hue='2'] { color: #b06000; }
+.actorBadge[data-hue='3'] { color: #8250df; }
+.actorBadge[data-hue='4'] { color: #d93026; }
+.actorBadge[data-hue='5'] { color: #0e7490; }
+
 .ledgerDetail {
   margin: 0;
   color: var(--dsw-alias-label-secondary, #57503f);
@@ -5941,4 +5949,67 @@ li.dropIndicator {
 
 .venueCardLink:hover {
   text-decoration: underline;
+}
+
+/* ===== Evidence workflow diagram (v3): the git-workflow rendering. The
+   diagram is one self-contained SVG; the view only frames it and styles the
+   progressive-disclosure detail card. ===== */
+
+.viewSwitch {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  border-radius: 10px;
+  background: var(--dsw-specific-menu, #fff);
+}
+
+.viewSwitchBtn {
+  min-height: 24px;
+  padding: 0 10px;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--dsw-alias-label-secondary, #3c4557);
+  font-size: 12px;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+}
+
+.viewSwitchBtn[data-active] {
+  background: var(--dsw-alias-state-business-tertiary, rgb(65 118 230 / 12%));
+  color: var(--dsw-alias-state-business-primary, #4176e6);
+  font-weight: 500;
+}
+
+.laneGraph {
+  margin-top: 4px;
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.laneSvg {
+  display: block;
+}
+
+.laneNode {
+  cursor: pointer;
+}
+
+.laneNode:focus-visible {
+  outline: 2px solid var(--dsw-alias-state-business-primary, #4176e6);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+.laneAxisText {
+  font-variant-numeric: tabular-nums;
+}
+
+.laneTime {
+  flex: none;
+  margin-left: 8px;
+  color: var(--dsw-alias-label-tertiary, #5b6474);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
 }
