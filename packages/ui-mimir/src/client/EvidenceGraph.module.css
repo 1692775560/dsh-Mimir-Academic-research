@@ -1,0 +1,234 @@
+/* Evidence Graph visual system (PRD §16/§69/§70): a dedicated, restrained
+   module for the temporal research map. Colors flow through CSS variables
+   with fallbacks — no raw hex reaches SVG attributes from TypeScript. Lane
+   color = research trajectory; relation semantics ride shape/geometry. */
+
+.graphSvg {
+  --mimir-evidence-lane-0: #7dbe8a;
+  --mimir-evidence-lane-1: #b7c96b;
+  --mimir-evidence-lane-2: #d9b85b;
+  --mimir-evidence-lane-3: #e69a62;
+  --mimir-evidence-lane-4: #ea7070;
+  --mimir-evidence-lane-5: #7a9ec9;
+  --mimir-evidence-conflict: #e0655c;
+  --mimir-evidence-eureka: #d9a13b;
+  --mimir-evidence-status-supported: #2f9e63;
+  --mimir-evidence-status-invalidated: #d64545;
+  --mimir-evidence-status-pending: #c98a2d;
+
+  display: block;
+  overflow: visible;
+}
+
+/* Lane hue lookup: one `--lane` resolved from the six trajectory colors. */
+.graphSvg [data-lane='0'] { --lane: var(--mimir-evidence-lane-0); }
+.graphSvg [data-lane='1'] { --lane: var(--mimir-evidence-lane-1); }
+.graphSvg [data-lane='2'] { --lane: var(--mimir-evidence-lane-2); }
+.graphSvg [data-lane='3'] { --lane: var(--mimir-evidence-lane-3); }
+.graphSvg [data-lane='4'] { --lane: var(--mimir-evidence-lane-4); }
+.graphSvg [data-lane='5'] { --lane: var(--mimir-evidence-lane-5); }
+
+/* ── Axis ── */
+.evidenceTickLine {
+  stroke: var(--mimir-line-soft, #e4e7ec);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+}
+
+.evidenceTickLabel {
+  fill: var(--dsw-alias-label-tertiary, #857d6c);
+  font-size: 10px;
+  font-family: var(--mimir-mono, ui-monospace, monospace);
+}
+
+/* ── Band / rail guides (§121/§122) ── */
+.evidenceBandLabel {
+  fill: var(--lane, #7dbe8a);
+  font-size: 12px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.evidenceRailLabel {
+  fill: var(--dsw-alias-label-secondary, #57503f);
+  font-size: 11px;
+  pointer-events: none;
+}
+
+.evidenceRail {
+  stroke: var(--lane, #7dbe8a);
+  stroke-width: 2;
+  stroke-linecap: round;
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+/* ── Links (§43/§44) ── */
+.evidenceLink {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  pointer-events: stroke;
+}
+
+.evidenceLink[data-kind='inflow'] {
+  stroke: var(--lane, #7dbe8a);
+  stroke-width: 1.8;
+  opacity: 0.85;
+}
+
+.evidenceLink[data-kind='external'] {
+  stroke: var(--mimir-line-soft, #c9cdd4);
+  stroke-width: 1.4;
+  opacity: 0.75;
+}
+
+.evidenceLink[data-kind='retract'] {
+  stroke: var(--dsw-alias-label-tertiary, #857d6c);
+  stroke-width: 1.4;
+  stroke-dasharray: 4 5;
+  opacity: 0.7;
+}
+
+.evidenceLink[data-kind='conflict'] {
+  stroke: var(--mimir-evidence-conflict, #e0655c);
+  stroke-width: 1.4;
+  stroke-dasharray: 3 4;
+  opacity: 0.9;
+}
+
+/* ── Nodes (§7.2/§50/§51) ── */
+.evidenceNode {
+  cursor: pointer;
+}
+
+.evidenceNode:focus-visible {
+  outline: none;
+}
+
+.evidenceNode:focus-visible .evidenceNodeHit {
+  stroke: var(--dsw-alias-state-business-primary, #4176e6);
+  stroke-width: 2;
+}
+
+.evidenceNodeHit {
+  fill: transparent;
+}
+
+.evidenceNodeSelection {
+  fill: none;
+  stroke: var(--dsw-alias-state-business-primary, #4176e6);
+  stroke-width: 2;
+}
+
+.evidenceBead {
+  fill: var(--lane, #7dbe8a);
+  transition: r 0.15s ease, opacity 0.15s ease;
+}
+
+.evidenceBeadRetracted {
+  fill: var(--mimir-sheet, #ffffff);
+  stroke: var(--lane, #7dbe8a);
+  stroke-width: 1.6;
+  stroke-dasharray: 3 3;
+  opacity: 0.4;
+}
+
+.evidenceRetract {
+  fill: var(--dsw-alias-label-tertiary, #857d6c);
+}
+
+.evidenceConflictRing {
+  fill: none;
+  stroke: var(--mimir-evidence-conflict, #e0655c);
+  stroke-width: 1.8;
+  opacity: 0.9;
+}
+
+.evidenceClaimRing {
+  fill: none;
+  stroke: var(--lane, #7dbe8a);
+  stroke-width: 2;
+}
+
+.evidenceClaimCore {
+  fill: var(--lane, #7dbe8a);
+}
+
+.evidenceStatusTag {
+  stroke: none;
+}
+
+.evidenceStatusTag[data-status='supported'] { fill: var(--mimir-evidence-status-supported, #2f9e63); }
+.evidenceStatusTag[data-status='invalidated'] { fill: var(--mimir-evidence-status-invalidated, #d64545); }
+.evidenceStatusTag[data-status='pending'] { fill: var(--mimir-evidence-status-pending, #c98a2d); }
+
+.evidenceStatusText {
+  fill: #ffffff;
+  font-size: 10px;
+  pointer-events: none;
+}
+
+.evidenceEurekaRing {
+  fill: none;
+  stroke: var(--mimir-evidence-eureka, #d9a13b);
+  stroke-width: 2;
+  opacity: 0.8;
+}
+
+.evidenceEurekaCore {
+  fill: var(--mimir-evidence-eureka, #d9a13b);
+}
+
+.evidenceEurekaLabel {
+  fill: var(--dsw-alias-label-secondary, #57503f);
+  font-size: 11px;
+  font-weight: 600;
+  pointer-events: none;
+}
+
+.evidenceSource {
+  fill: var(--mimir-sheet, #ffffff);
+  stroke: var(--lane, #7dbe8a);
+  stroke-width: 1.5;
+}
+
+/* ── View chrome (header / detail / audit) ── */
+.graphShell {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.graphViewport {
+  position: relative;
+  overflow-x: auto;
+  overflow-y: hidden;
+  min-height: 200px;
+  border: 1px solid var(--mimir-line-soft, #d8d8d8);
+  border-radius: 14px;
+  background: var(--mimir-sheet, #ffffff);
+}
+
+.graphHeaderRow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.graphCounts {
+  color: var(--dsw-alias-label-tertiary, #857d6c);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.graphTruncated {
+  color: var(--mimir-evidence-status-pending, #c98a2d);
+  font-size: 11px;
+}
+
+.graphAudit {
+  margin-top: 4px;
+}

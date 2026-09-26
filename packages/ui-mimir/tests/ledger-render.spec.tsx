@@ -20,6 +20,7 @@ import type {
   ResearchBriefView,
   ResearchDigestSlice,
   ResearchEvidenceGraphSlice,
+  ResearchEurekaSlice,
   ResearchForagingSlice,
   ResearchLedgerView,
   ResearchMomentsSlice,
@@ -122,6 +123,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
     }
     const coldMoments: ResearchMomentsSlice = { status: 'cold', view: null, failure: null }
     const coldEvidence: ResearchEvidenceGraphSlice = { status: 'cold', view: null, failure: null }
+    const coldEureka: ResearchEurekaSlice = { status: 'cold', view: null, failure: null }
     const coldDigest: ResearchDigestSlice = {
       status: 'idle', tier: 'weekly', lang: 'zh', report: null, markdown: '', generatedAt: null, failure: null,
     }
@@ -134,6 +136,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
         foraging={{ status: 'ready', view: FORAGING, failure: null } as ResearchForagingSlice}
         moments={coldMoments}
         evidence={coldEvidence}
+        eureka={coldEureka}
         digest={coldDigest}
         selectedProjectId={null}
         loadLedger={() => {}}
@@ -154,6 +157,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
         loadEvidenceGraph={() => {}}
         refreshEvidenceGraph={() => {}}
         retractEvidence={async () => null}
+        ensureEureka={() => {}}
         ensureDigest={() => {}}
         refreshDigest={() => {}}
         generateDigest={async () => null}

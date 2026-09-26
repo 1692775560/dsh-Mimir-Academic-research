@@ -659,6 +659,11 @@ export interface ResearchPanelInjected {
    */
   declineMoment: (targetEventId: string) => Promise<ResearchFailureView | null>
   /**
+   * Load the researcher-declared Eureka records once, on the ledger view's
+   * first open — the Evidence Graph renders them as markers (§79).
+   */
+  ensureEureka: () => void
+  /**
    * Load the digest (B–F) once, on the ledger view's first open (active push).
    */
   ensureDigest: () => void

@@ -406,6 +406,7 @@ function panelApply(ctx: ClientContext): void {
       retractEvidence: (dedupKey, reason) => controller.retractEvidence(dedupKey, reason),
       ensureDigest: () => { controller.ensureDigest() },
       refreshDigest: () => { controller.refreshDigest() },
+      ensureEureka: () => { controller.ensureEureka() },
       generateDigest: (tier, lang) => controller.generateDigest(tier, lang),
       setEureka: (ideaId, projectId, title) => controller.setEureka(ideaId, projectId, title),
       pinMoment: (targetEventId, note) => controller.pinMoment(targetEventId, note),

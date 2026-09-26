@@ -12,7 +12,7 @@
 
 import { useEffect, useState } from 'react'
 import type { EventRecord, ResearchEventFilter, ResearchGenerateBriefOptions, ResearchProgressReportOptions } from 'dsh-mimir/types'
-import type { ResearchBriefView, ResearchDigestSlice, ResearchEvidenceGraphSlice, ResearchFailureView, ResearchForagingSlice, ResearchLedgerView, ResearchMomentsSlice, ResearchReportView, ResearchWorktreeSlice } from './controller.ts'
+import type { ResearchBriefView, ResearchDigestSlice, ResearchEurekaSlice, ResearchEvidenceGraphSlice, ResearchFailureView, ResearchForagingSlice, ResearchLedgerView, ResearchMomentsSlice, ResearchReportView, ResearchWorktreeSlice } from './controller.ts'
 import type { ResearchKey } from './locales.ts'
 import type { ResearchT } from './view-common.ts'
 import { renderMarkdown } from './MarkdownView.tsx'
@@ -76,12 +76,12 @@ function LedgerRow({ event, t }: {
  * @returns the ledger view.
  */
 export function LedgerView({
-  ledger, report, brief, worktree, foraging, moments, evidence, digest, selectedProjectId, loadLedger, generateReport, generateBrief, addJournal,
+  ledger, report, brief, worktree, foraging, moments, evidence, eureka, digest, selectedProjectId, loadLedger, generateReport, generateBrief, addJournal,
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
   ensureForaging, refreshForaging,
   ensureMoments, refreshMoments, declineMoment,
   loadEvidenceGraph, refreshEvidenceGraph, retractEvidence,
-  ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
+  ensureEureka, ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
   t,
 }: {
   readonly ledger: ResearchLedgerView
@@ -91,6 +91,7 @@ export function LedgerView({
   readonly foraging: ResearchForagingSlice
   readonly moments: ResearchMomentsSlice
   readonly evidence: ResearchEvidenceGraphSlice
+  readonly eureka: ResearchEurekaSlice
   readonly digest: ResearchDigestSlice
   readonly selectedProjectId: string | null
   readonly loadLedger: (filter: ResearchEventFilter) => void
@@ -131,6 +132,8 @@ export function LedgerView({
   readonly retractEvidence: (dedupKey: string, reason?: string | undefined) => Promise<ResearchFailureView | null>
   /** Load the digest once, on the ledger view's first open (active push). */
   readonly ensureDigest: () => void
+  /** Load the researcher-declared Eureka records once (Evidence Graph markers). */
+  readonly ensureEureka: () => void
   /** Re-fetch the digest at its current tier/lang. */
   readonly refreshDigest: () => void
   /** Generate the digest at one tier/language. */
@@ -178,6 +181,10 @@ export function LedgerView({
   useEffect(() => {
     ensureDigest()
   }, [ensureDigest])
+  // The researcher-declared Eureka records load once, for the graph's markers.
+  useEffect(() => {
+    ensureEureka()
+  }, [ensureEureka])
 
   const refresh = (): void => {
     loadLedger(ledgerWindowFilter(ledgerWindow, scopedProjectId, Date.now()))
@@ -298,7 +305,8 @@ export function LedgerView({
           the raw timeline. */}
       <EvidenceGraphView
         evidence={evidence}
-        refreshEvidence={refreshEvidenceGraph}
+        eureka={eureka}
+        refreshEvidenceGraph={refreshEvidenceGraph}
         retractEvidence={retractEvidence}
         jumpToProvenance={ts => { loadLedger(provenanceFilter(ts)) }}
         t={t}
