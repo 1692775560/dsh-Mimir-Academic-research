@@ -9,7 +9,7 @@
  * @module dsh-client-ui-mimir/client/CognitiveBriefView
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ResearchBriefQuestion, ResearchGenerateBriefOptions, ResearchJournalQuestionRef } from 'dsh-mimir/types'
 import type { ResearchBriefView, ResearchFailureView } from './controller.ts'
 import type { ResearchT } from './view-common.ts'
@@ -39,6 +39,12 @@ export function CognitiveBriefView({
   readonly t: ResearchT
 }) {
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cancel a pending copy-state reset on unmount.
+  useEffect(() => () => {
+    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+  }, [])
   const [draft, setDraft] = useState('')
   const [writing, setWriting] = useState(false)
   const [journalError, setJournalError] = useState<string | null>(null)
@@ -93,7 +99,8 @@ export function CognitiveBriefView({
     } catch {
       setCopyState('failed')
     }
-    window.setTimeout(() => { setCopyState('idle') }, 1600)
+    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = window.setTimeout(() => { setCopyState('idle') }, 1600)
   }
 
   // The L2 write: one journal line lands in the ledger, the timeline

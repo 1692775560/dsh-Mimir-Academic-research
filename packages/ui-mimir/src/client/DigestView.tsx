@@ -12,7 +12,7 @@
  * @module dsh-client-ui-mimir/client/DigestView
  */
 
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type {
   ResearchCapsulePerspective,
   ResearchDigestSlice,
@@ -102,6 +102,12 @@ export function DigestView({
 }) {
   const [eurekaTitle, setEurekaTitle] = useState('')
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cancel a pending copy-state reset on unmount.
+  useEffect(() => () => {
+    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+  }, [])
 
   // Guard: a test or any caller may mount this component without a `digest`
   // prop. The store always supplies one in production, but reading
@@ -127,7 +133,8 @@ export function DigestView({
     } catch {
       setCopyState('failed')
     }
-    window.setTimeout(() => { setCopyState('idle') }, 1600)
+    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = window.setTimeout(() => { setCopyState('idle') }, 1600)
   }
 
   const onDownload = (): void => {

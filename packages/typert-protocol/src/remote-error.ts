@@ -1,4 +1,9 @@
-/** The one Remote failure class shared by owners, the Gateway, and consumers. */
+/**
+ * The one Remote failure class shared by owners, the Gateway, and consumers:
+ * a real Error whose stable `code` and typed details survive the wire, so
+ * discrimination never depends on instanceof or on message text.
+ * @module @deepseek-ai/dsh-typert-protocol/remote-error
+ */
 
 import type { RemoteErrorCode, RemoteErrorDetailsMap, RemoteFailure } from './types.ts'
 

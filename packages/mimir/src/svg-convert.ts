@@ -35,12 +35,12 @@ export interface SvgConverterSpec {
  * last — a high-resolution PNG beats a broken compile, but loses to any real
  * PDF pipeline.
  */
-export const SVG_CONVERTERS: readonly SvgConverterSpec[] = [
+export const SVG_CONVERTERS: readonly SvgConverterSpec[] = Object.freeze([
   { kind: 'rsvg-convert', command: 'rsvg-convert', product: 'pdf' },
   { kind: 'inkscape', command: 'inkscape', product: 'pdf' },
   { kind: 'magick', command: 'magick', product: 'pdf' },
   { kind: 'qlmanage', command: 'qlmanage', product: 'png', platform: 'darwin' },
-]
+])
 
 /** Longest one converter run may take (inkscape's cold start is slow). */
 export const SVG_CONVERT_TIMEOUT_MS = 60_000

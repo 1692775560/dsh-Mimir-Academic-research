@@ -8,12 +8,13 @@
 
 import { mkdtemp, mkdir, readdir, readFile, rm, lstat, stat, symlink, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { basename, join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
+import { canCreateSymlink } from './helpers/symlink-capability.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import type { ResearchWikiDomain } from '../src/store.ts'
 import { expandHome, extractTexTitle, importProject, slugify } from '../src/services/import-project.ts'
@@ -183,13 +184,15 @@ describe('importProject', () => {
     await mkdir(dir, { recursive: true })
     await writeFile(join(dir, 'main.tex'), '\\documentclass{article}\n\\begin{document}Hi\\end{document}\n')
 
-    const value = imported(await importProject({ workspaceDir, domain }, { path: `~/${home.split('/').pop()}/tilde-project` }))
+    // basename() instead of a '/' split: Windows homes carry no forward
+    // slashes, and the request still expands through expandHome('~') alike.
+    const value = imported(await importProject({ workspaceDir, domain }, { path: `~/${basename(home)}/tilde-project` }))
 
     expect(value.paperDir).toBe('imported/tilde-project')
     await stat(join(workspaceDir, 'imported', 'tilde-project', 'main.tex'))
   })
 
-  it('rejects a source tree whose symlink escapes the tree or dangles (#213)', async () => {
+  it.skipIf(!canCreateSymlink())('rejects a source tree whose symlink escapes the tree or dangles (#213)', async () => {
     const { domain, workspaceDir } = await harness()
     const deps = { workspaceDir, domain }
 
@@ -211,7 +214,7 @@ describe('importProject', () => {
     await expect(stat(join(workspaceDir, 'imported'))).rejects.toThrow()
   })
 
-  it('dereferences an in-tree symlink into a plain copied file (#213)', async () => {
+  it.skipIf(!canCreateSymlink())('dereferences an in-tree symlink into a plain copied file (#213)', async () => {
     const { domain, workspaceDir } = await harness()
     const source = await fakeLatexProject('internal-link', MAIN_TEX)
     await writeFile(join(source, 'macros.tex'), '\\newcommand{\\x}{1}\n')

@@ -10,7 +10,7 @@
  * @module dsh-client-ui-mimir/client/LedgerView
  */
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { EventRecord, ResearchEventFilter, ResearchGenerateBriefOptions, ResearchProgressReportOptions } from 'dsh-mimir/types'
 import type { ResearchBriefView, ResearchDigestSlice, ResearchEvidenceGraphSlice, ResearchFailureView, ResearchForagingSlice, ResearchLedgerView, ResearchMomentsSlice, ResearchReportView, ResearchWorktreeSlice } from './controller.ts'
 import type { ResearchKey } from './locales.ts'
@@ -149,6 +149,12 @@ export function LedgerView({
   const [ledgerWindow, setWindow] = useState<LedgerWindow>('7d')
   const [scope, setScope] = useState<LedgerScope>('all')
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
+  const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Cancel a pending copy-state reset on unmount.
+  useEffect(() => () => {
+    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+  }, [])
 
   // The selected project id only feeds the filter while the project scope is
   // active; a scope switch or project change refetches the window.
@@ -206,7 +212,8 @@ export function LedgerView({
     } catch {
       setCopyState('failed')
     }
-    window.setTimeout(() => { setCopyState('idle') }, 1600)
+    if (copyTimerRef.current !== null) clearTimeout(copyTimerRef.current)
+    copyTimerRef.current = window.setTimeout(() => { setCopyState('idle') }, 1600)
   }
 
   const generatedAt = report.generatedAt ?? new Date().toISOString()

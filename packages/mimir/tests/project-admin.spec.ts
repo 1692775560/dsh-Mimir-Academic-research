@@ -17,6 +17,7 @@ import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import type { ToolRunContext } from '@deepseek-ai/dsh-tools'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
+import { canCreateSymlink } from './helpers/symlink-capability.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import type { ResearchWikiDomain } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
@@ -186,7 +187,9 @@ describe('deleteProject', () => {
     expect(reopened.table('ideas').get('i1')).toBeUndefined()
   })
 
-  it('rejects without touching anything when the decks removal fails', async () => {
+  // The error injection is a POSIX chmod(0o000); Windows ACLs ignore it, so
+  // the failure path cannot be provoked there.
+  it.skipIf(process.platform === 'win32')('rejects without touching anything when the decks removal fails', async () => {
     const { service, domain, workspaceDir } = await harness()
     await seedProject(domain, 'p1')
     await domain.table('experiments').put('e1', {
@@ -230,7 +233,7 @@ describe('deleteProject', () => {
     await expect(stat(join(outDir, 'main.tex'))).resolves.toBeDefined()
   })
 
-  it('never follows a symlinked paper directory out of imported/', async () => {
+  it.skipIf(!canCreateSymlink())('never follows a symlinked paper directory out of imported/', async () => {
     const { service, domain, workspaceDir } = await harness()
     const outside = await mkdtemp(join(tmpdir(), 'mimir-outside-'))
     await writeFile(join(outside, 'keep.txt'), 'precious')

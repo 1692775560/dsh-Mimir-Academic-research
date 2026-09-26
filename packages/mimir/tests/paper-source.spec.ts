@@ -9,6 +9,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { readPaperSource, resolvePaperDir, resolvePaperDirReal, savePaperSourceFile } from '../src/paper-source.ts'
+import { canCreateSymlink } from './helpers/symlink-capability.ts'
 
 describe('resolvePaperDir', () => {
   const root = join(tmpdir(), 'research-ws')
@@ -59,13 +60,13 @@ describe('resolvePaperDirReal (#213)', () => {
     expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBe(join(workspace, 'paper'))
   })
 
-  it('rejects a symlinked directory escaping the workspace', async () => {
+  it.skipIf(!canCreateSymlink())('rejects a symlinked directory escaping the workspace', async () => {
     // Lexically 'paper' is fine, but workspace/paper → outside must fail.
     await symlink(outside, join(workspace, 'paper'), 'dir')
     expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBeUndefined()
   })
 
-  it('accepts a symlink staying inside the workspace', async () => {
+  it.skipIf(!canCreateSymlink())('accepts a symlink staying inside the workspace', async () => {
     await mkdir(join(workspace, 'real-paper'))
     await symlink(join(workspace, 'real-paper'), join(workspace, 'paper'), 'dir')
     expect(await resolvePaperDirReal(workspace, undefined, 'paper')).toBe(join(workspace, 'paper'))

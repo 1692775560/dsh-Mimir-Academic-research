@@ -30,7 +30,7 @@ import { registerReviewCommand } from './commands/review.ts'
 import { registerPaperCommands } from './commands/paper.ts'
 import { registerSkillSyncCommand } from './commands/skill-sync.ts'
 import type { ResearchCommandDeps } from './commands/common.ts'
-import { resolvePaperDir } from './paper-source.ts'
+import { resolvePaperDirReal } from './paper-source.ts'
 import { isSameOriginWrite, isTrustedRead, projectPaperDir } from './http-write-boundary.ts'
 import type { ResearchServiceConfig } from './service.ts'
 import { isFigureFile } from './artifacts.ts'
@@ -747,7 +747,9 @@ function createPdfHandler(
       return
     }
     const requestDir = url.searchParams.get('dir') ?? undefined
-    const dir = resolvePaperDir(root, requestDir, record.paperDir)
+    // Realpath-backed (#213): a symlinked request dir must not smuggle the
+    // read outside the workspace's realpath.
+    const dir = await resolvePaperDirReal(root, requestDir, record.paperDir)
     if (dir === undefined) {
       res.writeHead(400).end('dir must be a relative path inside the research workspace')
       return
@@ -948,7 +950,9 @@ function createFigureHandler(
       res.writeHead(400).end('path must name a figure file (.png/.jpg/.jpeg/.svg/.pdf)')
       return
     }
-    const dir = resolvePaperDir(root, url.searchParams.get('dir') ?? undefined, record.paperDir)
+    // Realpath-backed (#213): a symlinked request dir must not smuggle the
+    // read outside the workspace's realpath.
+    const dir = await resolvePaperDirReal(root, url.searchParams.get('dir') ?? undefined, record.paperDir)
     if (dir === undefined) {
       res.writeHead(400).end('dir must be a relative path inside the research workspace')
       return
