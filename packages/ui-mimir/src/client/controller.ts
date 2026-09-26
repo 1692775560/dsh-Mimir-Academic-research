@@ -18,6 +18,7 @@ import { anySubscriptionDue } from './subscriptions.ts'
 import { metricFigureCaption, metricFigureFileName, metricFigureSvg } from './metric-figure.ts'
 import type { MetricChartRow } from './view-common.ts'
 import { pruneExpiredToasts, pushToast, type ResearchToast, type ResearchToastKind } from './toasts.ts'
+import type { EvidenceGraphRequest } from './evidence-graph-view.ts'
 import type {
   ArxivEntry,
   AddEvidenceEdgeRequest,
@@ -930,6 +931,14 @@ function transportFailure(error: unknown): ResearchFailureView {
   return failureOf('transport', error instanceof Error ? error.message : 'research remote call failed')
 }
 
+/** Whether two evidence window requests name the same fold window (single-flight). */
+function sameEvidenceRequest(left: EvidenceGraphRequest | null, right: EvidenceGraphRequest): boolean {
+  if (left === null) return false
+  return (left.projectId ?? null) === (right.projectId ?? null)
+    && (left.since ?? null) === (right.since ?? null)
+    && (left.until ?? null) === (right.until ?? null)
+}
+
 /**
  * The panel's object layer. The paper directory is shared across projects, so
  * compile status is tracked per addressed project id but describes the same
@@ -976,6 +985,10 @@ export class ResearchController implements HostObservable<ResearchView> {
   private momentsPromise: Promise<void> | null = null
   private eurekaPromise: Promise<void> | null = null
   private evidencePromise: Promise<void> | null = null
+  /** The evidence graph's last window request (PRD §56); null before the first load. */
+  private evidenceRequest: EvidenceGraphRequest | null = null
+  /** Monotonic evidence generation: newer window requests supersede stale reads. */
+  private evidenceGeneration = 0
   private figuresInFlight = false
   private figuresRefreshPending: { readonly projectId: string; readonly quiet: boolean } | null = null
   private meetingsGeneration = 0
@@ -1668,16 +1681,44 @@ export class ResearchController implements HostObservable<ResearchView> {
   }
 
   /**
-   * Load the evidence graph (v1) slice: one pure fold over the whole ledger
-   * window (L1 — the product lives only in this view and the fold, never
-   * persisted). Same publish contract as the worktree/foraging/moments slices.
+   * Load the evidence graph (v1) slice: one pure fold over the requested
+   * ledger window (L1 — the product lives only in this view and the fold,
+   * never persisted). The ledger's window/project scope is authoritative;
+   * the graph never grows its own filter state (PRD §57). An identical
+   * in-flight request is single-flighted; a new request supersedes the old
+   * generation and its stale response is dropped.
    */
-  private async loadEvidenceGraph(): Promise<void> {
+  loadEvidenceGraph(request: EvidenceGraphRequest): void {
+    if (this.disposed) return
+    // Re-entrant identical request: reuse the in-flight read instead of a
+    // duplicate fold (PRD §56.4).
+    if (this.evidencePromise !== null && sameEvidenceRequest(this.evidenceRequest, request)) return
+    this.evidenceRequest = request
+    this.evidenceGeneration += 1
+    const generation = this.evidenceGeneration
+    this.evidencePromise = this.fetchEvidenceGraph(request, generation)
+      .finally(() => { if (generation === this.evidenceGeneration) this.evidencePromise = null })
+  }
+
+  /** Re-fetch with the last window request (the card's refresh, or after a write). */
+  refreshEvidenceGraph(): void {
+    if (this.evidenceRequest === null || this.disposed) return
+    // Always supersede: a write may have changed the fold under the same window.
+    this.evidenceGeneration += 1
+    const generation = this.evidenceGeneration
+    this.evidencePromise = this.fetchEvidenceGraph(this.evidenceRequest, generation)
+      .finally(() => { if (generation === this.evidenceGeneration) this.evidencePromise = null })
+  }
+
+  private async fetchEvidenceGraph(request: EvidenceGraphRequest, generation: number): Promise<void> {
     this.publish({
       evidence: Object.freeze({ status: 'loading', view: this.view.evidence.view, failure: null }),
     })
     try {
-      const carried = await this.remote.getEvidenceGraph({})
+      const carried = await this.remote.getEvidenceGraph(request)
+      // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+      if (this.disposed) return
+      if (generation !== this.evidenceGeneration) return
       if (!carried.ok) {
         const failure = failureOf(carried.error.code, carried.error.message)
         this.publish({ evidence: Object.freeze({ status: 'error', view: null, failure }) })
@@ -1693,21 +1734,11 @@ export class ResearchController implements HostObservable<ResearchView> {
         evidence: Object.freeze({ status: 'ready', view: result.value, failure: null }),
       })
     } catch (error) {
+      if (this.disposed) return
+      if (generation !== this.evidenceGeneration) return
       const failure = transportFailure(error)
       this.publish({ evidence: Object.freeze({ status: 'error', view: null, failure }) })
     }
-  }
-
-  /** Load the evidence graph once, on the ledger view's first open. */
-  ensureEvidenceGraph(): void {
-    if (this.view.evidence.status === 'ready' || this.evidencePromise !== null) return
-    this.evidencePromise = this.loadEvidenceGraph().finally(() => { this.evidencePromise = null })
-  }
-
-  /** Re-fetch the evidence graph (the card's refresh button, or after a write). */
-  refreshEvidenceGraph(): void {
-    if (this.evidencePromise !== null) return
-    this.evidencePromise = this.loadEvidenceGraph().finally(() => { this.evidencePromise = null })
   }
 
   /**

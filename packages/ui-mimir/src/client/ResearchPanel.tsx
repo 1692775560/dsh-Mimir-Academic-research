@@ -190,7 +190,7 @@ export function ResearchPanel({
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
   ensureForaging, refreshForaging,
   ensureMoments, refreshMoments, declineMoment,
-  ensureEvidenceGraph, refreshEvidenceGraph, retractEvidence,
+  loadEvidenceGraph, refreshEvidenceGraph, retractEvidence,
   ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
   getSxngConfig, saveSxngConfig,
   exportWiki, importWiki, dismissToast, pruneToasts,
@@ -918,7 +918,7 @@ export function ResearchPanel({
             refreshMoments={refreshMoments}
             declineMoment={declineMoment}
             evidence={evidence}
-            ensureEvidenceGraph={ensureEvidenceGraph}
+            loadEvidenceGraph={loadEvidenceGraph}
             refreshEvidenceGraph={refreshEvidenceGraph}
             retractEvidence={retractEvidence}
             digest={digest}

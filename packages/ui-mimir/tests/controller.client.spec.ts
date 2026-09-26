@@ -32,6 +32,7 @@ import type {
   ResearchFetchPaperPdfResult,
   ResearchFiguresResult,
   ResearchGenerateBriefResult,
+  ResearchGetEvidenceGraphResult,
   ResearchAddJournalEntryResult,
   ResearchCloseIdeaResult,
   ResearchAdoptIdeaResult,
@@ -2726,5 +2727,131 @@ describe('derivationRecalibrated localStorage key migration', () => {
     store['mimir:cbe-derivation-version'] = '1'
     expect(callMigration(3)).toBe(false)
     expect(store['mimir:cbe-derivation-version']).toBe('1')
+  })
+})
+
+describe('loadEvidenceGraph window request', () => {
+  /** A minimal evidence view whose edge count doubles as the window marker. */
+  const evidenceView = (totalEdges: number): ResearchGetEvidenceGraphResult => ({
+    ok: true,
+    value: {
+      derivedAt: '2026-09-01T00:00:00.000Z',
+      window: { since: '2026-08-17T00:00:00.000Z', until: '2026-08-24T00:00:00.000Z' },
+      retrieval: { eventsHit: 0, eventsTotal: 0, truncated: false },
+      graph: {
+        derivationVersion: 1,
+        nodes: [],
+        edges: [],
+        conflicts: [],
+        timeline: [],
+        stats: {
+          totalEdges,
+          activeEdges: 0,
+          retractedEdges: 0,
+          retractOrphans: 0,
+          duplicateEdges: 0,
+          aliasMerges: 0,
+          unnormalizable: 0,
+        },
+      },
+    },
+  })
+
+  it('sends the resolved window and project scope to the host', async () => {
+    const seen: unknown[] = []
+    const controller = new ResearchController(stubRemote({
+      getEvidenceGraph: request => {
+        seen.push(request)
+        return Promise.resolve(carried(evidenceView(0)))
+      },
+    }))
+    controller.loadEvidenceGraph({
+      projectId: 'p1',
+      since: '2026-08-17T12:00:00.000Z',
+      until: '2026-08-24T12:00:00.000Z',
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(seen).toEqual([{ projectId: 'p1', since: '2026-08-17T12:00:00.000Z', until: '2026-08-24T12:00:00.000Z' }])
+    expect(controller.getSnapshot().evidence.status).toBe('ready')
+  })
+
+  it('ignores a stale response once a newer request supersedes it', async () => {
+    const slow = deferred<ResearchGetEvidenceGraphResult>()
+    const fast = deferred<ResearchGetEvidenceGraphResult>()
+    const controller = new ResearchController(stubRemote({
+      getEvidenceGraph: request => (request.projectId === 'p1' ? slow.promise : fast.promise),
+    }))
+    controller.loadEvidenceGraph({ projectId: 'p1', until: '2026-08-24T12:00:00.000Z' })
+    controller.loadEvidenceGraph({ projectId: 'p2', until: '2026-08-24T12:00:00.000Z' })
+    fast.resolve(carried(evidenceView(2)))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().evidence.view?.graph.stats.totalEdges).toBe(2)
+    // The late p1 fold must not rewind the already-settled p2 window.
+    slow.resolve(carried(evidenceView(1)))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().evidence.view?.graph.stats.totalEdges).toBe(2)
+  })
+
+  it('single-flights an identical in-flight request', async () => {
+    let calls = 0
+    const run = deferred<ResearchGetEvidenceGraphResult>()
+    const controller = new ResearchController(stubRemote({
+      getEvidenceGraph: () => {
+        calls += 1
+        return run.promise
+      },
+    }))
+    const request = { until: '2026-08-24T12:00:00.000Z' }
+    controller.loadEvidenceGraph(request)
+    controller.loadEvidenceGraph(request)
+    expect(calls).toBe(1)
+    run.resolve(carried(evidenceView(0)))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().evidence.status).toBe('ready')
+  })
+
+  it('always supersedes on an explicit refresh', async () => {
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      getEvidenceGraph: () => {
+        calls += 1
+        return Promise.resolve(carried(evidenceView(0)))
+      },
+    }))
+    controller.loadEvidenceGraph({ until: '2026-08-24T12:00:00.000Z' })
+    await Promise.resolve()
+    await Promise.resolve()
+    controller.refreshEvidenceGraph()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(calls).toBe(2)
+  })
+
+  it('keeps the previous view while a refresh is loading', async () => {
+    let call = 0
+    const slow = deferred<ResearchGetEvidenceGraphResult>()
+    const controller = new ResearchController(stubRemote({
+      getEvidenceGraph: () => {
+        call += 1
+        return call === 1 ? Promise.resolve(carried(evidenceView(1))) : slow.promise
+      },
+    }))
+    controller.loadEvidenceGraph({ until: '2026-08-24T12:00:00.000Z' })
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().evidence.status).toBe('ready')
+    expect(controller.getSnapshot().evidence.view?.graph.stats.totalEdges).toBe(1)
+    // A refresh keeps the settled graph visible while the new fold is loading.
+    controller.refreshEvidenceGraph()
+    expect(controller.getSnapshot().evidence.status).toBe('loading')
+    expect(controller.getSnapshot().evidence.view?.graph.stats.totalEdges).toBe(1)
+    slow.resolve(carried(evidenceView(2)))
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().evidence.view?.graph.stats.totalEdges).toBe(2)
   })
 })

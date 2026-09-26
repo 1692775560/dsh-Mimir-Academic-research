@@ -18,7 +18,7 @@ export const LEDGER_WINDOWS: readonly LedgerWindow[] = ['7d', '30d', '90d', 'all
 export const LEDGER_LIST_LIMIT = 200
 
 /** Days covered by one window; `all` means no lower bound. */
-function windowDays(window: LedgerWindow): number | null {
+export function windowDays(window: LedgerWindow): number | null {
   switch (window) {
     case '7d': return 7
     case '30d': return 30
