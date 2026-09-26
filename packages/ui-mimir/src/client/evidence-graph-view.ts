@@ -12,6 +12,43 @@ import type {
   ResearchEventFilter,
 } from 'dsh-mimir/types'
 import type { ResearchKey } from './locales.ts'
+import { windowDays, type LedgerWindow } from './ledger-view.ts'
+
+/**
+ * The evidence graph's window request — the exact contract of the host's
+ * `getEvidenceGraph` verb: optional project scope plus ISO-8601 bounds
+ * (`since` inclusive, `until` = now). No list-only fields (`limit`, `order`)
+ * ever cross this boundary.
+ */
+export interface EvidenceGraphRequest {
+  readonly projectId?: string | undefined
+  readonly since?: string | undefined
+  readonly until?: string | undefined
+}
+
+/**
+ * Translate the ledger's authoritative window + project scope into the
+ * evidence graph's window request (the SAME resolved semantics as
+ * `ledgerWindowFilter`: bounded windows get `since = now − days`, `all` opens
+ * the lower bound, `until` is always now). The ledger owns this state; the
+ * graph never grows a second filter system.
+ * @param window - the ledger's selected time window.
+ * @param projectId - the ledger's resolved project scope, or null.
+ * @param nowMs - the wall clock (injectable for tests).
+ * @returns the request for one `getEvidenceGraph` call.
+ */
+export function evidenceGraphRequestOf(
+  window: LedgerWindow,
+  projectId: string | null,
+  nowMs: number,
+): EvidenceGraphRequest {
+  const days = windowDays(window)
+  return {
+    ...(projectId === null ? {} : { projectId }),
+    ...(days === null ? {} : { since: new Date(nowMs - days * 86_400_000).toISOString() }),
+    until: new Date(nowMs).toISOString(),
+  }
+}
 
 /** The raw-timeline jump window around one provenance event (±1 day). */
 const PROVENANCE_SPAN_MS = 86_400_000

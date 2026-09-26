@@ -151,7 +151,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
         ensureMoments={() => {}}
         refreshMoments={() => {}}
         declineMoment={async () => null}
-        ensureEvidenceGraph={() => {}}
+        loadEvidenceGraph={() => {}}
         refreshEvidenceGraph={() => {}}
         retractEvidence={async () => null}
         ensureDigest={() => {}}

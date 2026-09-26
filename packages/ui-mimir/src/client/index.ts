@@ -401,7 +401,7 @@ function panelApply(ctx: ClientContext): void {
       ensureMoments: () => { controller.ensureMoments() },
       refreshMoments: () => { void controller.refreshMoments() },
       declineMoment: targetEventId => controller.declineMoment(targetEventId),
-      ensureEvidenceGraph: () => { controller.ensureEvidenceGraph() },
+      loadEvidenceGraph: (request) => { controller.loadEvidenceGraph(request) },
       refreshEvidenceGraph: () => { controller.refreshEvidenceGraph() },
       retractEvidence: (dedupKey, reason) => controller.retractEvidence(dedupKey, reason),
       ensureDigest: () => { controller.ensureDigest() },

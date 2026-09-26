@@ -28,7 +28,7 @@ import {
   ledgerIsDestructive, ledgerPayloadLine, ledgerTimeParts, ledgerWindowFilter,
   reportFileName, reportWindowOptions, type LedgerWindow,
 } from './ledger-view.ts'
-import { provenanceFilter } from './evidence-graph-view.ts'
+import { evidenceGraphRequestOf, provenanceFilter, type EvidenceGraphRequest } from './evidence-graph-view.ts'
 import css from './ResearchPanel.module.css'
 
 /** The ledger view's project scope. */
@@ -80,7 +80,7 @@ export function LedgerView({
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
   ensureForaging, refreshForaging,
   ensureMoments, refreshMoments, declineMoment,
-  ensureEvidenceGraph, refreshEvidenceGraph, retractEvidence,
+  loadEvidenceGraph, refreshEvidenceGraph, retractEvidence,
   ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
   t,
 }: {
@@ -123,7 +123,8 @@ export function LedgerView({
   /** Decline one moment candidate (seen and refused). */
   readonly declineMoment: (targetEventId: string) => Promise<ResearchFailureView | null>
   /** Load the evidence graph once, on the ledger view's first open. */
-  readonly ensureEvidenceGraph: () => void
+  /** Load the evidence graph for one ledger window (the ledger's authoritative filter). */
+  readonly loadEvidenceGraph: (request: EvidenceGraphRequest) => void
   /** Re-fetch the evidence graph (the card's refresh button, or after a write). */
   readonly refreshEvidenceGraph: () => void
   /** Retract one evidence edge by dedupKey (the panel's human final say). */
@@ -167,10 +168,12 @@ export function LedgerView({
   useEffect(() => {
     ensureMoments()
   }, [ensureMoments])
-  // The evidence graph (v1) loads once on the view's first open.
+  // The evidence graph follows the ledger's authoritative window/project
+  // scope (PRD §57): one request per window change, single-flighted in the
+  // controller and superseded by any newer request.
   useEffect(() => {
-    ensureEvidenceGraph()
-  }, [ensureEvidenceGraph])
+    loadEvidenceGraph(evidenceGraphRequestOf(ledgerWindow, scopedProjectId, Date.now()))
+  }, [ledgerWindow, scopedProjectId, loadEvidenceGraph])
   // The digest (B–F) pushes on the ledger view's first open.
   useEffect(() => {
     ensureDigest()
