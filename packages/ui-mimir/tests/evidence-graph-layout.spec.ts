@@ -160,6 +160,46 @@ describe('deriveEvidenceGraphLayout', () => {
     expect(layout.links.some(link => link.kind === 'conflict')).toBe(true)
   })
 
+  it('rolls the fold conflict flag up onto the claim head node', () => {
+    const edges = [
+      edge({ id: 'sup', sourceEventId: 'sup', rel: 'supports', dst: 'claim:c1' }),
+      edge({ id: 'con', sourceEventId: 'con', rel: 'contradicts', dst: 'claim:c1' }),
+    ]
+    const conflicts: EvidenceConflict[] = [{ nodeKey: 'claim:c1', supporting: edges[0] as EvidenceGraphEdge, contradicting: edges[1] as EvidenceGraphEdge }]
+    const layout = deriveEvidenceGraphLayout(graph({
+      timeline: [group({ key: 'idea:1', claims: [
+        claim({ claimKey: 'claim:c1', hasConflict: true, history: [
+          entry({ sourceEventId: 'sup', ts: '2026-09-01T10:00:00.000Z', rel: 'supports' }),
+        ] }),
+        claim({ claimKey: 'claim:c2', hasConflict: false, history: [
+          entry({ sourceEventId: 'ok', ts: '2026-09-02T10:00:00.000Z', rel: 'supports' }),
+        ] }),
+      ] })],
+      edges,
+      conflicts,
+    }))
+    const heads = layout.nodes.filter(node => node.kind === 'claim')
+    expect(heads).toHaveLength(2)
+    expect(heads.find(node => node.claimKey === 'claim:c1')?.conflict).toBe(true)
+    expect(heads.find(node => node.claimKey === 'claim:c2')?.conflict).toBe(false)
+  })
+
+  it('timestamps the claim head with its last event and keeps heads event-less', () => {
+    const layout = deriveEvidenceGraphLayout(graph({ timeline: [group({
+      key: 'idea:1',
+      claims: [claim({ claimKey: 'claim:c1', history: [
+        entry({ sourceEventId: 'e1', ts: '2026-09-01T10:00:00.000Z' }),
+        entry({ sourceEventId: 'e2', ts: '2026-09-03T10:00:00.000Z' }),
+        entry({ sourceEventId: 'e3', ts: '2026-09-02T10:00:00.000Z' }),
+      ] })],
+    })] }))
+    const head = layout.nodes.find(node => node.kind === 'claim')
+    expect(head).toBeDefined()
+    expect(head?.ts).toBe('2026-09-03T10:00:00.000Z')
+    expect(head?.eventId).toBeNull()
+    expect(head?.retracted).toBe(false)
+  })
+
   it('places Eureka markers on the matched band and a fallback band otherwise', () => {
     const timeline = [group({ key: 'idea:1', claims: [
       claim({ claimKey: 'claim:c1', history: [entry({ sourceEventId: 'e1', ts: '2026-09-01T10:00:00.000Z' })] }),

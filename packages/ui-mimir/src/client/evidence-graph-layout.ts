@@ -308,6 +308,7 @@ export function deriveEvidenceGraphLayout(
   const railYByClaim = new Map<string, number>()
   const railByClaim = new Map<string, EvidenceRailLayout>()
   const bandByClaim = new Map<string, EvidenceBandLayout>()
+  const claimByKey = new Map<string, EvidenceClaimHistory>()
   const beadDrafts: BeadDraft[] = []
   let bandY = topPad
   ordered.forEach(({ group }, bandIndex) => {
@@ -327,6 +328,7 @@ export function deriveEvidenceGraphLayout(
       const laneY = bandTop + bandHeader + laneIndex * lane + lane / 2
       railYByClaim.set(claim.claimKey, laneY)
       bandByClaim.set(claim.claimKey, band)
+      claimByKey.set(claim.claimKey, claim)
       for (const entry of claim.history) {
         beadDrafts.push({
           id: entry.sourceEventId,
@@ -398,8 +400,11 @@ export function deriveEvidenceGraphLayout(
     const depth = Math.min(Math.ceil(slot / 2), EVIDENCE_GRAPH_LAYOUT_DEFAULTS.nodeStackLimit)
     bead.y = (railYByClaim.get(bead.claimKey) ?? 0) + direction * depth * EVIDENCE_GRAPH_LAYOUT_DEFAULTS.nodeStackStep
   }
-  // Patch rails to their first/last bead x.
+  // Patch rails to their first/last bead x. The drafts are globally sorted by
+  // ts ascending, so the last write per claim is also its latest timestamp.
+  const lastTsByClaim = new Map<string, string>()
   for (const bead of beadDrafts) {
+    lastTsByClaim.set(bead.claimKey, bead.entry.ts)
     const rail = railByClaim.get(bead.claimKey)
     if (rail === undefined) continue
     if (rail.x1 === 0 || bead.x < rail.x1) {
@@ -447,7 +452,10 @@ export function deriveEvidenceGraphLayout(
     nodeByEvent.set(node.id, node)
   }
 
-  // Claim heads (branch tips with status).
+  // Claim heads (branch tips with status). The head carries the claim's last
+  // event timestamp (matching the rightmost bead its rail extends to) and the
+  // fold's conflict roll-up for the whole claim — bead-level flags only cover
+  // single events.
   for (const [claimKey, rail] of railByClaim) {
     if (rail.x1 === 0 && rail.x2 === 0) continue
     const headX = rail.x2 + 18
@@ -461,10 +469,10 @@ export function deriveEvidenceGraphLayout(
       r: EVIDENCE_GRAPH_LAYOUT_DEFAULTS.nodeMilestoneRadius,
       hue: rail.hue,
       claimKey,
-      ts: '',
+      ts: lastTsByClaim.get(claimKey) ?? '',
       label: rail.label,
       eventId: null,
-      conflict: false,
+      conflict: claimByKey.get(claimKey)?.hasConflict ?? false,
       retracted: false,
       status: rail.status,
     }))
