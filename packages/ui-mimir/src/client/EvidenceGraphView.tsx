@@ -21,6 +21,7 @@ import type {
 import type { ResearchEvidenceGraphSlice, ResearchEurekaSlice } from './controller.ts'
 import type { ResearchT } from './view-common.ts'
 import {
+  conflictLinesByClaim,
   evidenceRelKey,
   isStruckThrough,
   retractConfirmOf,
@@ -216,6 +217,10 @@ export function EvidenceGraphView({
       : deriveEvidenceGraphLayout(view.graph, { eurekaDeclarations: eureka.view?.declarations ?? [] })),
     [view, eureka.view],
   )
+  const conflictLines = useMemo(
+    () => (view === null ? undefined : conflictLinesByClaim(view.graph.conflicts, t)),
+    [view, t],
+  )
   const selectedNode = selectedId === null || layout === null ? null : layout.nodes.find(node => node.id === selectedId) ?? null
   const selectedEdge = selectedNode === null || selectedNode.eventId === null || view === null
     ? null
@@ -278,7 +283,13 @@ export function EvidenceGraphView({
             <p className={panelCss.hint}>{t('evidence.empty')}</p>
           ) : (
             <div className={css.graphViewport}>
-              <EvidenceGraphCanvas layout={layout} selectedId={selectedId} onSelect={setSelectedId} t={t} />
+              <EvidenceGraphCanvas
+                layout={layout}
+                selectedId={selectedId}
+                onSelect={setSelectedId}
+                t={t}
+                conflictLinesByClaim={conflictLines}
+              />
             </div>
           )}
 

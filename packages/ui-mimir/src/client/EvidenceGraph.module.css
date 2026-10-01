@@ -151,6 +151,20 @@
   stroke-width: 2;
 }
 
+/* Claim-level conflict roll-up (§69): a dashed halo outside the claim ring —
+   visually distinct from the solid per-event conflict ring above. */
+.evidenceClaimConflictRing {
+  fill: none;
+  stroke: var(--mimir-evidence-conflict, #e0655c);
+  stroke-width: 1.6;
+  stroke-dasharray: 4 3;
+  opacity: 0.9;
+}
+
+.evidenceConflictChip {
+  fill: var(--mimir-evidence-conflict, #e0655c);
+}
+
 .evidenceClaimCore {
   fill: var(--lane, #7dbe8a);
 }
