@@ -29,13 +29,22 @@ function RelationGlyph({ relClass }: { readonly relClass: string | null }) {
 }
 
 /** One circular node + its semantic treatment (§7.2/§21/§22/§79). */
-function EvidenceNode({ node, selected, onSelect, t }: {
+function EvidenceNode({ node, selected, onSelect, t, conflictDetail }: {
   readonly node: EvidenceNodeLayout
   readonly selected: boolean
   readonly onSelect: (id: string) => void
   readonly t: ResearchT
+  readonly conflictDetail: readonly string[] | undefined
 }) {
   const label = node.label
+  // A conflicted claim head speaks its roll-up in the accessible name and the
+  // hover title, then itemizes its conflict pairs as title detail lines.
+  const accessibleLabel = node.kind === 'claim' && node.conflict
+    ? `${label} · ${t('evidence.conflict')}`
+    : label
+  const title = node.kind === 'claim' && node.conflict && conflictDetail !== undefined && conflictDetail.length > 0
+    ? `${accessibleLabel}\n${conflictDetail.join('\n')}`
+    : accessibleLabel
   const select = (): void => { onSelect(node.id) }
   return (
     <g
@@ -44,11 +53,11 @@ function EvidenceNode({ node, selected, onSelect, t }: {
       data-lane={node.hue}
       role="button"
       tabIndex={0}
-      aria-label={label}
+      aria-label={accessibleLabel}
       onClick={select}
       onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select() } }}
     >
-      <title>{label}</title>
+      <title>{title}</title>
       <circle className={css.evidenceNodeHit} cx={node.x} cy={node.y} r={14} />
       {selected && <circle className={css.evidenceNodeSelection} cx={node.x} cy={node.y} r={node.r + 5} />}
       {node.kind === 'event' || node.kind === 'retract' ? (
@@ -63,12 +72,19 @@ function EvidenceNode({ node, selected, onSelect, t }: {
       ) : null}
       {node.kind === 'claim' && (
         <g transform={`translate(${node.x} ${node.y})`}>
+          {node.conflict && <circle className={css.evidenceClaimConflictRing} r={node.r + 4} />}
           <circle className={css.evidenceClaimRing} r={node.r} />
           <circle className={css.evidenceClaimCore} r={node.r - 3.5} />
           {node.status !== null && (
             <g transform={`translate(${node.r + 4} ${-node.r - 2})`}>
               <rect className={css.evidenceStatusTag} data-status={node.status} x={0} y={0} width={46} height={16} rx={4} />
               <text className={css.evidenceStatusText} x={23} y={12} textAnchor="middle">{t(`evidence.tag.${node.status}` as ResearchKey)}</text>
+            </g>
+          )}
+          {node.conflict && (
+            <g transform={`translate(${node.r + 4} 4)`}>
+              <rect className={css.evidenceConflictChip} width={56} height={16} rx={4} />
+              <text className={css.evidenceStatusText} x={28} y={12} textAnchor="middle">{t('evidence.conflict')}</text>
             </g>
           )}
         </g>
@@ -107,11 +123,13 @@ function EvidenceLink({ link }: { readonly link: EvidenceLinkLayout }) {
  * deterministic layout. The component is presentational — selection and
  * copy are the only interaction surface.
  */
-export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t }: {
+export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictLinesByClaim }: {
   readonly layout: EvidenceGraphLayout
   readonly selectedId: string | null
   readonly onSelect: (id: string) => void
   readonly t: ResearchT
+  /** Per-claim conflict-pair detail lines for conflicted heads' hover titles. */
+  readonly conflictLinesByClaim?: ReadonlyMap<string, readonly string[]> | undefined
 }) {
   const tickHeight = layout.height - 8
   return (
@@ -151,7 +169,16 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t }: {
 
       {/* Nodes (hit targets render last, visually transparent). */}
       {layout.nodes.map(node => (
-        <EvidenceNode key={node.id} node={node} selected={node.id === selectedId} onSelect={onSelect} t={t} />
+        <EvidenceNode
+          key={node.id}
+          node={node}
+          selected={node.id === selectedId}
+          onSelect={onSelect}
+          t={t}
+          conflictDetail={node.kind === 'claim' && node.conflict
+            ? conflictLinesByClaim?.get(node.claimKey ?? '')
+            : undefined}
+        />
       ))}
     </svg>
   )

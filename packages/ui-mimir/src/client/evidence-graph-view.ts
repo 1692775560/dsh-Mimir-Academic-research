@@ -7,11 +7,14 @@
  */
 
 import type {
+  EvidenceConflict,
   EvidenceGraphEdge,
   EvidenceTimelineEntry,
   ResearchEventFilter,
 } from 'dsh-mimir/types'
 import type { ResearchKey } from './locales.ts'
+import type { ResearchT } from './view-common.ts'
+import { clipLabel } from './evidence-graph-layout.ts'
 import { windowDays, type LedgerWindow } from './ledger-view.ts'
 
 /**
@@ -106,4 +109,38 @@ export function provenanceFilter(ts: string): ResearchEventFilter {
     since: new Date(anchor - PROVENANCE_SPAN_MS).toISOString(),
     until: new Date(anchor + PROVENANCE_SPAN_MS).toISOString(),
   }
+}
+
+/** CJK-safe truncation budget for one tooltip conflict-pair line's note part. */
+const CONFLICT_NOTE_BUDGET = 40
+
+/** One side of a conflict pair: the localized rel + the source key. */
+function conflictSide(rel: string, src: string, t: ResearchT): string {
+  return `${t(evidenceRelKey(rel))} · ${src}`
+}
+
+/**
+ * Group the fold's active conflict pairs into per-claim tooltip lines. One
+ * line per conflict, both ends itemized: `支持 · {src} ↔ 反驳 · {src}`, with
+ * the supporting side's note appended (CJK-safely truncated) when present.
+ * Deterministic: the fold's `conflicts` order is the stable iteration order.
+ * @param conflicts - the fold's active conflicts (supports × contradicts).
+ * @param t - the locale resolver.
+ * @returns claimKey → tooltip detail lines, in fold order.
+ */
+export function conflictLinesByClaim(
+  conflicts: readonly EvidenceConflict[],
+  t: ResearchT,
+): ReadonlyMap<string, readonly string[]> {
+  const byClaim = new Map<string, string[]>()
+  for (const conflict of conflicts) {
+    const note = conflict.supporting.note !== null
+      ? ` · ${clipLabel(conflict.supporting.note, CONFLICT_NOTE_BUDGET)}`
+      : ''
+    const line = `${conflictSide(conflict.supporting.rel, conflict.supporting.src, t)} ↔ ${conflictSide(conflict.contradicting.rel, conflict.contradicting.src, t)}${note}`
+    const bucket = byClaim.get(conflict.nodeKey)
+    if (bucket === undefined) byClaim.set(conflict.nodeKey, [line])
+    else bucket.push(line)
+  }
+  return byClaim
 }
