@@ -1,9 +1,4 @@
-/**
- * The one Remote failure class shared by owners, the Gateway, and consumers:
- * a real Error whose stable `code` and typed details survive the wire, so
- * discrimination never depends on instanceof or on message text.
- * @module @deepseek-ai/dsh-typert-protocol/remote-error
- */
+/** The one Remote failure class shared by owners, the Gateway, and consumers. */
 
 import type { RemoteErrorCode, RemoteErrorDetailsMap, RemoteFailure } from './types.ts'
 
@@ -48,7 +43,7 @@ export function remoteErrorOf(value: unknown): RemoteFailure | undefined {
   if (typeof value === 'object' && value !== null
     && (value as { isDSHRemoteError?: unknown }).isDSHRemoteError === true
     && typeof (value as { code?: unknown }).code === 'string') {
-    return value as unknown as RemoteFailure
+    return value as RemoteFailure
   }
   return undefined
 }

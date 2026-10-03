@@ -15,7 +15,7 @@
     "bundle": "pnpm -r run bundle"
   },
   "devDependencies": {
-    "@deepseek-ai/dsh-typert-generator": "0.1.2-alpha.4",
+    "@deepseek-ai/dsh-typert-generator": "0.2.0-rc.2",
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.20.0",
     "lightningcss": "^1.32.0",
