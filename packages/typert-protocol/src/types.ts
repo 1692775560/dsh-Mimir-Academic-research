@@ -5,6 +5,8 @@
  */
 
 import type { Context, Events } from '@deepseek-ai/cordis'
+import type { Branded } from '@deepseek-ai/dsh-brand'
+import type { TypertOwnedValue } from './owned-value.ts'
 
 declare const LOOKUP_HOST: unique symbol
 declare const LOOKUP_WIRE: unique symbol
@@ -74,6 +76,52 @@ export type RemoteFailure = {
 export type RemoteResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: RemoteFailure }
+
+declare const STREAM_UPLINK: unique symbol
+
+/**
+ * One Remote stream as a Host method returns it: the items it yields to the
+ * Client, iterated as a plain `AsyncIterable<Out>`. `In` is the type of the
+ * items the Client may send back on the same logical stream, read through
+ * `RemoteInvocation.uplink()`; it is carried only as a type-level marker. The
+ * default `never` declares a method that reads none, and its descriptor
+ * carries no uplink codec. A generated Client stream method returns the same
+ * stream as a `RemoteStreamHandle<Out, In>`.
+ * @template Out - item type the Host method yields.
+ * @template In - item type the Client may send; `never` when the method reads none.
+ */
+export type RemoteStream<Out, In = never> = AsyncIterable<Out> & { readonly [STREAM_UPLINK]?: In }
+
+/**
+ * One open Remote stream as the Client holds it: the downlink items as an
+ * `AsyncIterable`, plus the uplink and cancellation of the same logical
+ * stream. A generated Client stream method returns it, and calling that
+ * method opens the stream: a holder that neither iterates nor disposes the
+ * handle keeps the Host stream alive. A handle stands for one generation:
+ * when the carrier is lost, iteration fails with the carrier error and the
+ * handle is finished.
+ * @template Out - item type the Host method yields.
+ * @template In - item type the Client may send; `never` when the method reads none.
+ */
+export interface RemoteStreamHandle<Out, In> extends AsyncIterable<Out> {
+  /**
+   * Send one uplink item. Items sent before the stream has opened are queued
+   * and sent once the `open` frame is on the wire. A top-level `undefined`
+   * travels as an `item` frame without `value`.
+   * @param item - item the Host validates against the method's uplink codec.
+   * @throws {Error} when the item is not a lossless JSON value, when `end()`
+   * was called, or once the stream has terminated.
+   */
+  send(item: In): void
+  /** Half-close the uplink: the Host's `uplink()` iteration ends. Idempotent; ignored after termination. */
+  end(): void
+  /**
+   * Cancel the logical stream: send `cancel` unless a terminal frame has
+   * arrived, and end the downlink iterator quietly. Breaking out of
+   * `for await` early does the same.
+   */
+  dispose(): void
+}
 
 /** Merge-extensible scoped Remote method signatures generated for consumers. */
 export interface TypertRemoteScopeMap {}
@@ -223,7 +271,21 @@ export type TypertCodec =
   | {
     readonly mode: 'strict'
     readonly typeSymbol: string
-    readonly schema: TypertSchema
+    /** Materialize and return the process-realm schema on first boundary use. */
+    readonly create: () => TypertSchema
+    /**
+     * Decode a unary result whose fields require type-specific handling.
+     * @param value - result reconstructed by the RPC carrier.
+     * @returns the validated result, retaining native byte views.
+     */
+    readonly decode?: (value: unknown) => unknown
+    /**
+     * Project typed binary fields into RPC result attachments.
+     * @param value - native unary result.
+     * @param writeBytes - records a byte view at its result-relative path and returns its JSON placeholder.
+     * @returns JSON metadata with untouched JSON subtrees retained.
+     */
+    readonly encode?: (value: unknown, writeBytes: (bytes: Uint8Array, path: readonly (string | number)[]) => null) => unknown
   }
   | {
     readonly mode: 'src-json'
@@ -264,7 +326,7 @@ export interface InvocationDescriptor {
   readonly method: string
   /** Service member invoked when the exported method name is an alias. */
   readonly implementation?: string
-  /** Absent for unary calls; stream calls validate and deliver every yielded item. */
+  /** Absent for unary calls; stream calls deliver every yielded item as the Host produced it. */
   readonly mode?: 'stream'
   /** Receiver selection mode. */
   readonly invocation:
@@ -284,6 +346,16 @@ export interface InvocationDescriptor {
   }
   /** Ordered business parameters. */
   readonly parameters: readonly InvocationParameterDescriptor[]
+  /**
+   * Client-to-Host items of the same logical stream, generated from the `In`
+   * type argument of the method's `RemoteStream<Out, In>` return type; absent
+   * when `In` is `never`. The method reads the items through
+   * `RemoteInvocation.uplink()`, so nothing enters the parameter list.
+   */
+  readonly uplink?: {
+    /** Codec validating every uplink item before `uplink()` delivers it. */
+    readonly codec: TypertCodec
+  }
   /** Transport cancellation injected after business parameters instead of entering wire args. */
   readonly cancellation?: {
     /** Reserved final Host method parameter. */
@@ -293,6 +365,59 @@ export interface InvocationDescriptor {
   readonly result: TypertCodec
   /** Source declaration used only for diagnostics. */
   readonly sourceLocation?: InvocationSourceLocation
+}
+
+/**
+ * Opaque identity of one Peer: a party admitted to this Host by the connection
+ * layer. "Peer" is a connection-layer word; the browser application keeps the
+ * word "Client".
+ */
+export type PeerId = Branded<'PeerId'>
+
+/**
+ * One Peer's session on this Host. Connection owns it: `ctx` is the Cordis
+ * scope that owns connection-lifetime registrations and is disposed with the
+ * Peer. Who the Peer is and what it may do are not recorded here.
+ */
+export interface PeerScope {
+  readonly id: PeerId
+  readonly ctx: Context
+  /**
+   * Tear down every registration made through `ctx`.
+   * @returns settles once the scope has quiesced; racing calls share one completion.
+   */
+  dispose(): Promise<void>
+}
+
+/**
+ * The context of one Remote call, reachable inside the receiving method as
+ * `this.ctx.invocation`. The Gateway derives the receiver from a Context that
+ * carries it, so no parameter is injected and nothing crosses the wire.
+ */
+export interface RemoteInvocation {
+  readonly request: {
+    readonly namespace: string
+    readonly method: string
+    readonly args: Readonly<Record<string, unknown>>
+  }
+  /** Cordis service key of the receiving Service. */
+  readonly service: string
+  /** Peer the call speaks for; an in-process carrier speaks for the operator. */
+  readonly peer: PeerScope
+  /** Carrier cancellation: Client cancel, socket close, or an uplink failure. */
+  readonly signal: AbortSignal
+  /**
+   * The Client's uplink items for this call. Available once; a second call
+   * throws. With an uplink codec on the descriptor every item is decoded to
+   * `In`; without one items arrive as `unknown` after a JSON-safety check.
+   * Iteration ends when the Client ends its uplink; when the method finishes
+   * its downlink the Gateway calls the iterator's `return()` and unread items
+   * are dropped. `In` is the caller's assertion: the runtime decodes by the
+   * descriptor and does not cross-check it.
+   * @template In - item type the caller reads; the descriptor codec decides what arrives.
+   * @returns the single-consumer uplink iterable.
+   */
+  uplink<In = unknown>(): AsyncIterable<In>
 }
 
 /** Generated Host contract selected explicitly by a Client assembly. */
@@ -364,29 +489,18 @@ export interface TypertLookupDefinition {
   readonly wireTypeSymbol: string
 }
 
-/** Bidirectional projection between one environment's Context and its wire identity. */
-export interface TypertContextAdapter<Wire = unknown> {
-  /**
-   * Read the identity represented by a live Context.
-   * @param ctx - Context in this adapter's environment.
-   * @returns the wire identity, or `undefined` when the Context has another kind.
-   */
-  identity(ctx: Context): Wire | undefined
-  /**
-   * Resolve a wire identity to a live Context in this adapter's environment.
-   * An asynchronous Client resolver may wait for its owner to create the Context.
-   * @param id - validated wire identity.
-   * @returns the Context, or `undefined` when it is unavailable.
-   */
-  resolve(id: Wire): Context | undefined | Promise<Context | undefined>
-}
-
-/** Host Context adapter plus the wire declaration used by strict Remote methods. */
-export interface TypertHostContextAdapter<Wire = unknown> extends TypertContextAdapter<Wire> {
+/** Host wire-to-Context resolver plus the declaration used by strict Remote methods. */
+export interface TypertHostContextAdapter<Wire = unknown> {
   /** Wire field carrying the Context identity. */
   readonly wire: string
   /** Canonical wire type symbol used by strict generation. */
   readonly wireTypeSymbol: string
+  /**
+   * Resolve a validated wire identity to a live Host Context.
+   * @param id - validated wire identity.
+   * @returns the Context, or `undefined` when it is unavailable.
+   */
+  resolve(id: Wire): Context | undefined | Promise<Context | undefined>
 }
 
 /** Composition-owned resolver replacing one Host Context adapter's default lookup policy. */
@@ -403,19 +517,11 @@ export interface TypertClientContextAdapter<Wire = unknown> {
    */
   identity(ctx: Context): Wire | undefined
   /**
-   * Resolve a wire identity from the Client's currently materialized Contexts.
+   * Resolve a validated identity synchronously for one Client invocation.
    * @param id - validated wire identity.
-   * @returns the Client Context, or `undefined` when unavailable.
+   * @returns a borrowed or invocation-owned Client Context, or undefined when unavailable.
    */
-  resolve(id: Wire): Context | undefined
-}
-
-/** Host Context identity selected from the registered adapter set. */
-export interface TypertHostContextIdentity {
-  /** Merge-declared Context kind whose adapter recognized the Context. */
-  readonly kind: string
-  /** Wire identity returned by that adapter. */
-  readonly identity: unknown
+  resolve(id: Wire): Context | TypertOwnedValue<Context> | undefined
 }
 
 /** Notification emitted after a Typert runtime registry changes. */
@@ -527,7 +633,7 @@ export interface TypertContextRegistry {
   /**
    * Register a Host Context adapter.
    * @param key - merge-declared Context key.
-   * @param adapter - owning package's bidirectional Host projection.
+   * @param adapter - owning package's Host resolver and wire declaration.
    * @returns disposer withdrawing the exact adapter.
    */
   registerHost<K extends StringKeyOf<TypertContextMap>>(
@@ -555,13 +661,6 @@ export interface TypertContextRegistry {
     key: K,
     adapter: TypertClientContextAdapter<TypertContextWire<TypertContextMap[K]>>,
   ): TypertDisposer
-  /**
-   * Identify a live Host Context through the sole registered adapter set.
-   * @param ctx - Context projected by a Host-to-Client scoped event.
-   * @returns its kind and wire identity, or `undefined` when no adapter recognizes it.
-   * @throws when more than one Context kind recognizes the same Context.
-   */
-  identifyHost(ctx: Context): TypertHostContextIdentity | undefined
   /**
    * Look up a Host Context adapter.
    * @param key - descriptor Context key.
@@ -593,5 +692,11 @@ export interface TypertRegistryContract {
 declare module '@deepseek-ai/cordis' {
   interface Context {
     typert: TypertRegistryContract
+    /**
+     * The Remote call this Context was derived for, or `undefined` on a
+     * Context no Remote call derived. A Service method reads it as
+     * `this.ctx.invocation`.
+     */
+    readonly invocation: RemoteInvocation | undefined
   }
 }
