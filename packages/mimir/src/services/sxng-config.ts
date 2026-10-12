@@ -1,9 +1,16 @@
-/** Host-side persistence for sxng-cli's native global configuration. */
+/**
+ * Host-side persistence for sxng-cli's native global configuration: the
+ * panel-facing get/set verbs over `~/sxng-cli/sxng.config.json` (atomic
+ * writes, cross-process file lock, the key masked before it leaves the
+ * host). Reads are fail-open — a missing or malformed file reads as the
+ * documented defaults; writes validate before touching the disk.
+ * @module dsh-mimir/src/services/sxng-config
+ */
 
 import { mkdir, readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { rejected, success } from './common.ts'
 import type { ResearchGetSxngConfigResult, ResearchSetSxngConfigResult } from '../types.ts'
 
@@ -160,12 +167,17 @@ export async function setSxngConfig(request: {
   }
   const path = configPath()
   await mkdir(join(path, '..'), { recursive: true })
-  let existing: Record<string, unknown> = {}
-  try {
-    const raw = await readFile(path, 'utf8')
-    const parsed: unknown = JSON.parse(raw)
-    if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed as Record<string, unknown>
-  } catch { /* replace malformed/missing config with the documented fields */ }
-  await writeFileAtomic(path, `${JSON.stringify({ ...existing, ...next }, null, 2)}\n`, { mode: 0o600 })
+  // The read-modify-write of the shared host-side config runs behind the same
+  // cross-process file lock the rest of the codebase uses, so two concurrent
+  // saves (panel + sxng-cli) cannot silently drop each other's fields.
+  await withFileLock(path, async () => {
+    let existing: Record<string, unknown> = {}
+    try {
+      const raw = await readFile(path, 'utf8')
+      const parsed: unknown = JSON.parse(raw)
+      if (parsed !== null && typeof parsed === 'object' && !Array.isArray(parsed)) existing = parsed as Record<string, unknown>
+    } catch { /* replace malformed/missing config with the documented fields */ }
+    await writeFileAtomic(path, `${JSON.stringify({ ...existing, ...next }, null, 2)}\n`, { mode: 0o600 })
+  })
   return getSxngConfig()
 }

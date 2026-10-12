@@ -89,6 +89,9 @@ export function createFigureSaveTool(workspaceDir: string, domain: ResearchWikiD
         throw new Error(`figure_save: project '${projectId}' has an invalid paper directory`)
       }
       const rawPath = requireField(args.path, 'path')
+      if (!isAbsolute(rawPath) && rawPath.split(/[\\/]+/).includes('..')) {
+        throw new Error('figure_save: relative path must not climb out with ".." segments')
+      }
       // Relative paths resolve against the process directory first (where the
       // agent usually just wrote the file), then against the workspace root.
       const source = isAbsolute(rawPath)
@@ -98,7 +101,7 @@ export function createFigureSaveTool(workspaceDir: string, domain: ResearchWikiD
           : resolve(workspaceDir, rawPath)
       const sourceStats = await statOrUndefined(source)
       if (sourceStats === undefined || !sourceStats.isFile()) {
-        throw new Error(`figure_save: source file not found: ${rawPath}`)
+        throw new Error('figure_save: source file not found')
       }
       const name = args.name ?? basename(source)
       if (name === '' || name !== basename(name) || !isFigureFile(name)) {

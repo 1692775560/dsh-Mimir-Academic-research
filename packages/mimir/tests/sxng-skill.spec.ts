@@ -34,7 +34,10 @@ async function ageGitDir(cacheDir: string): Promise<void> {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('sxng skill provider cache lifecycle', () => {
-  it('lists the upstream skill after a first-use clone and loads its body', async () => {
+  // The fake git is a POSIX shell fixture the provider spawns directly;
+  // Windows cannot exec it (EFTYPE), and Node refuses .cmd shims without a
+  // shell — the lifecycle logic itself is platform-independent.
+  it.skipIf(process.platform === 'win32')('lists the upstream skill after a first-use clone and loads its body', async () => {
     const { provider } = await harness()
     const listed = await provider.list({ signal: new AbortController().signal })
     const [candidate] = Array.isArray(listed) ? listed : listed.candidates ?? []
@@ -46,7 +49,7 @@ describe('sxng skill provider cache lifecycle', () => {
     expect(definition?.content).toContain('Run a web search')
   })
 
-  it('silently pulls the checkout upstream once the cache is stale, keeping the body', async () => {
+  it.skipIf(process.platform === 'win32')('silently pulls the checkout upstream once the cache is stale, keeping the body', async () => {
     const { provider, cacheDir } = await harness()
     await provider.list({ signal: new AbortController().signal })
     await ageGitDir(cacheDir)
@@ -57,7 +60,7 @@ describe('sxng skill provider cache lifecycle', () => {
     expect(definition?.content).toContain('Run a web search')
   })
 
-  it('keeps the cached body when the refresh pull fails offline', async () => {
+  it.skipIf(process.platform === 'win32')('keeps the cached body when the refresh pull fails offline', async () => {
     const { provider, cacheDir } = await harness()
     await provider.list({ signal: new AbortController().signal })
     await ageGitDir(cacheDir)

@@ -256,9 +256,11 @@ function AddToBibButton({ paper, projectId, importPapersToBib, onError, t }: {
 }) {
   const [state, setState] = useState<AddToBibState>('idle')
   const resetTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const aliveRef = useRef(true)
 
   // Cancel a pending feedback reset on unmount.
   useEffect(() => () => {
+    aliveRef.current = false
     if (resetTimerRef.current !== null) clearTimeout(resetTimerRef.current)
   }, [])
 
@@ -266,6 +268,7 @@ function AddToBibButton({ paper, projectId, importPapersToBib, onError, t }: {
     if (projectId === null || state === 'adding') return
     setState('adding')
     void importPapersToBib(projectId, [paper.arxivId]).then((outcome) => {
+      if (!aliveRef.current) return
       if ('code' in outcome) {
         setState('idle')
         onError(`${t('papers.addToBibFailed')}：${outcome.message}`)

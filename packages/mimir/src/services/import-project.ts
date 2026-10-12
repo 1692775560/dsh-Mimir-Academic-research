@@ -186,7 +186,7 @@ export async function importProject(
     return rejected({ code: 'invalid-path', path: request.path })
   }
   if (!stats.isDirectory()) {
-    return rejected({ code: 'invalid-input', message: `not a directory: ${source}` })
+    return rejected({ code: 'invalid-input', message: `not a directory: ${request.path}` })
   }
 
   // Symlink confinement before anything is read in bulk or copied: every
@@ -196,7 +196,8 @@ export async function importProject(
   if ('offending' in scan) {
     return rejected({
       code: 'invalid-input',
-      message: `symlink dangling or escaping the source tree: ${scan.offending}; remove it before importing`,
+      // Tree-relative, so the message never carries a resolved host path.
+      message: `symlink dangling or escaping the source tree: ${relative(sourceReal, scan.offending)}; remove it before importing`,
     })
   }
 
@@ -204,7 +205,7 @@ export async function importProject(
   if (entryTex === undefined) {
     return rejected({
       code: 'invalid-input',
-      message: `no .tex file with \\documentclass found in ${source}; only directories containing a LaTeX project are supported`,
+      message: `no .tex file with \\documentclass found in ${request.path}; only directories containing a LaTeX project are supported`,
     })
   }
   const entrySource = await readFile(join(source, entryTex), 'utf8')

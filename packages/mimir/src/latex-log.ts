@@ -90,7 +90,9 @@ export function parseLatexErrors(log: string): LatexIssue[] {
     pending = undefined
   }
 
-  for (const line of log.split('\n')) {
+  // TeX engines on Windows emit CRLF logs; a bare \n split would leave a
+  // trailing \r on every line and defeat the anchored regexes below (#267).
+  for (const line of log.split(/\r?\n/)) {
     const currentFile = currentOpenFile(fileStack)
 
     const errorMatch = ERROR_LINE_RE.exec(line)

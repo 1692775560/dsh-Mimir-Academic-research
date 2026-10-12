@@ -58,6 +58,9 @@ export function VenuePicker({
   const [uploaded, setUploaded] = useState<readonly string[]>([])
   const rootRef = useRef<HTMLDivElement>(null)
   const fileRef = useRef<HTMLInputElement>(null)
+  const aliveRef = useRef(true)
+
+  useEffect(() => () => { aliveRef.current = false }, [])
 
   useEffect(() => {
     if (open) ensureVenueTemplates()
@@ -78,6 +81,7 @@ export function VenuePicker({
     setError(null)
     try {
       const failure = await action()
+      if (!aliveRef.current) return
       if (failure !== null) setError(failure.message)
       else setOpen(false)
     } finally {
@@ -91,6 +95,7 @@ export function VenuePicker({
     setError(null)
     try {
       await uploadTemplateFiles(projectId, dir, files)
+      if (!aliveRef.current) return
       setUploaded(files.map(file => file.name))
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))

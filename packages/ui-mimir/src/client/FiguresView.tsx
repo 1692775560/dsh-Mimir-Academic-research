@@ -133,6 +133,7 @@ export function FiguresView({
 }) {
   const [preview, setPreview] = useState<FigureEntry | null>(null)
   const [copiedPath, setCopiedPath] = useState<string | null>(null)
+  const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [upload, setUpload] = useState<{ done: number; total: number } | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
   // The card whose insert is in flight (its button reads "插入中…").
@@ -151,6 +152,11 @@ export function FiguresView({
   const fileInput = useRef<HTMLInputElement | null>(null)
 
   // Poll the figure list while an AI organize request is in flight.
+  // Cancel a pending copied-path reset on unmount.
+  useEffect(() => () => {
+    if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current)
+  }, [])
+
   useEffect(() => {
     if (organizing === null || projectId === null) return
     const timer = setInterval(() => { loadFigures(projectId, true, true) }, ORGANIZE_POLL_MS)
@@ -181,8 +187,9 @@ export function FiguresView({
 
   const copyLatex = (group: FigureGroup): void => {
     void navigator.clipboard.writeText(latexOf(group.insert, group.caption)).then(() => {
+      if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current)
       setCopiedPath(group.stem)
-      setTimeout(() => {
+      copiedTimerRef.current = setTimeout(() => {
         setCopiedPath(current => (current === group.stem ? null : current))
       }, COPIED_FEEDBACK_MS)
     })

@@ -11,6 +11,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { syncFile, realTargetDir, dshSkillsRoot, insideGitWorkTree } from '../src/commands/skill-sync.ts'
+import { canCreateSymlink } from './helpers/symlink-capability.ts'
 
 async function harness(): Promise<{ home: string; cache: string }> {
   const root = await mkdtemp(join(tmpdir(), 'mimir-skill-sync-'))
@@ -26,7 +27,7 @@ async function harness(): Promise<{ home: string; cache: string }> {
 const SKILL_BODY = '---\nname: sxng\ndescription: Web search CLI skill.\n---\n\n# sxng\n'
 
 describe('dshSkillsRoot / realTargetDir', () => {
-  it('resolves the root to <dshHome>/skills and follows a symlinked root to its real target', async () => {
+  it.skipIf(!canCreateSymlink())('resolves the root to <dshHome>/skills and follows a symlinked root to its real target', async () => {
     const { home } = await harness()
     expect(dshSkillsRoot()).toBe(join(home, 'skills'))
     const real = join(home, 'real-skills')

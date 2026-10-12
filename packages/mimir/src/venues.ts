@@ -23,7 +23,7 @@ export interface VenueTemplate {
 }
 
 /** Built-in venue templates, grouped by `series` in the picker. */
-export const VENUE_TEMPLATES: readonly VenueTemplate[] = [
+export const VENUE_TEMPLATES: readonly VenueTemplate[] = Object.freeze([
   {
     id: 'cvpr',
     name: 'CVPR (IEEE/CVF)',
@@ -156,7 +156,7 @@ export const VENUE_TEMPLATES: readonly VenueTemplate[] = [
       'Bibliography style `ACM-Reference-Format`.',
     ].join('\n'),
   },
-]
+])
 
 /** Look up one built-in venue template by id. */
 export function venueTemplateOf(id: string): VenueTemplate | undefined {

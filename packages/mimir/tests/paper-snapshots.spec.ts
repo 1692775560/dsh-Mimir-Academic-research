@@ -181,13 +181,17 @@ describe('capturePaperSnapshot', () => {
 })
 
 describe('ResearchService paper snapshots', () => {
+  // These drive a compile through a fake latexmk written as a POSIX shell
+  // fixture; Windows cannot exec it (EFTYPE). The compile orchestration is
+  // covered on POSIX by these and the latex-engine suites.
+  const canFakeLatexmk = process.platform !== 'win32'
   let workspaceDir: string
 
   afterEach(async () => {
     await rm(workspaceDir, { recursive: true, force: true })
   })
 
-  it('captures a snapshot after a successful compile, never after a failure', async () => {
+  it.skipIf(!canFakeLatexmk)('captures a snapshot after a successful compile, never after a failure', async () => {
     const engine = await fakeLatexmk(await mkdtemp(join(tmpdir(), 'mimir-fake-bin-')), true)
     const env = await harness(engine)
     workspaceDir = env.workspaceDir
@@ -216,7 +220,7 @@ describe('ResearchService paper snapshots', () => {
     expect(after.ok && after.value.snapshots).toHaveLength(1)
   })
 
-  it('reverts a snapshot under optimistic concurrency', async () => {
+  it.skipIf(!canFakeLatexmk)('reverts a snapshot under optimistic concurrency', async () => {
     const engine = await fakeLatexmk(await mkdtemp(join(tmpdir(), 'mimir-fake-bin-')), true)
     const env = await harness(engine)
     workspaceDir = env.workspaceDir
@@ -255,7 +259,7 @@ describe('ResearchService paper snapshots', () => {
     }
   })
 
-  it('recreates a file the snapshot carries but the paper lost', async () => {
+  it.skipIf(!canFakeLatexmk)('recreates a file the snapshot carries but the paper lost', async () => {
     const engine = await fakeLatexmk(await mkdtemp(join(tmpdir(), 'mimir-fake-bin-')), true)
     const env = await harness(engine)
     workspaceDir = env.workspaceDir

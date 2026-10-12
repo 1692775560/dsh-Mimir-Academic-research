@@ -1,0 +1,3 @@
+# Normalize line endings: the style gate (no-crlf, CODE_STYLE §8) requires LF
+# in every text file, so checkouts must not translate to CRLF on any platform.
+* text=auto eol=lf

@@ -18,10 +18,11 @@
  * @module dsh-mimir/src/commands/skill-sync
  */
 
-import { mkdir, readFile, realpath, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, realpath } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { homedir } from 'node:os'
 import { existsSync } from 'node:fs'
+import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 
@@ -68,11 +69,17 @@ export function insideGitWorkTree(path: string): boolean {
  * `git-kept` outcome — reported, never written.
  */
 export async function syncFile(source: string, destination: string): Promise<'written' | 'noop' | 'git-kept'> {
-  const [sourceBody, destBody] = await Promise.all([readFile(source), readFile(destination).catch(() => undefined)])
-  if (destBody?.equals(sourceBody)) return 'noop'
+  const [sourceBody, destBody] = await Promise.all([readFile(source, 'utf8'), readFile(destination, 'utf8').catch(() => undefined)])
+  if (destBody === sourceBody) return 'noop'
   if (insideGitWorkTree(destination)) return 'git-kept'
   await mkdir(dirname(destination), { recursive: true })
-  await writeFile(destination, sourceBody)
+  // Atomic like every other write path: a concurrent reader (the skill
+  // runtime) must never observe a half-written SKILL.md. Resolve a symlinked
+  // final file to its referent first — the atomic rename replaces the target
+  // itself, and this command's contract is to update the file the user's
+  // setup actually reads, never to swap the link out.
+  const referent = await realpath(destination).catch(() => destination)
+  await writeFileAtomic(referent, sourceBody, { mode: 0o644 })
   return 'written'
 }
 

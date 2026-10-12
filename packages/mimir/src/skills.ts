@@ -759,7 +759,7 @@ doc.close()
 
 
 /** Every skill bundled with the suite, in catalog order. */
-export const BUNDLED_SKILLS: readonly BundledSkill[] = [
+export const BUNDLED_SKILLS: readonly BundledSkill[] = Object.freeze([
   {
     name: 'research-pipeline',
     description: 'Orchestrate one project through the full research loop: ideation, novelty gate, literature, plan, experiments, claim gate, writing, review. Use when the user says "做科研", "research pipeline", "从想法到论文", or wants the whole workflow driven end to end.',
@@ -826,7 +826,7 @@ export const BUNDLED_SKILLS: readonly BundledSkill[] = [
     whenToUse: 'A group meeting is coming and the user wants a slide deck with real paper figures, generated end-to-end.',
     content: RESEARCH_MEETING_DECK,
   },
-]
+])
 
 /**
  * Register the bundled skills into the composition's skill registry when one

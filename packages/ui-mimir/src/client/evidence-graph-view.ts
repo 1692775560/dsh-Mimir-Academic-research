@@ -7,11 +7,51 @@
  */
 
 import type {
+  EvidenceConflict,
   EvidenceGraphEdge,
   EvidenceTimelineEntry,
   ResearchEventFilter,
 } from 'dsh-mimir/types'
 import type { ResearchKey } from './locales.ts'
+import type { ResearchT } from './view-common.ts'
+import { clipLabel } from './evidence-graph-layout.ts'
+import { windowDays, type LedgerWindow } from './ledger-view.ts'
+
+/**
+ * The evidence graph's window request — the exact contract of the host's
+ * `getEvidenceGraph` verb: optional project scope plus ISO-8601 bounds
+ * (`since` inclusive, `until` = now). No list-only fields (`limit`, `order`)
+ * ever cross this boundary.
+ */
+export interface EvidenceGraphRequest {
+  readonly projectId?: string | undefined
+  readonly since?: string | undefined
+  readonly until?: string | undefined
+}
+
+/**
+ * Translate the ledger's authoritative window + project scope into the
+ * evidence graph's window request (the SAME resolved semantics as
+ * `ledgerWindowFilter`: bounded windows get `since = now − days`, `all` opens
+ * the lower bound, `until` is always now). The ledger owns this state; the
+ * graph never grows a second filter system.
+ * @param window - the ledger's selected time window.
+ * @param projectId - the ledger's resolved project scope, or null.
+ * @param nowMs - the wall clock (injectable for tests).
+ * @returns the request for one `getEvidenceGraph` call.
+ */
+export function evidenceGraphRequestOf(
+  window: LedgerWindow,
+  projectId: string | null,
+  nowMs: number,
+): EvidenceGraphRequest {
+  const days = windowDays(window)
+  return {
+    ...(projectId === null ? {} : { projectId }),
+    ...(days === null ? {} : { since: new Date(nowMs - days * 86_400_000).toISOString() }),
+    until: new Date(nowMs).toISOString(),
+  }
+}
 
 /** The raw-timeline jump window around one provenance event (±1 day). */
 const PROVENANCE_SPAN_MS = 86_400_000
@@ -69,4 +109,38 @@ export function provenanceFilter(ts: string): ResearchEventFilter {
     since: new Date(anchor - PROVENANCE_SPAN_MS).toISOString(),
     until: new Date(anchor + PROVENANCE_SPAN_MS).toISOString(),
   }
+}
+
+/** CJK-safe truncation budget for one tooltip conflict-pair line's note part. */
+const CONFLICT_NOTE_BUDGET = 40
+
+/** One side of a conflict pair: the localized rel + the source key. */
+function conflictSide(rel: string, src: string, t: ResearchT): string {
+  return `${t(evidenceRelKey(rel))} · ${src}`
+}
+
+/**
+ * Group the fold's active conflict pairs into per-claim tooltip lines. One
+ * line per conflict, both ends itemized: `支持 · {src} ↔ 反驳 · {src}`, with
+ * the supporting side's note appended (CJK-safely truncated) when present.
+ * Deterministic: the fold's `conflicts` order is the stable iteration order.
+ * @param conflicts - the fold's active conflicts (supports × contradicts).
+ * @param t - the locale resolver.
+ * @returns claimKey → tooltip detail lines, in fold order.
+ */
+export function conflictLinesByClaim(
+  conflicts: readonly EvidenceConflict[],
+  t: ResearchT,
+): ReadonlyMap<string, readonly string[]> {
+  const byClaim = new Map<string, string[]>()
+  for (const conflict of conflicts) {
+    const note = conflict.supporting.note !== null
+      ? ` · ${clipLabel(conflict.supporting.note, CONFLICT_NOTE_BUDGET)}`
+      : ''
+    const line = `${conflictSide(conflict.supporting.rel, conflict.supporting.src, t)} ↔ ${conflictSide(conflict.contradicting.rel, conflict.contradicting.src, t)}${note}`
+    const bucket = byClaim.get(conflict.nodeKey)
+    if (bucket === undefined) byClaim.set(conflict.nodeKey, [line])
+    else bucket.push(line)
+  }
+  return byClaim
 }

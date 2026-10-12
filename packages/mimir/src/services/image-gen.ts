@@ -11,7 +11,7 @@
 
 import { mkdir, readFile, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
-import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { writeFileAtomic, withFileLock } from '@deepseek-ai/dsh-atomic-write'
 import { rejected, success } from './common.ts'
 import type { ResearchGetImageGenConfigResult, ResearchSetImageGenConfigResult } from '../types.ts'
 
@@ -94,18 +94,24 @@ export async function setImageGenConfig(
   workspaceDir: string,
   request: { baseUrl?: string | undefined; apiKey?: string | undefined; model?: string | undefined; size?: string | undefined },
 ): Promise<ResearchSetImageGenConfigResult> {
-  const current = await readImageGenConfig(workspaceDir)
-  const next: ImageGenConfig = {
-    baseUrl: request.baseUrl?.trim() || current.baseUrl,
-    apiKey: request.apiKey === undefined ? current.apiKey : request.apiKey.trim(),
-    model: request.model?.trim() || current.model,
-    size: request.size?.trim() || current.size,
-  }
-  if (!/^https?:\/\//.test(next.baseUrl)) {
-    return rejected({ code: 'invalid-input', message: 'baseUrl must be an http(s) URL' })
-  }
-  await writeFileAtomic(join(workspaceDir, IMAGE_GEN_CONFIG_FILE), `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 })
-  return getImageGenConfig(workspaceDir)
+  const path = join(workspaceDir, IMAGE_GEN_CONFIG_FILE)
+  // The read-merge-write of the stored key and endpoint runs behind the same
+  // cross-process file lock the rest of the codebase uses, so two concurrent
+  // saves cannot silently drop each other's fields.
+  return withFileLock(path, async (): Promise<ResearchSetImageGenConfigResult> => {
+    const current = await readImageGenConfig(workspaceDir)
+    const next: ImageGenConfig = {
+      baseUrl: request.baseUrl?.trim() || current.baseUrl,
+      apiKey: request.apiKey === undefined ? current.apiKey : request.apiKey.trim(),
+      model: request.model?.trim() || current.model,
+      size: request.size?.trim() || current.size,
+    }
+    if (!/^https?:\/\//.test(next.baseUrl)) {
+      return rejected({ code: 'invalid-input', message: 'baseUrl must be an http(s) URL' })
+    }
+    await writeFileAtomic(path, `${JSON.stringify(next, null, 2)}\n`, { mode: 0o600 })
+    return getImageGenConfig(workspaceDir)
+  })
 }
 
 /** Injectable fetch seam for tests (same subset of fetch the client uses). */

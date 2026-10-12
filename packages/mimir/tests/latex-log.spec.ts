@@ -118,3 +118,39 @@ describe('parseLatexErrors', () => {
     ])
   })
 })
+
+describe('parseLatexErrors with CRLF line endings (Windows, #267)', () => {
+  const log = [
+    'This is pdfTeX, Version 3.14159265 (MiKTeX 24.1)',
+    '(./main.tex',
+    '! LaTeX Error: File `missing.png\' not found.',
+    'See the LaTeX manual or LaTeX Companion for explanation.',
+    'l.42 \\includegraphics{missing.png}',
+    'LaTeX Warning: Reference `fig:x\' on page 1 undefined on input line 15.',
+    'Package hyperref Warning: Token not allowed in a PDF string on input line 9.',
+    ')',
+    'Output written on main.pdf (3 pages, 91234 bytes).',
+  ].join('\r\n')
+
+  it('recovers errors and warnings from a CRLF log', () => {
+    const issues = parseLatexErrors(log)
+    expect(issues.filter((issue) => issue.severity === 'error').length).toBe(1)
+    expect(issues.filter((issue) => issue.severity === 'warning').length).toBe(2)
+  })
+
+  it('strips carriage returns from messages and keeps file and line attribution', () => {
+    const issues = parseLatexErrors(log)
+    for (const issue of issues) {
+      expect(issue.message).not.toContain('\r')
+    }
+    expect(issues).toEqual([
+      { severity: 'error', file: './main.tex', line: 42, message: 'LaTeX Error: File `missing.png\' not found.' },
+      { severity: 'warning', file: './main.tex', line: 15, message: 'Reference `fig:x\' on page 1 undefined' },
+      { severity: 'warning', file: './main.tex', line: 9, message: 'Token not allowed in a PDF string' },
+    ])
+  })
+
+  it('parses a CRLF log identically to its LF counterpart', () => {
+    expect(parseLatexErrors(log)).toEqual(parseLatexErrors(log.replace(/\r\n/g, '\n')))
+  })
+})

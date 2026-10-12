@@ -80,7 +80,10 @@ async function collectSourceFiles(paperDir: string): Promise<string[] | undefine
         await walk(absolute)
       } else if (entry.isFile()
         && SNAPSHOT_EXTENSIONS.some(ext => entry.name.toLowerCase().endsWith(ext))) {
-        found.push(relative(paperDir, absolute))
+        // Manifest paths are workspace-neutral forward-slash paths: they show
+        // in the panel and are re-joined on revert, and the snapshot contract
+        // is identical across platforms (relative() is platform-sep'd).
+        found.push(relative(paperDir, absolute).split(sep).join('/'))
       }
     }
   }

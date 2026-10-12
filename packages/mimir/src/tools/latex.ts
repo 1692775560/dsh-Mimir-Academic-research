@@ -169,7 +169,9 @@ const TECTONIC_LOCATION_RE = /^(\S+\.tex):(\d+):\s+(.*)$/
  */
 export function parseTectonicErrors(log: string): LatexIssue[] {
   const issues: LatexIssue[] = []
-  for (const line of log.split('\n')) {
+  // Tectonic on Windows emits CRLF stdout; a bare \n split would leave a
+  // trailing \r on every line and defeat the anchored regexes below (#267).
+  for (const line of log.split(/\r?\n/)) {
     const match = TECTONIC_DIAGNOSTIC_RE.exec(line)
     if (match === null) continue
     const severity = match[1] === 'error' ? 'error' as const : 'warning' as const
@@ -258,7 +260,7 @@ function runEngine(
 export async function compileLatex(projectDir: string, options: LatexToolOptions, signal: AbortSignal): Promise<LatexCompileResult> {
   const stats = await stat(projectDir).catch(() => undefined)
   if (stats === undefined || !stats.isDirectory()) {
-    throw new Error(`latex_compile: '${projectDir}' is not an existing directory containing main.tex`)
+    throw new Error('latex_compile: project_dir is not an existing directory containing main.tex')
   }
   const engine = await resolveLatexEngine(options.engine, options.probe)
   const { ok, log } = await runEngine(engine, projectDir, options.timeoutMs, signal)
