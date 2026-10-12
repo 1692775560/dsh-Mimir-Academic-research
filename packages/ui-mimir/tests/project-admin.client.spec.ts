@@ -118,7 +118,7 @@ describe('ResearchController project management', () => {
       ok: true,
       value: {
         projectId: request.projectId,
-        removed: { experiments: 1, figures: 2, venueWatches: 0, ideas: 0, paperLinks: 1, meetingsRemoved: true },
+        removed: { experiments: 1, figures: 2, venueWatches: 0, ideas: 0, paperLinks: 1, meetingsRemoved: true, paperDirRemoved: false },
       },
     })))
     const remote = stubRemote({
@@ -216,7 +216,7 @@ describe('ResearchController project deselection', () => {
 
   const IDLE: ResearchCompileStatusResult = {
     ok: true,
-    value: { state: 'idle', issues: [], engine: null, pdfUpdatedAt: null },
+    value: { state: 'idle', issues: [], engine: null, pdfUpdatedAt: null, observed: false },
   }
 
   it('flushes the dirty draft and empties every per-project slice', async () => {
@@ -240,7 +240,7 @@ describe('ResearchController project deselection', () => {
       compile: () => {
         compiles += 1
         return Promise.resolve(carried<ResearchCompileResult>({
-          ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 3 },
+          ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 3, observed: true },
         }))
       },
     }))

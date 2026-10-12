@@ -171,7 +171,7 @@ const FOCUSABLE_SELECTOR = 'button:not(:disabled), a[href], input:not(:disabled)
  * @returns the workbench while open, or null while closed.
  */
 export function ResearchPanel({
-  useStore, actions, useResearch, useChrome, useSessions,
+  useStore, actions, useResearch, useChrome, useSessionList,
   ensure, selectProject, importProject, createProject, renameProject, deleteProject, selectSession, compile, editSource, reloadSource, requestCompileFix,
   requestRelatedWork, requestPaperScore, requestFigureOrganize,
   ensurePapers, refreshPapers, searchArxiv, searchWeb, importPaper, removePaper, updatePaper, fetchPaperPdf, loadArtifact, loadFigures, uploadFigures, deleteFigure,
@@ -239,8 +239,8 @@ export function ResearchPanel({
   const backup = useResearch(view => view.backup)
   const taskHealth = useResearch(view => view.taskHealth)
   const paperJump = useResearch(view => view.paperJump)
-  const sessionList = useSessions(view => view.list)
-  const currentSessionId = useSessions(view => view.current)
+  const sessionList = useSessionList(view => view.list)
+  const currentSessionId = useSessionList(view => view.current)
   const rootRef = useRef<HTMLDivElement>(null)
 
   // Sidebar project list fold; persists across panel opens like the paper

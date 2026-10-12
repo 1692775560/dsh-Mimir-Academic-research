@@ -11,7 +11,7 @@ import { describe, expect, it } from 'vitest'
 import { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import type { UserMessage } from '@deepseek-ai/dsh-llm'
-import type { SubagentResult, SubagentRun, SubagentRuntime } from '@deepseek-ai/dsh-subagent'
+import type { SubagentActivation, SubagentResult, SubagentRuntime } from '@deepseek-ai/dsh-subagent'
 import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
@@ -49,17 +49,16 @@ function fakeSubagents(behaviors: StartBehavior[]): {
   }
   const runtime = {
     getProvider: (name: string) => (name === 'spawn' ? provider : undefined),
-    start: (_name: string, request: { signal: AbortSignal }) => {
-      starts.push({ signal: request.signal })
+    startActivation: (spec: { signal: AbortSignal }) => {
+      starts.push({ signal: spec.signal })
       const behavior = behaviors[starts.length - 1]
       if (behavior === undefined) throw new Error('unexpected extra reviewer start')
-      const result = typeof behavior === 'function' ? behavior(request.signal) : Promise.resolve(behavior)
+      const result = typeof behavior === 'function' ? behavior(spec.signal) : Promise.resolve(behavior)
       return Promise.resolve({
-        id: `run-${starts.length}`,
-        localAgent: undefined,
+        childId: `run-${starts.length}`,
         result,
         dispose: () => Promise.resolve(),
-      } as unknown as SubagentRun)
+      } as unknown as SubagentActivation)
     },
   }
   return { runtime: runtime as unknown as SubagentRuntime, starts }

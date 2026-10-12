@@ -8,7 +8,7 @@ import { typertPlugin } from '@deepseek-ai/dsh-typert-generator/tsdown'
 // would analyze the vendored protocol package too, which fails on merged
 // interfaces partly owned by npm releases.
 export default defineConfig({
-  entry: ['lib/types/{index,invariant}.js'],
+  entry: ['lib/types/index.js'],
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',

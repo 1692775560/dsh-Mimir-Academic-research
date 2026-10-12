@@ -48,7 +48,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 
 装到了旧版本（比如 0.11.x/0.12.x）？dsh 的插件商店走 pnpm，默认会延迟加载刚发布的新版本。改用精确版本号：`dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.21.0`
 
-版本兼容：**0.18.x 需要 dsh ≥ 0.1.2-alpha.4**（上游有破坏性改动）。旧版 dsh 请钉住上一个版本：`dsh plugin --profile web add dsh-mimir@0.16.0`。
+版本兼容：**0.21.1 需要 dsh ≥ 0.2.0-rc.1**（上游删除了 runtime-invariants 包，并把全局当前会话 API 换成 mainView 引用保持 + `uiWorkspace.openSession`；已对 0.2.1-alpha.2 验证）。dsh 0.1.x 请钉住上一个版本：`dsh plugin --profile web add dsh-mimir@0.21.0`。**0.18.x–0.21.0 需要 dsh ≥ 0.1.2-alpha.4**；更旧的 dsh 请钉 0.16.0。
 
 点击侧栏底部的 **Mimir**。wiki 存在 `~/.dsh/storages/research_wiki.json`，工件落盘 `./.research`。
 

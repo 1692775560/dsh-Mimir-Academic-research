@@ -9,9 +9,12 @@
  */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
-import type { ISessions } from '@deepseek-ai/dsh-api-session-controller/client'
+import type { ISessions, SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the Client assembly's ctx.remote merge (TypertClientRemote).
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
+// Type-only: pulls the workspace navigation service merge (ctx.uiWorkspace);
+// session switching is navigation, and ISessions.open is gone.
+import type {} from '@deepseek-ai/dsh-client-ui-workspace/client'
 // Runtime + types: the generated research Remote contribution. The panel
 // mounts the namespace itself (see apply): the published dsh-api-remotes
 // assembly does not carry it, and the bundle preset inlines generated
@@ -24,7 +27,7 @@ import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 // Type-only: pulls the renderer-owned SlotRegistry service merge (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
 import { ResearchController } from './controller.ts'
-import { sameSessionListView, sessionListView, type ResearchSessionListView } from './project-form.ts'
+import { currentSessionIdOf, sameSessionListView, sessionListView, type ResearchSessionListView } from './project-form.ts'
 import { ResearchPanel } from './ResearchPanel.tsx'
 import { ResearchToggle } from './ResearchToggle.tsx'
 import type { ResearchPanelInjected } from './slots.ts'
@@ -112,7 +115,7 @@ export function apply(ctx: ClientContext): void {
     ctx.effect(() => unmountResearch, 'ui-mimir: research remote')
     ctx.plugin({
       name: 'dsh-client-ui-mimir/panel',
-      inject: ['slots', 'remote.research', 'sessions', 'locale', 'theme'],
+      inject: ['slots', 'remote.research', 'sessions', 'uiWorkspace', 'locale', 'theme'],
       apply: panelApply,
     })
   })().catch((error: unknown) => {
@@ -226,8 +229,8 @@ function panelApply(ctx: ClientContext): void {
     sentCopy: ResearchKey,
     failedCopy: ResearchKey,
   ): Promise<void> => {
-    const current = sessions.list.getSnapshot().current
-    const binding = current === undefined ? undefined : sessions.binding(current)
+    const current = currentSessionIdOf(sessions.list.getSnapshot())
+    const binding = current === null ? undefined : sessions.binding(current as Parameters<ISessions['binding']>[0])
     if (binding === undefined) {
       controller.notify('error', 'toast.fixNoSession')
       return
@@ -248,7 +251,7 @@ function panelApply(ctx: ClientContext): void {
     store: panel,
     locale: NS,
     inject: (actions): ResearchPanelInjected => ({
-      hooks: { research: controller, chrome, sessions: sessionHook },
+      hooks: { research: controller, chrome, sessionList: sessionHook },
       toggleTheme: () => { ctx.theme.setTheme(nextColorScheme(chromeSnapshot.dark)) },
       toggleLocale: () => { ctx.locale.setLocale(nextLocale(chromeSnapshot.locale)) },
       ensure: () => { controller.ensure() },
@@ -280,7 +283,9 @@ function panelApply(ctx: ClientContext): void {
       deleteProject: (projectId) => controller.deleteProject(projectId),
       // The session switcher: the current session is the delivery target of
       // every "… with AI" verb; the wiki itself is shared across sessions.
-      selectSession: (sessionId) => { sessions.open(sessionId as Parameters<ISessions['open']>[0]) },
+      // Selection is navigation — the workspace service swaps its mainView
+      // reference, which the switcher then reads back as "current".
+      selectSession: (sessionId) => { ctx.uiWorkspace.openSession(sessionId as SessionTarget) },
       compile: (projectId) => { void controller.compile(projectId) },
       // The per-issue "fix with AI" button.
       requestCompileFix: prompt => sendPromptToCurrentSession(prompt, 'toast.fixSent', 'toast.fixSendFailed'),

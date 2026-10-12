@@ -48,7 +48,7 @@ dsh web                                          # then open http://127.0.0.1:30
 
 Got an old version (e.g. 0.11.x/0.12.x)? dsh's plugin store uses pnpm, which holds back freshly published releases by default. Pin the exact version instead: `dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.21.0`
 
-Version compatibility: **0.18.x requires dsh ≥ 0.1.2-alpha.4** (upstream breaking changes). On an older dsh, pin the previous release: `dsh plugin --profile web add dsh-mimir@0.16.0`.
+Version compatibility: **0.21.1 requires dsh ≥ 0.2.0-rc.1** (upstream removed the runtime-invariants package and replaced the global current-session API with mainView retention + `uiWorkspace.openSession`; verified against 0.2.1-alpha.2). On dsh 0.1.x, pin the previous release: `dsh plugin --profile web add dsh-mimir@0.21.0`. **0.18.x–0.21.0 require dsh ≥ 0.1.2-alpha.4**; on an older dsh, pin 0.16.0.
 
 Click **Mimir** in the sidebar footer. The wiki persists at `~/.dsh/storages/research_wiki.json`; artifacts land under `./.research`.
 
