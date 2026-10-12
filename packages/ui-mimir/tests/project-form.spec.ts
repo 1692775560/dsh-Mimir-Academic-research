@@ -48,14 +48,13 @@ describe('nextSelectionAfterDelete', () => {
 })
 
 describe('sessionListView', () => {
-  it('projects the ids in order with the current selection', () => {
+  it('projects the ids in order with the mainView-retained selection', () => {
     const view = sessionListView({
       ids: ['s1', 's2'],
       byId: {
         s1: { displayTitle: 'First', running: true },
-        s2: { displayTitle: 'Second', running: false },
+        s2: { displayTitle: 'Second', running: false, retainedBy: { mainView: 1 } },
       },
-      current: 's2',
     })
     expect(view.current).toBe('s2')
     expect(view.list).toEqual([
@@ -64,25 +63,31 @@ describe('sessionListView', () => {
     ])
   })
 
-  it('maps no selection to null and falls back to the id for a missing row', () => {
-    const view = sessionListView({ ids: ['s1'], byId: {}, current: undefined })
+  it('maps no mainView-retained row to null and falls back to the id for a missing row', () => {
+    const view = sessionListView({ ids: ['s1'], byId: {} })
     expect(view.current).toBeNull()
     expect(view.list).toEqual([{ id: 's1', title: 's1', running: false }])
+  })
+
+  it('ignores non-mainView references when picking the current session', () => {
+    const view = sessionListView({
+      ids: ['s1'],
+      byId: { s1: { displayTitle: 'First', running: false, retainedBy: { gateway: 2 } } },
+    })
+    expect(view.current).toBeNull()
   })
 })
 
 describe('sameSessionListView', () => {
   const base = sessionListView({
     ids: ['s1'],
-    byId: { s1: { displayTitle: 'First', running: false } },
-    current: 's1',
+    byId: { s1: { displayTitle: 'First', running: false, retainedBy: { mainView: 1 } } },
   })
 
   it('treats equal projections as identical (the adapter keeps identity)', () => {
     const again = sessionListView({
       ids: ['s1'],
-      byId: { s1: { displayTitle: 'First', running: false } },
-      current: 's1',
+      byId: { s1: { displayTitle: 'First', running: false, retainedBy: { mainView: 1 } } },
     })
     expect(sameSessionListView(base, again)).toBe(true)
   })
@@ -92,13 +97,11 @@ describe('sameSessionListView', () => {
     expect(sameSessionListView(base, { ...base, list: Object.freeze([]) })).toBe(false)
     expect(sameSessionListView(base, sessionListView({
       ids: ['s1'],
-      byId: { s1: { displayTitle: 'Renamed', running: false } },
-      current: 's1',
+      byId: { s1: { displayTitle: 'Renamed', running: false, retainedBy: { mainView: 1 } } },
     }))).toBe(false)
     expect(sameSessionListView(base, sessionListView({
       ids: ['s1'],
-      byId: { s1: { displayTitle: 'First', running: true } },
-      current: 's1',
+      byId: { s1: { displayTitle: 'First', running: true, retainedBy: { mainView: 1 } } },
     }))).toBe(false)
   })
 })

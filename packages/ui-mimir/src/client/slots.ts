@@ -39,8 +39,14 @@ export interface ResearchPanelInjected {
     research: HostObservable<ResearchView>
     /** The header chrome snapshot: resolved color scheme and active locale. */
     chrome: HostObservable<WorkbenchChrome>
-    /** The session switcher's view: the host's session list + current pick. */
-    sessions: HostObservable<ResearchSessionListView>
+    /**
+     * The session switcher's view: the host's session list + current pick.
+     * Named sessionList (not sessions): ui-session's root contribution already
+     * owns a `sessions` hook over the raw SessionListState, and a colliding
+     * name would make the bound useSessions ambiguous (and, since 0.2.x,
+     * ill-typed — that state has no list/current).
+     */
+    sessionList: HostObservable<ResearchSessionListView>
   }
   /** Toggle the host theme between light and dark (durable via Host settings). */
   toggleTheme: () => void
@@ -92,10 +98,10 @@ export interface ResearchPanelInjected {
    */
   deleteProject: (projectId: string) => Promise<ResearchFailureView | null>
   /**
-   * Make one host session the current one (the session switcher): this is
-   * the host-GLOBAL current session — the whole client follows it, and every
-   * "… with AI" verb of the panel delivers there. The wiki itself is shared
-   * across sessions.
+   * Make one host session the current one (the session switcher): this
+   * navigates the main conversation view, whose mainView reference IS the
+   * client-wide current session — every "… with AI" verb of the panel
+   * delivers there. The wiki itself is shared across sessions.
    * @param sessionId - host session id.
    */
   selectSession: (sessionId: string) => void

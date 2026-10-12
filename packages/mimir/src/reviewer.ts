@@ -179,22 +179,28 @@ export async function runReview(
 
   /** One reviewer attempt: start a fresh child, await its verdict, always dispose. */
   const attemptOnce = async (signal: AbortSignal): Promise<ReviewRound> => {
-    const run = await ctx.subagents.start(options.provider, {
+    const activation = await ctx.subagents.startActivation({
+      provider: options.provider,
       label: `research review: ${request.scope}`,
-      prompt: [{ type: 'text', text: reviewerPrompt(request) }],
-      parent: request.parent,
+      // The verdict rides the result promise back to this loop; nothing is
+      // delivered into the calling agent's transcript by the runtime.
+      delivery: 'caller',
       signal,
-      outputSchema: VERDICT_SCHEMA,
-      persona: REVIEWER_PERSONA,
+      request: {
+        prompt: [{ type: 'text', text: reviewerPrompt(request) }],
+        parent: request.parent,
+        outputSchema: VERDICT_SCHEMA,
+        persona: REVIEWER_PERSONA,
+      },
     })
     try {
-      const result = await run.result
+      const result = await activation.result
       if (result.stopReason !== 'completed') {
         throw new Error(`research reviewer ended abnormally (${result.stopReason})${result.diagnostic === undefined ? '' : `: ${result.diagnostic}`}`)
       }
       return readReviewRound(result.structured)
     } finally {
-      await run.dispose()
+      await activation.dispose()
     }
   }
 

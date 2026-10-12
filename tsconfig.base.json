@@ -29,8 +29,7 @@
     // expands npm-owned types.
     "paths": {
       "@deepseek-ai/dsh-typert-protocol": ["./packages/typert-protocol/src/index.ts"],
-      "@deepseek-ai/dsh-typert-protocol/types": ["./packages/typert-protocol/src/types.ts"],
-      "@deepseek-ai/dsh-typert-protocol/invariant": ["./packages/typert-protocol/src/invariant.ts"]
+      "@deepseek-ai/dsh-typert-protocol/types": ["./packages/typert-protocol/src/types.ts"]
     }
   }
 }

@@ -109,7 +109,7 @@ function stubRemote(overrides: Partial<ResearchRemote>): ResearchRemote {
 
 const IDLE: ResearchCompileStatusResult = {
   ok: true,
-  value: { state: 'idle', issues: [], engine: null, pdfUpdatedAt: null },
+  value: { state: 'idle', issues: [], engine: null, pdfUpdatedAt: null, observed: false },
 }
 
 /** Two-entry bibliography fixture for the bib panel tests. */
@@ -232,7 +232,7 @@ describe('ResearchController', () => {
     const controller = new ResearchController(stubRemote({
       compile: () => Promise.resolve(carried<ResearchCompileResult>({
         ok: true,
-        value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1724000000000 },
+        value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1724000000000, observed: true },
       })),
     }))
     const done = controller.compile('p1')
@@ -254,7 +254,7 @@ describe('ResearchController', () => {
     const first = controller.compile('p1')
     await controller.compile('p1')
     expect(calls).toBe(1)
-    run.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1 } }))
+    run.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1, observed: true } }))
     await first
     await Promise.resolve()
     await Promise.resolve()
@@ -284,13 +284,13 @@ describe('ResearchController', () => {
         calls += 1
         return calls === 1
           ? firstRun.promise
-          : Promise.resolve(carried<ResearchCompileResult>({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 2 } }))
+          : Promise.resolve(carried<ResearchCompileResult>({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 2, observed: true } }))
       },
     }))
     const first = controller.compile('p1')
     await controller.compile('p2')
     expect(calls).toBe(1)
-    firstRun.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1 } }))
+    firstRun.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1, observed: true } }))
     await first
     await Promise.resolve()
     await Promise.resolve()
@@ -301,7 +301,7 @@ describe('ResearchController', () => {
   it('does not keep another project compile view when status loading fails', async () => {
     const controller = new ResearchController(stubRemote({
       compile: () => Promise.resolve(carried<ResearchCompileResult>({
-        ok: true, value: { state: 'error', issues: [{ severity: 'error', message: 'project one error' }], engine: null, pdfUpdatedAt: 1 },
+        ok: true, value: { state: 'error', issues: [{ severity: 'error', message: 'project one error' }], engine: null, pdfUpdatedAt: 1, observed: true },
       })),
       getCompileStatus: () => Promise.reject(new Error('host unavailable')),
     }))
@@ -328,7 +328,7 @@ describe('ResearchController', () => {
     // Switching away must not let the stale queue entry hijack the new
     // project's compile lane when the in-flight run settles.
     controller.select('p2')
-    run.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1 } }))
+    run.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 1, observed: true } }))
     await first
     await Promise.resolve()
     await Promise.resolve()
@@ -384,7 +384,7 @@ describe('ResearchController source editing', () => {
       compile: () => {
         compiles += 1
         return Promise.resolve(carried<ResearchCompileResult>({
-          ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 5 },
+          ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 5, observed: true },
         }))
       },
     }))
@@ -461,7 +461,7 @@ describe('ResearchController source editing', () => {
       compile: (request) => {
         seen.push(['compile', request])
         return Promise.resolve(carried<ResearchCompileResult>({
-          ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 3 },
+          ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 3, observed: true },
         }))
       },
     }))
@@ -497,7 +497,7 @@ describe('ResearchController source editing', () => {
     await vi.advanceTimersByTimeAsync(AUTOSAVE_DEBOUNCE_MS + COMPILE_DEBOUNCE_MS)
     // The save landed but its compile queued behind the in-flight run.
     expect(compiles).toBe(1)
-    run.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 9 } }))
+    run.resolve(carried({ ok: true, value: { state: 'ok', issues: [], engine: null, pdfUpdatedAt: 9, observed: true } }))
     await first
     await vi.advanceTimersByTimeAsync(0)
     expect(compiles).toBe(2)
@@ -1930,7 +1930,7 @@ describe('ResearchController figure insert', () => {
     }))
     controller.select('p1')
     await vi.advanceTimersByTimeAsync(0)
-    const line = await controller.generateMetricFigure('p1', 'mpjpe', ROWS)
+    const line = await controller.generateMetricFigure('p1', 'mpjpe', ROWS, 'none')
     expect(line).toBe(6)
     expect(savedRequest).toMatchObject({ projectId: 'p1', name: 'metric-mpjpe.svg' })
     const request = savedRequest as { content: string; caption: string }
@@ -1955,7 +1955,7 @@ describe('ResearchController figure insert', () => {
     }))
     controller.select('p1')
     await vi.advanceTimersByTimeAsync(0)
-    const line = await controller.generateMetricFigure('p1', 'mpjpe', ROWS)
+    const line = await controller.generateMetricFigure('p1', 'mpjpe', ROWS, 'none')
     expect(line).toBeNull()
     expect(controller.getSnapshot().source?.content).toBe(TEX)
     expect(controller.getSnapshot().toasts.at(-1)).toMatchObject({ kind: 'error', copy: 'toast.metricFigureFailed' })
@@ -1969,7 +1969,7 @@ describe('ResearchController figure insert', () => {
     }))
     controller.select('p1')
     await vi.advanceTimersByTimeAsync(0)
-    const line = await controller.generateMetricFigure('p1', 'mpjpe', ROWS)
+    const line = await controller.generateMetricFigure('p1', 'mpjpe', ROWS, 'none')
     expect(line).toBeNull()
     expect(controller.getSnapshot().toasts.at(-1)).toMatchObject({
       kind: 'error', copy: 'toast.metricFigureFailed', detail: 'socket closed',
@@ -1978,7 +1978,7 @@ describe('ResearchController figure insert', () => {
 
   it('does nothing for an empty row list', async () => {
     const controller = new ResearchController(stubRemote({}))
-    const line = await controller.generateMetricFigure('p1', 'mpjpe', [])
+    const line = await controller.generateMetricFigure('p1', 'mpjpe', [], 'none')
     expect(line).toBeNull()
     expect(controller.getSnapshot().toasts).toEqual([])
   })
