@@ -1,9 +1,9 @@
 /**
- * Remote `sxng` skill provider: exposes the upstream `sxng` skill (shipped in
- * the hkwuks/sxng-cli repository) through the registry without vendoring a
+ * Remote `digdig` skill provider: exposes the upstream `digdig` skill (shipped in
+ * the hkwuks/digdig repository) through the registry without vendoring a
  * copy. The provider clones the repo shallowly into the dsh home cache
- * (`<dshHome>/cache/skills/sxng-cli`) on first `list()`, then reads the
- * `skills/sxng/SKILL.md` body from the cached checkout. A cached checkout is
+ * (`<dshHome>/cache/skills/digdig`) on first `list()`, then reads the
+ * `skills/digdig/SKILL.md` body from the cached checkout. A cached checkout is
  * pulled to upstream HEAD once it is older than {@link REFRESH_STALE_MS}, so
  * the body tracks upstream edits without a vendored copy, and a missing cache
  * is self-healing.
@@ -12,7 +12,7 @@
  * directory: the filesystem provider reads `~/.dsh/skills`, but a plugin has
  * no durable place to write dsh-home state. A provider is the registry-native
  * way to contribute a skill whose content lives outside the bundle.
- * @module dsh-mimir/src/sxng-skill
+ * @module dsh-mimir/src/digdig-skill
  */
 
 import { execFile } from 'node:child_process'
@@ -32,16 +32,16 @@ import type {
 } from '@deepseek-ai/dsh-skill'
 
 /** Unique provider name in the `ctx.skills` registry. */
-const PROVIDER_NAME = 'sxng'
+const PROVIDER_NAME = 'digdig'
 
-/** Shallow clone URL of the upstream sxng-cli repository (the skill's source of truth). */
-const SXNG_REPO_URL = 'https://github.com/hkwuks/sxng-cli.git'
+/** Shallow clone URL of the upstream digdig repository (the skill's source of truth). */
+const DIGDIG_REPO_URL = 'https://github.com/hkwuks/digdig.git'
 
 /** Skill body path inside the upstream checkout. */
-const SXNG_SKILL_REL = join('skills', 'sxng', 'SKILL.md')
+const DIGDIG_SKILL_REL = join('skills', 'digdig', 'SKILL.md')
 
 /** Cache dir override for tests (mirrors the fs cache-root key). */
-const CACHE_DIR_ENV = 'MIMIR_SXNG_SKILL_CACHE_DIR'
+const CACHE_DIR_ENV = 'MIMIR_DIGDIG_SKILL_CACHE_DIR'
 
 /** Default dsh home cache root when `$DSH_HOME` is unset. */
 function defaultDshHome(): string {
@@ -50,7 +50,7 @@ function defaultDshHome(): string {
 
 /** Resolve the cache directory the provider clones the repository into. */
 function cacheDir(): string {
-  return process.env[CACHE_DIR_ENV] ?? join(defaultDshHome(), 'cache', 'skills', 'sxng-cli')
+  return process.env[CACHE_DIR_ENV] ?? join(defaultDshHome(), 'cache', 'skills', 'digdig')
 }
 
 /** Resolve the cache directory the provider clones the repository into. */
@@ -59,16 +59,16 @@ export function skillCacheDir(): string {
 }
 
 /** Upstream repository URL (exported for tests). */
-export const SKILL_REPO_URL = SXNG_REPO_URL
+export const SKILL_REPO_URL = DIGDIG_REPO_URL
 
 /** Skill body relative path (exported for tests). */
-export const SKILL_SKILL_REL = SXNG_SKILL_REL
+export const SKILL_SKILL_REL = DIGDIG_SKILL_REL
 
 /** How old the cache checkout may be before `list()` refreshes it upstream. */
 const REFRESH_STALE_MS = 24 * 60 * 60 * 1000
 
 /** Refresh window override for tests. */
-const REFRESH_INTERVAL_ENV = 'MIMIR_SXNG_SKILL_REFRESH_MS'
+const REFRESH_INTERVAL_ENV = 'MIMIR_DIGDIG_SKILL_REFRESH_MS'
 
 /**
  * Run one `git` command; resolves with the child's stdout and rejects when git
@@ -76,7 +76,7 @@ const REFRESH_INTERVAL_ENV = 'MIMIR_SXNG_SKILL_REFRESH_MS'
  */
 function runGit(args: readonly string[], cwd: string, signal?: AbortSignal): Promise<string> {
   return new Promise((resolvePromise, reject) => {
-    const gitBin = process.env.MIMIR_SXNG_SKILL_GIT ?? 'git'
+    const gitBin = process.env.MIMIR_DIGDIG_SKILL_GIT ?? 'git'
     execFile(gitBin, args, { cwd, signal, timeout: 30_000 }, (error, stdout) => {
       if (error !== null) {
         reject(new Error(`git ${args[0] ?? ''} failed: ${(error as Error).message}`))
@@ -121,11 +121,11 @@ async function ensureCheckout(signal?: AbortSignal): Promise<boolean> {
   }
   await mkdir(cacheDir(), { recursive: true })
   try {
-    await runGit(['clone', '--depth', '1', SXNG_REPO_URL, '.'], cacheDir(), signal)
+    await runGit(['clone', '--depth', '1', DIGDIG_REPO_URL, '.'], cacheDir(), signal)
     return true
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    console.warn(`[mimir] sxng skill provider: failed to clone ${SXNG_REPO_URL}: ${message}`)
+    console.warn(`[mimir] digdig skill provider: failed to clone ${DIGDIG_REPO_URL}: ${message}`)
     return false
   }
 }
@@ -142,7 +142,7 @@ function readSkillMetadata(content: string): { readonly name: string; readonly d
   const name = field('name')
   const description = field('description')
   if (name === '' || description === '') {
-    throw new TypeError(`[mimir] sxng skill: frontmatter requires name and description (${SXNG_SKILL_REL})`)
+    throw new TypeError(`[mimir] digdig skill: frontmatter requires name and description (${DIGDIG_SKILL_REL})`)
   }
   return { name, description }
 }
@@ -157,8 +157,8 @@ function stripFrontmatter(content: string): string {
  * the first-time clone; `get()` reads the SKILL.md body from the checkout and
  * parses its frontmatter. All heavy work settles promptly on abort.
  */
-export function createSxngSkillProvider(): SkillProvider {
-  const skillPath = () => join(cacheDir(), SXNG_SKILL_REL)
+export function createDigdigSkillProvider(): SkillProvider {
+  const skillPath = () => join(cacheDir(), DIGDIG_SKILL_REL)
 
   return {
     name: PROVIDER_NAME,
@@ -176,7 +176,7 @@ export function createSxngSkillProvider(): SkillProvider {
         rank: 600,
         source: 'custom',
         provider: PROVIDER_NAME,
-        locator: { kind: 'sxng-skill', path: skillPath() },
+        locator: { kind: 'digdig-skill', path: skillPath() },
         path: skillPath(),
       }
       return [candidate]
@@ -203,18 +203,18 @@ export function createSxngSkillProvider(): SkillProvider {
 }
 
 /**
- * Register the remote `sxng` skill provider when a skill registry is mounted.
+ * Register the remote `digdig` skill provider when a skill registry is mounted.
  * Mirrors `registerResearchSkills`: the `skills` service is deliberately not
  * in the plugin's `inject`, so registrations only happen when a registry is
  * present, and `ctx.inject` scopes them to the child context's effect stack.
  *
  * `list()` clones the upstream repo on first use and pulls it when the cache
  * is older than {@link REFRESH_STALE_MS}, so the skill body always tracks the
- * upstream `sxng-cli` repo's latest SKILL.md without any vendored copy.
+ * upstream `digdig` repo's latest SKILL.md without any vendored copy.
  * @param ctx - the plugin's context.
  */
-export function registerSxngSkill(ctx: Context): void {
+export function registerDigdigSkill(ctx: Context): void {
   ctx.inject(['skills'], (skillsCtx: Context) => {
-    skillsCtx.skills.registerProvider(() => createSxngSkillProvider())
+    skillsCtx.skills.registerProvider(() => createDigdigSkillProvider())
   })
 }

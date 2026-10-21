@@ -770,8 +770,8 @@ export type ResearchGetImageGenConfigResult = ResearchResult<{
 /** `setImageGenConfig` outcome: the fresh masked view. */
 export type ResearchSetImageGenConfigResult = ResearchGetImageGenConfigResult
 
-/** `getSxngConfig` outcome: sxng-cli's native global config (Ollama key masked). */
-export type ResearchGetSxngConfigResult = ResearchResult<{
+/** `getDigdigConfig` outcome: digdig's native global config (Ollama key masked). */
+export type ResearchGetDigdigConfigResult = ResearchResult<{
   readonly configured: boolean
   readonly baseUrl: string
   readonly defaultEngine: string
@@ -786,8 +786,8 @@ export type ResearchGetSxngConfigResult = ResearchResult<{
   readonly redundancyBigramThreshold: number
 }>
 
-/** `setSxngConfig` outcome: the fresh masked sxng-cli config view. */
-export type ResearchSetSxngConfigResult = ResearchGetSxngConfigResult
+/** `setDigdigConfig` outcome: the fresh masked digdig config view. */
+export type ResearchSetDigdigConfigResult = ResearchGetDigdigConfigResult
 
 /** `listMeetingDecks` outcome, newest first. */
 export type ResearchMeetingDecksResult = ResearchResult<{ readonly decks: readonly MeetingDeckView[] }>

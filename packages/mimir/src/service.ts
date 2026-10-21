@@ -97,10 +97,10 @@ import type {
   ResearchDeleteMeetingDeckResult,
   ResearchGenerateMeetingResult,
   ResearchGetImageGenConfigResult,
-  ResearchGetSxngConfigResult,
+  ResearchGetDigdigConfigResult,
   ResearchMeetingDecksResult,
   ResearchSetImageGenConfigResult,
-  ResearchSetSxngConfigResult,
+  ResearchSetDigdigConfigResult,
   MeetingInclude,
   ResearchWikiSnapshot,
   ResearchCheckZoteroResult,
@@ -138,7 +138,7 @@ import * as ledger from './services/ledger.ts'
 import * as evidence from './services/evidence.ts'
 import type { MeetingDeps } from './services/meeting.ts'
 import * as imagegen from './services/image-gen.ts'
-import * as sxngConfig from './services/sxng-config.ts'
+import * as digdigConfig from './services/digdig-config.ts'
 import { abortLongTasks, linkLongTask, success, type ServiceState } from './services/common.ts'
 
 declare module '@deepseek-ai/cordis' {
@@ -167,7 +167,7 @@ export interface ResearchServiceConfig {
     readonly dir: string
   }
   /**
-   * Resolved web-search knobs (the sxng CLI command and timeout); absent
+   * Resolved web-search knobs (the digdig CLI command and timeout); absent
    * when no command is configured — `searchWeb` then reports unavailable.
    */
   readonly search?: {
@@ -675,13 +675,13 @@ export class ResearchService extends TypertRemoteService {
     return imagegen.setImageGenConfig(this.deps.workspaceDir, request)
   }
 
-  @Remote('getSxngConfig')
-  getSxngConfig(): Promise<ResearchGetSxngConfigResult> {
-    return sxngConfig.getSxngConfig()
+  @Remote('getDigdigConfig')
+  getDigdigConfig(): Promise<ResearchGetDigdigConfigResult> {
+    return digdigConfig.getDigdigConfig()
   }
 
-  @Remote('setSxngConfig')
-  setSxngConfig(request: {
+  @Remote('setDigdigConfig')
+  setDigdigConfig(request: {
     baseUrl?: string | undefined
     defaultEngine?: string | undefined
     allowedEngines?: readonly string[] | undefined
@@ -693,8 +693,8 @@ export class ResearchService extends TypertRemoteService {
     ollamaApiKey?: string | undefined
     redundancyThreshold?: number | undefined
     redundancyBigramThreshold?: number | undefined
-  }): Promise<ResearchSetSxngConfigResult> {
-    return sxngConfig.setSxngConfig(request)
+  }): Promise<ResearchSetDigdigConfigResult> {
+    return digdigConfig.setDigdigConfig(request)
   }
 
   @Remote('listMeetingDecks')

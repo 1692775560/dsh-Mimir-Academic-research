@@ -135,7 +135,7 @@ talks to the host over two channels:
 
 ## External integrations
 
-arXiv (search + PDF cache), SearXNG (web search via sxng CLI), Zotero
+arXiv (search + PDF cache), SearXNG (web search via the digdig CLI, `dg`), Zotero
 (library import), LaTeX engines (latexmk/tectonic, auto-detected),
 ccfddl/ccf-deadlines (venue catalog, cached 6h, offline-tolerant).
 

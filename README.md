@@ -55,7 +55,7 @@ Click **Mimir** in the sidebar footer. The wiki persists at `~/.dsh/storages/res
 Optional capabilities:
 
 - **Paper compilation** — install a LaTeX engine (`brew install tectonic` is easiest), or set `latex.engine` to a binary path
-- **Web search** — the sxng CLI ships with the package; give it a SearXNG server with one command (Docker-free, local venv):
+- **Web search** — the digdig CLI (`dg`) ships with the package; give it a SearXNG server with one command (Docker-free, local venv):
   ```sh
   bash scripts/setup-web-search.sh
   ```
@@ -73,7 +73,7 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 | --- | --- | --- |
 | `workspaceDir` | `.research` | Research workspace root (artifacts, backups) |
 | `latex.engine` | `auto` | `latexmk` / `tectonic` probe, or absolute binary path |
-| `search.command` | `auto` | Web search: `auto` uses `sxng` from PATH or the bundled copy |
+| `search.command` | `auto` | Web search: `auto` uses `dg` from PATH or the bundled copy |
 | `reviewer.maxRounds` | `3` | Per-project review-round budget |
 | `backup.enabled` / `intervalMinutes` / `keep` | `true` / `60` / `24` | Scheduled wiki snapshots |
 | `skills.enabled` | `true` | Register the eleven bundled research skills |
@@ -83,7 +83,7 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 - **Plugin not found** — dsh resolves plugin names from the profile directory; install with `dsh plugin --profile web add dsh-mimir@latest`, not from your cwd.
 - **LaTeX engine not found** — `brew install tectonic`, or point `latex.engine` at an absolute path. First tectonic compile downloads packages; raise `latex.timeoutMs` if it times out.
 - **arXiv fails** — export `HTTPS_PROXY` before starting dsh when behind a proxy.
-- **Web search unavailable** — run `bash scripts/setup-web-search.sh` (local SearXNG), or `sxng init` against your own instance, then restart dsh.
+- **Web search unavailable** — run `bash scripts/setup-web-search.sh` (local SearXNG), or `dg init` against your own instance, then restart dsh.
 
 ## Changelog
 
