@@ -1,13 +1,13 @@
 /**
- * `/skill-sync`: sync the `sxng` skill into the host's dsh skills directory so
+ * `/skill-sync`: sync the `digdig` skill into the host's dsh skills directory so
  * any dsh boot (with or without the Mimir plugin) sees it. The source of truth
  * is the cached upstream checkout the runtime provider already uses — the same
- * cache that the automatic 24 h pull keeps at sxng-cli's latest SKILL.md — so
+ * cache that the automatic 24 h pull keeps at digdig's latest SKILL.md — so
  * the synced copy always reflects current upstream.
  *
  * The target root is `<dshHome>/skills` (`$DSH_HOME` or `~/.dsh`), the exact
  * `user-dsh` root the dsh filesystem skill provider scans (rank 400). The
- * dshHome/skills and the final `sxng` entry may be symlinks (dotfiles trees,
+ * dshHome/skills and the final `digdig` entry may be symlinks (dotfiles trees,
  * npx-managed homes); the write follows the real target so the file those
  * setups actually read is the one updated, and a git-tracked target is left
  * untouched for the user to adopt (a plugin must not rewrite a dotfiles repo
@@ -27,10 +27,10 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { CommandResult } from '@deepseek-ai/dsh-commands'
 
 /** The one skill this command syncs (matches the provider's upstream layout). */
-const SKILL_NAME = 'sxng'
+const SKILL_NAME = 'digdig'
 
 /** The provider's cache sub-path inside the checkout. */
-const SKILL_REL = join('skills', 'sxng', 'SKILL.md')
+const SKILL_REL = join('skills', 'digdig', 'SKILL.md')
 
 /** Resolve `<dshHome>/skills`: `$DSH_HOME`, else `~/.dsh`. */
 export function dshSkillsRoot(): string {
@@ -45,8 +45,8 @@ export async function realTargetDir(root: string): Promise<string> {
 
 /** Source SKILL.md: the cache the runtime provider maintains. */
 async function cachedSkillBody(): Promise<string | undefined> {
-  const cacheRoot = process.env.MIMIR_SXNG_SKILL_CACHE_DIR ??
-    join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'cache', 'skills', 'sxng-cli')
+  const cacheRoot = process.env.MIMIR_DIGDIG_SKILL_CACHE_DIR ??
+    join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'cache', 'skills', 'digdig')
   const body = join(cacheRoot, SKILL_REL)
   return existsSync(body) ? body : undefined
 }
@@ -92,13 +92,13 @@ export async function syncFile(source: string, destination: string): Promise<'wr
 export function registerSkillSyncCommand(ctx: Context): void {
   ctx.commands.register({
     name: 'skill-sync',
-    description: 'copy the latest sxng skill into the dsh skills directory (for hosts booted without this plugin)',
+    description: 'copy the latest digdig skill into the dsh skills directory (for hosts booted without this plugin)',
     async handler(): Promise<CommandResult> {
       const source = await cachedSkillBody()
       if (source === undefined) {
         return {
           kind: 'error',
-          text: '[skill-sync] No cached sxng skill to copy — the runtime provider clones it on first use. Boot the plugin once, then re-run /skill-sync.',
+          text: '[skill-sync] No cached digdig skill to copy — the runtime provider clones it on first use. Boot the plugin once, then re-run /skill-sync.',
         }
       }
       const root = await realTargetDir(dshSkillsRoot())

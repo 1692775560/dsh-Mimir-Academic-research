@@ -168,7 +168,7 @@ export async function searchArxiv(
 }
 
 /**
- * Search the web through the configured sxng CLI on the panel's behalf.
+ * Search the web through the configured digdig CLI on the panel's behalf.
  * The query must be non-empty (`invalid-input` otherwise); the request
  * carries the configured timeout and CLI/transport failures settle as
  * `operation-failed` with the underlying message. When no search command
@@ -193,7 +193,7 @@ export async function searchWeb(
     const command = installCommandFor(detectPackageManager())
     return rejected({
       code: 'operation-failed',
-      message: `Web search is not configured: install the sxng CLI with ${command}, then set the plugin's search.command to 'sxng' (or leave it 'auto') and run sxng init against a self-hosted SearXNG.`,
+      message: `Web search is not configured: install the digdig CLI with ${command}, then set the plugin's search.command to 'dg' (or leave it 'auto') and run dg init against a self-hosted SearXNG.`,
     })
   }
   const query = request.query.trim()

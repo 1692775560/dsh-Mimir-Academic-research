@@ -339,9 +339,9 @@ export interface ResearchPanelInjected {
     model?: string | undefined
     size?: string | undefined
   }) => Promise<ResearchFailureView | null>
-  /** Fetch and save the native sxng-cli configuration used by Web search. */
-  getSxngConfig: () => void
-  saveSxngConfig: (input: {
+  /** Fetch and save the native digdig configuration used by Web search. */
+  getDigdigConfig: () => void
+  saveDigdigConfig: (input: {
     baseUrl?: string | undefined
     defaultEngine?: string | undefined
     allowedEngines?: readonly string[] | undefined

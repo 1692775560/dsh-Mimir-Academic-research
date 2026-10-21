@@ -192,7 +192,7 @@ export function ResearchPanel({
   ensureMoments, refreshMoments, declineMoment,
   loadEvidenceGraph, refreshEvidenceGraph, retractEvidence,
   ensureEureka, ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
-  getSxngConfig, saveSxngConfig,
+  getDigdigConfig, saveDigdigConfig,
   exportWiki, importWiki, dismissToast, pruneToasts,
   toggleTheme, toggleLocale, t,
 }: ResearchPanelProps) {
@@ -218,7 +218,7 @@ export function ResearchPanel({
   const figures = useResearch(view => view.figures)
   const meetings = useResearch(view => view.meetings)
   const imageGen = useResearch(view => view.imageGen)
-  const sxngConfig = useResearch(view => view.sxngConfig)
+  const digdigConfig = useResearch(view => view.digdigConfig)
   const servers = useResearch(view => view.servers)
   const serverChecks = useResearch(view => view.serverChecks)
   const jobs = useResearch(view => view.jobs)
@@ -783,7 +783,7 @@ export function ResearchPanel({
             papers={papers}
             arxivSearch={arxivSearch}
             webSearch={webSearch}
-            sxngConfig={sxngConfig}
+            digdigConfig={digdigConfig}
             arxivSubscriptions={arxivSubscriptions}
             projects={projects}
             selectedProjectId={selectedProjectId}
@@ -793,8 +793,8 @@ export function ResearchPanel({
             checkArxivSubscriptions={checkArxivSubscriptions}
             searchArxiv={searchArxiv}
             searchWeb={searchWeb}
-            getSxngConfig={getSxngConfig}
-            saveSxngConfig={saveSxngConfig}
+            getDigdigConfig={getDigdigConfig}
+            saveDigdigConfig={saveDigdigConfig}
             importPaper={importPaper}
             updatePaper={updatePaper}
             removePaper={removePaper}

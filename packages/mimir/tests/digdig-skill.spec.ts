@@ -1,8 +1,8 @@
 /**
- * Behavior tests for the remote `sxng` skill provider's cache lifecycle:
+ * Behavior tests for the remote `digdig` skill provider's cache lifecycle:
  * first-use shallow clone, the silent stale refresh (24 h TTL), and the
- * offline fallback. Git is replaced with an in-memory fake (`MIMIR_SXNG_SKILL_GIT`
- * points at `tests/fixtures/fake-sxng-git.sh`) — no test touches a real clone,
+ * offline fallback. Git is replaced with an in-memory fake (`MIMIR_DIGDIG_SKILL_GIT`
+ * points at `tests/fixtures/fake-digdig-git.sh`) — no test touches a real clone,
  * network, or `$HOME`.
  */
 
@@ -10,19 +10,19 @@ import { mkdtemp, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { createSxngSkillProvider } from '../src/sxng-skill.ts'
+import { createDigdigSkillProvider } from '../src/digdig-skill.ts'
 import { fileURLToPath } from 'node:url'
 
-const FAKE_GIT = fileURLToPath(new URL('fixtures/fake-sxng-git.sh', import.meta.url))
+const FAKE_GIT = fileURLToPath(new URL('fixtures/fake-digdig-git.sh', import.meta.url))
 
 /** Start a provider with an isolated cache dir, a fake git, and a 24 h TTL. */
-async function harness(): Promise<{ provider: ReturnType<typeof createSxngSkillProvider>; cacheDir: string }> {
-  const root = await mkdtemp(join(tmpdir(), 'mimir-sxng-skill-'))
-  const cacheDir = join(root, 'cache', 'sxng-cli')
-  vi.stubEnv('MIMIR_SXNG_SKILL_CACHE_DIR', cacheDir)
-  vi.stubEnv('MIMIR_SXNG_SKILL_REFRESH_MS', String(24 * 60 * 60 * 1000))
-  vi.stubEnv('MIMIR_SXNG_SKILL_GIT', FAKE_GIT)
-  return { provider: createSxngSkillProvider(), cacheDir }
+async function harness(): Promise<{ provider: ReturnType<typeof createDigdigSkillProvider>; cacheDir: string }> {
+  const root = await mkdtemp(join(tmpdir(), 'mimir-digdig-skill-'))
+  const cacheDir = join(root, 'cache', 'digdig')
+  vi.stubEnv('MIMIR_DIGDIG_SKILL_CACHE_DIR', cacheDir)
+  vi.stubEnv('MIMIR_DIGDIG_SKILL_REFRESH_MS', String(24 * 60 * 60 * 1000))
+  vi.stubEnv('MIMIR_DIGDIG_SKILL_GIT', FAKE_GIT)
+  return { provider: createDigdigSkillProvider(), cacheDir }
 }
 
 /** Make `.git` look old enough to trigger the stale refresh on the next list. */
@@ -33,7 +33,7 @@ async function ageGitDir(cacheDir: string): Promise<void> {
 
 afterEach(() => vi.unstubAllEnvs())
 
-describe('sxng skill provider cache lifecycle', () => {
+describe('digdig skill provider cache lifecycle', () => {
   // The fake git is a POSIX shell fixture the provider spawns directly;
   // Windows cannot exec it (EFTYPE), and Node refuses .cmd shims without a
   // shell — the lifecycle logic itself is platform-independent.
@@ -42,9 +42,9 @@ describe('sxng skill provider cache lifecycle', () => {
     const listed = await provider.list({ signal: new AbortController().signal })
     const [candidate] = Array.isArray(listed) ? listed : listed.candidates ?? []
     expect(candidate).toBeDefined()
-    expect(candidate?.name).toBe('sxng')
+    expect(candidate?.name).toBe('digdig')
     expect(candidate?.rank).toBe(600)
-    expect(candidate?.locator).toMatchObject({ kind: 'sxng-skill' })
+    expect(candidate?.locator).toMatchObject({ kind: 'digdig-skill' })
     const definition = await provider.get(candidate)
     expect(definition?.content).toContain('Run a web search')
   })

@@ -55,7 +55,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 可选能力：
 
 - **论文编译**——装一个 LaTeX 引擎（`brew install tectonic` 最省事），或把 `latex.engine` 指到二进制路径
-- **Web 搜索**——sxng CLI 已随包安装，一条命令给它一个本地 SearXNG（免 Docker，venv 运行）：
+- **Web 搜索**——digdig CLI（`dg`）已随包安装，一条命令给它一个本地 SearXNG（免 Docker，venv 运行）：
   ```sh
   bash scripts/setup-web-search.sh
   ```
@@ -73,7 +73,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 | --- | --- | --- |
 | `workspaceDir` | `.research` | 研究工作区根目录（工件、备份） |
 | `latex.engine` | `auto` | 依次探测 `latexmk` / `tectonic`，或填二进制绝对路径 |
-| `search.command` | `auto` | Web 搜索：`auto` 用 PATH 上的 `sxng` 或随包副本 |
+| `search.command` | `auto` | Web 搜索：`auto` 用 PATH 上的 `dg` 或随包副本 |
 | `reviewer.maxRounds` | `3` | 每个项目的评审轮次预算 |
 | `backup.enabled` / `intervalMinutes` / `keep` | `true` / `60` / `24` | 定时 wiki 快照 |
 | `skills.enabled` | `true` | 注册十一个内置科研技能（含 `research-paper-deai` 去 AI 味） |
@@ -83,7 +83,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 - **找不到插件**——dsh 从 profile 目录解析插件名；用 `dsh plugin --profile web add dsh-mimir@latest` 安装，别在当前目录直接跑。
 - **LaTeX 引擎未找到**——`brew install tectonic`，或把 `latex.engine` 指到绝对路径；tectonic 首次编译要联网下载宏包，超时就把 `latex.timeoutMs` 调大。
 - **arXiv 失败**——走代理时在启动 dsh 前 export `HTTPS_PROXY`。
-- **Web 搜索不可用**——运行 `bash scripts/setup-web-search.sh`（本地 SearXNG），或 `sxng init` 对接自己的实例，然后重启 dsh。
+- **Web 搜索不可用**——运行 `bash scripts/setup-web-search.sh`（本地 SearXNG），或 `dg init` 对接自己的实例，然后重启 dsh。
 
 ## 更新日志
 

@@ -40,7 +40,7 @@ import { ResearchService } from './service.ts'
 import { recoverInterruptedJobs } from './services/server.ts'
 import { recoverPendingWikiImport } from './services/wiki-admin.ts'
 import { registerResearchSkills } from './skills.ts'
-import { registerSxngSkill } from './sxng-skill.ts'
+import { registerDigdigSkill } from './digdig-skill.ts'
 import { startWikiBackupLoop } from './backup.ts'
 import { startArxivSubscriptionLoop } from './arxiv-subscriptions.ts'
 import { TaskHealthRegistry } from './task-health.ts'
@@ -73,8 +73,8 @@ export type {
   ResearchExperimentsResult,
   ResearchFailure,
   ResearchFetchPaperPdfResult,
-  ResearchGetSxngConfigResult,
-  ResearchSetSxngConfigResult,
+  ResearchGetDigdigConfigResult,
+  ResearchSetDigdigConfigResult,
   ResearchFiguresResult,
   ResearchGenerateBriefOptions,
   ResearchGenerateBriefResult,
@@ -468,9 +468,9 @@ export type { LatexCompileResult, LatexToolOptions, LatexEngineKind, ResolvedLat
 export { createArxivSearchTool, createPaperFetchTool, fetchArxivPdf, fetchArxivSearch, paperPdfFileName, parseArxivFeed, ARXIV_PDF_MAX_BYTES } from './tools/arxiv.ts'
 export type { ArxivEntry, ArxivSearchOptions } from './tools/arxiv.ts'
 export { createWebSearchTool, fetchWebSearch } from './tools/web-search.ts'
-export { getSxngConfig, readSxngConfig, setSxngConfig } from './services/sxng-config.ts'
+export { getDigdigConfig, readDigdigConfig, setDigdigConfig } from './services/digdig-config.ts'
 export type { WebSearchOptions, WebSearchRunner } from './tools/web-search.ts'
-export { registerSxngSkill } from './sxng-skill.ts'
+export { registerDigdigSkill } from './digdig-skill.ts'
 export { createZoteroClient } from './tools/zotero.ts'
 export type { ZoteroBibRequest, ZoteroClient, ZoteroClientConfig, ZoteroCollection, ZoteroFetch, ZoteroItem } from './tools/zotero.ts'
 export { createWikiNoteTool } from './tools/wiki.ts'
@@ -534,12 +534,12 @@ export interface Config {
      */
     timeoutMs?: number
   }
-  /** Web search deployment knobs (the sxng CLI over a self-hosted SearXNG). */
+  /** Web search deployment knobs (the digdig CLI, `dg`, over a self-hosted SearXNG). */
   search?: {
     /**
-     * The sxng executable (default `auto`): `'auto'` registers the
-     * `web_search` tool when the command resolves on PATH or as the bundled
-     * optional `sxng-cli` dependency; an explicit binary name or absolute
+     * The digdig executable (default `auto`): `'auto'` registers the
+     * `web_search` tool when `dg` resolves on PATH or as the bundled
+     * optional `digdig` dependency; an explicit binary name or absolute
      * path registers it unconditionally and fails per call with install
      * guidance when missing.
      */
@@ -869,19 +869,19 @@ const FIGURE_CONTENT_TYPES: Record<string, string> = {
   '.pdf': 'application/pdf',
 }
 
-/** The sxng CLI command the auto-detected web search resolves to. */
-const SXNG_COMMAND = 'sxng'
+/** The digdig CLI command (`dg`) the auto-detected web search resolves to. */
+const DIGDIG_COMMAND = 'dg'
 
 /**
- * Absolute path of the sxng CLI bundled as an optional dependency, when the
- * npm install brought it along (`node_modules/sxng-cli/dist/index.js`). The
+ * Absolute path of the digdig CLI bundled as an optional dependency, when the
+ * npm install brought it along (`node_modules/digdig/dist/index.js`). The
  * bin ships a node shebang, so the path runs directly under `execFile`.
  * @returns the absolute binary path, or undefined when the optional
  * dependency is absent.
  */
-function bundledSxngCommand(): string | undefined {
+function bundledDigdigCommand(): string | undefined {
   try {
-    const packageJson = createRequire(import.meta.url).resolve('sxng-cli/package.json')
+    const packageJson = createRequire(import.meta.url).resolve('digdig/package.json')
     const binary = join(dirname(packageJson), 'dist/index.js')
     return existsSync(binary) ? binary : undefined
   } catch {
@@ -1233,12 +1233,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   ctx.tools.register(createLatexCompileTool(resolved.latex))
   ctx.tools.register(createVenueSearchTool(deps.workspaceDir))
 
-  // Web search is optional: `auto` registers the tool when the sxng CLI
-  // resolves on PATH (probed once) or as the bundled optional dependency; an
+  // Web search is optional: `auto` registers the tool when `dg` resolves on
+  // PATH (probed once) or as the bundled optional dependency; an
   // explicit command always registers and reports install guidance per call
   // when missing. The panel's searchWeb Remote follows the same availability.
   const searchCommand = resolved.search.command === 'auto'
-    ? (await commandOnPath(SXNG_COMMAND)) ? SXNG_COMMAND : bundledSxngCommand()
+    ? (await commandOnPath(DIGDIG_COMMAND)) ? DIGDIG_COMMAND : bundledDigdigCommand()
     : resolved.search.command
   const searchConfig = searchCommand === undefined
     ? undefined
@@ -1295,7 +1295,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // optional — bare compositions load the suite without it).
   if (resolved.skills.enabled) {
     registerResearchSkills(ctx)
-    registerSxngSkill(ctx)
+    registerDigdigSkill(ctx)
   }
 
   ctx.plugin(ResearchService, serviceConfig)
