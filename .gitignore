@@ -16,3 +16,6 @@ MIMIR-CBE-P2-TICKETS.zh.md
 # 本地会话产物（agent 运行日志与工作台目录），不入库
 ci_log.txt
 .workbuddy/
+
+# 每个任务一个 git worktree，本地隔离用，不入库
+.worktrees/
