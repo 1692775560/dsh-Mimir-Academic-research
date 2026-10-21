@@ -55,5 +55,6 @@ minimumReleaseAgeExclude:
   - '@deepseek-ai/dsh-workspace@0.1.2-alpha.4'
   - '@deepseek-ai/dsh-typert-generator@0.1.2-alpha.4'
   - '@deepseek-ai/dsh-client-ui-renderer@0.1.2-alpha.4'
+  - digdig@0.0.2
 onlyBuiltDependencies:
   - esbuild

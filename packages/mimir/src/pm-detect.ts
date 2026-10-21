@@ -1,5 +1,5 @@
 /**
- * Package-manager detection for install guidance. Users install the sxng CLI
+ * Package-manager detection for install guidance. Users install the digdig CLI
  * with either npm or pnpm; the one-line fix we emit must name the PM that is
  * actually in front of them, not hardcode one.
  *
@@ -67,10 +67,10 @@ function commandOnPath(command: string, env: NodeJS.ProcessEnv): boolean {
 export function installCommandFor(pm: PackageManager): string {
   switch (pm) {
     case 'pnpm':
-      return 'pnpm add -g sxng-cli'
+      return 'pnpm add -g digdig'
     case 'npm':
-      return 'npm install -g sxng-cli'
+      return 'npm install -g digdig'
     case 'unknown':
-      return 'npm install -g sxng-cli   # (or: pnpm add -g sxng-cli)'
+      return 'npm install -g digdig   # (or: pnpm add -g digdig)'
   }
 }

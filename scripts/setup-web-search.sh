@@ -7,14 +7,14 @@
 #   3. writes a settings.yml with JSON output enabled and the limiter off
 #      (so no Valkey/Redis sidecar is needed)
 #   4. starts SearXNG on 127.0.0.1:8080 in the background
-#   5. points the sxng CLI at it (~/sxng-cli/sxng.config.json)
+#   5. points the digdig CLI at it (~/digdig/digdig.config.json)
 #
-# The sxng CLI itself ships as an optional dependency of dsh-mimir since
+# The digdig CLI (`dg`) ships as an optional dependency of dsh-mimir since
 # 0.13.x, so after this script the panel's Web tab and the web_search tool
 # work without any further configuration. Re-running is safe (idempotent).
 #
-# Requirements: git, python3 (>= 3.10), and the sxng CLI on PATH
-# (npm install -g sxng-cli, or rely on the copy bundled with dsh-mimir).
+# Requirements: git, python3 (>= 3.10), and the digdig CLI on PATH
+# (npm install -g digdig, or rely on the copy bundled with dsh-mimir).
 #
 # Usage: bash scripts/setup-web-search.sh [--port 8080] [--stop]
 
@@ -110,11 +110,11 @@ else
   sleep 6
 fi
 
-# 5. point the sxng CLI at it (schema mirrors sxng-cli's config file —
-#    ~/sxng-cli/sxng.config.json or ./sxng.config.json, first found wins;
+# 5. point the digdig CLI at it (schema mirrors digdig's config file —
+#    ./digdig.config.json or ~/digdig/digdig.config.json, first found wins;
 #    OLLAMA_API_KEY / SEARXNG_* env vars override at runtime).
-mkdir -p "$HOME/sxng-cli"
-cat > "$HOME/sxng-cli/sxng.config.json" <<JSON
+mkdir -p "$HOME/digdig"
+cat > "$HOME/digdig/digdig.config.json" <<JSON
 {
   "baseUrl": "${BASE_URL}",
   "defaultEngine": "",
@@ -125,6 +125,7 @@ cat > "$HOME/sxng-cli/sxng.config.json" <<JSON
   "proxyUrl": "",
   "timeout": 30000,
   "ollamaApiKey": "",
+  "deepseekApiKey": "",
   "redundancyThreshold": 0.7,
   "redundancyBigramThreshold": 0.5
 }
@@ -133,7 +134,7 @@ JSON
 # health check
 if curl -sf -m 10 "${BASE_URL}/search?q=mimir&format=json" >/dev/null 2>&1; then
   echo ""
-  echo "Done. SearXNG answers JSON at ${BASE_URL} and sxng is configured."
+  echo "Done. SearXNG answers JSON at ${BASE_URL} and digdig is configured."
   echo "Restart dsh; the Library view's Web tab and the web_search tool are ready."
   echo "Logs: $ROOT/searxng.log — stop with: bash scripts/setup-web-search.sh --stop"
 else

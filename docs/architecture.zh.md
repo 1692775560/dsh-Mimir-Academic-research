@@ -109,7 +109,7 @@ succeeded|failed`，外加三种「无观测结局」——`cancelled`（用户�
 
 ## 外部集成
 
-arXiv（检索 + PDF 缓存）、SearXNG（经 sxng CLI 的 web 搜索）、Zotero（文献库导入）、
+arXiv（检索 + PDF 缓存）、SearXNG（经 digdig CLI `dg` 的 web 搜索）、Zotero（文献库导入）、
 LaTeX 引擎（latexmk/tectonic 自动探测）、ccfddl/ccf-deadlines（会议目录，6 小时
 缓存，离线容错）。
 

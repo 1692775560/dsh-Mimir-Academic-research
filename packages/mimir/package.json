@@ -61,7 +61,7 @@
     "zod": "^4.4.3"
   },
   "optionalDependencies": {
-    "sxng-cli": "latest"
+    "digdig": "latest"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": ">=4.0.2",
