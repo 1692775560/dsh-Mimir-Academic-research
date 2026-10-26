@@ -223,7 +223,24 @@ export type TypertCodec =
   | {
     readonly mode: 'strict'
     readonly typeSymbol: string
-    readonly schema: TypertSchema
+    /** Materialize and return the process-realm schema on first boundary use. */
+    readonly create: () => TypertSchema
+    /**
+     * Decode a unary result whose fields require type-specific handling.
+     * @param value - result reconstructed by the RPC carrier.
+     * @returns the validated result, retaining native byte views.
+     */
+    readonly decode?: (value: unknown) => unknown
+    /**
+     * Project typed binary fields into RPC result attachments.
+     * @param value - native unary result.
+     * @param writeBytes - records a byte view at its result-relative path and returns its JSON placeholder.
+     * @returns JSON metadata with untouched JSON subtrees retained.
+     */
+    readonly encode?: (
+      value: unknown,
+      writeBytes: (bytes: Uint8Array, path: readonly (string | number)[]) => null,
+    ) => unknown
   }
   | {
     readonly mode: 'src-json'

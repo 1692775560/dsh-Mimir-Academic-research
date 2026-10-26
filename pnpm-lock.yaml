@@ -9,8 +9,8 @@ importers:
   .:
     devDependencies:
       '@deepseek-ai/dsh-typert-generator':
-        specifier: 0.1.2-alpha.4
-        version: 0.1.2-alpha.4(@deepseek-ai/cordis@4.0.5-alpha.1)
+        specifier: 0.2.1-alpha.2
+        version: 0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)
       '@playwright/test':
         specifier: ^1.62.1
         version: 1.62.1
@@ -684,10 +684,10 @@ packages:
       '@deepseek-ai/dsh-user-approval': 0.2.1-alpha.2
       '@deepseek-ai/dsh-working-directory': 0.2.1-alpha.2
 
-  '@deepseek-ai/dsh-typert-generator@0.1.2-alpha.4':
-    resolution: {integrity: sha512-Euy0ddMp4UgVlSF/oghp2uqbBZci25TASk9fVRzH3TlXGCOg02m81mAlWq5ZbpD6fjZz2FmYjvBfv6Yj1mlF0A==}
+  '@deepseek-ai/dsh-typert-generator@0.2.1-alpha.2':
+    resolution: {integrity: sha512-TtI/wmTuPVU38WZZaMZu1gphbISyGbn8OFoDjA5NhZVAytFgap7UHPBH+aSbTsu94Wll/1kXygUzHOu1tCdP1w==}
     peerDependencies:
-      '@deepseek-ai/cordis': ^4.0.2
+      '@deepseek-ai/cordis': ~4.0.5-alpha.1
 
   '@deepseek-ai/dsh-typert-protocol@0.2.1-alpha.2':
     resolution: {integrity: sha512-L/f22tnjV9LXFOf8CaX5XmEyKXR18oRKP2X3qb/I7NrAxk5uwKZcLHCFU/LXECVXrkm/Q0MPp5iNiREG1rLfzQ==}
@@ -2741,7 +2741,7 @@ snapshots:
       '@deepseek-ai/dsh-working-directory': 0.2.1-alpha.2(d3dadd6ccc60c19d6dd164159ffe5f9b)
       '@deepseek-ai/schemastery': 3.18.5-alpha.1
 
-  '@deepseek-ai/dsh-typert-generator@0.1.2-alpha.4(@deepseek-ai/cordis@4.0.5-alpha.1)':
+  '@deepseek-ai/dsh-typert-generator@0.2.1-alpha.2(@deepseek-ai/cordis@4.0.5-alpha.1)':
     dependencies:
       '@deepseek-ai/cordis': 4.0.5-alpha.1(@deepseek-ai/cordis-plugin-include@1.0.10-alpha.1)(@deepseek-ai/cordis-plugin-loader@1.0.6-alpha.1)
       '@jridgewell/gen-mapping': 0.3.13
