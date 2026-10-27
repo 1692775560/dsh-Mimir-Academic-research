@@ -81,6 +81,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 ## 故障排查
 
 - **找不到插件**——dsh 从 profile 目录解析插件名；用 `dsh plugin --profile web add dsh-mimir@latest` 安装，别在当前目录直接跑。
+- **启动时报 `Cannot find package '@deepseek-ai/dsh-…'`**——profile 里只有插件、没有宿主本该提供的那批 dsh 包。Mimir 在模块作用域就 import 了 `@deepseek-ai/dsh-storage-domain`、`dsh-tools`、`dsh-atomic-write`、`dsh-llm`、`dsh-typert-protocol`：`@Remote` 装饰器和 wiki domain spec 都在模块加载时求值，既不能懒加载也不能自带副本（它们要把宿主的 `Service` 与工具注册表实例交给插件）。凡是会 provision peer 的安装方式——`dsh plugin … add`，或保持 peer 安装开启的 `npm`/`pnpm`——都能解析到；不 provision peer 的安装方式会留下一个 import 不进来的插件。遇到这个报错请用 `dsh plugin --profile <profile> add dsh-mimir@latest` 重装，不要手工把包拷进 profile。
 - **LaTeX 引擎未找到**——`brew install tectonic`，或把 `latex.engine` 指到绝对路径；tectonic 首次编译要联网下载宏包，超时就把 `latex.timeoutMs` 调大。
 - **arXiv 失败**——走代理时在启动 dsh 前 export `HTTPS_PROXY`。
 - **Web 搜索不可用**——运行 `bash scripts/setup-web-search.sh`（本地 SearXNG），或 `dg init` 对接自己的实例，然后重启 dsh。
