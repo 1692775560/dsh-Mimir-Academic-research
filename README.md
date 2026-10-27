@@ -81,6 +81,7 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 ## Troubleshooting
 
 - **Plugin not found** — dsh resolves plugin names from the profile directory; install with `dsh plugin --profile web add dsh-mimir@latest`, not from your cwd.
+- **`Cannot find package '@deepseek-ai/dsh-…'` at startup** — the profile has the plugin but none of the dsh packages the host is supposed to provide. Mimir imports `@deepseek-ai/dsh-storage-domain`, `dsh-tools`, `dsh-atomic-write`, `dsh-llm` and `dsh-typert-protocol` at module scope, because `@Remote` decorators and the wiki domain spec are evaluated when the module loads; they cannot be loaded lazily or bundled (they hand the plugin the host's own `Service` and tool-registry instances). An installer that provisions a package's peers — `dsh plugin … add`, or `npm`/`pnpm` with peer installation left on — makes them resolvable; one that does not leaves the plugin unable to import. If you hit this, reinstall through `dsh plugin --profile <profile> add dsh-mimir@latest` rather than copying the package into the profile by hand.
 - **LaTeX engine not found** — `brew install tectonic`, or point `latex.engine` at an absolute path. First tectonic compile downloads packages; raise `latex.timeoutMs` if it times out.
 - **arXiv fails** — export `HTTPS_PROXY` before starting dsh when behind a proxy.
 - **Web search unavailable** — run `bash scripts/setup-web-search.sh` (local SearXNG), or `dg init` against your own instance, then restart dsh.
