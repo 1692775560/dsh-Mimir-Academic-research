@@ -24,6 +24,7 @@ import type {
 } from '../types.ts'
 import { rejected, success } from './common.ts'
 import { importPaper, mergePaperRecord } from './library.ts'
+import { withPaperMutationLock } from './mutation-locks.ts'
 import { appendBibEntries } from './paper.ts'
 import type { PaperDeps } from './paper.ts'
 
@@ -182,32 +183,37 @@ export async function importZoteroItem(
     return success({ imported: outcome.value.imported, paperId: item.arxivId })
   }
   const paperId = `${ZOTERO_PAPER_ID_PREFIX}${key}`
-  const table = deps.domain.table('papers')
-  const existing = table.get(paperId)
   const provenance = [
     `Imported from Zotero (item ${key}).`,
     item.doi === '' ? '' : `DOI: ${item.doi}.`,
     item.url === '' ? '' : `URL: ${item.url}.`,
   ].filter(line => line !== '').join(' ')
-  // The same shared merge as the arXiv path (R29 / #230): a re-import
-  // refreshes the Zotero metadata but never wipes the workbench-curated
-  // fields — relevance and the fetched-PDF pointer included.
-  const record = mergePaperRecord({
-    arxivId: paperId,
-    title: item.title,
-    authors: [...item.authors],
-    summary: '',
-    url: item.url,
-    notes: provenance,
-    tags: [],
-    projectIds: [],
-    addedAt: new Date().toISOString(),
-    // Source publication metadata rides the re-import refresh, like title.
-    ...(item.year === '' ? {} : { published: item.year }),
-    ...(item.doi === '' ? {} : { doi: item.doi }),
-  }, existing, { linkProjectId: request.projectId })
-  await table.put(paperId, record)
-  return success({ imported: existing === undefined, paperId })
+  // The same per-paper lock the other import channels hold: the get→merge→put
+  // below must serialize against a concurrent panel import or agent re-add of
+  // the same record or one writer's curated fields overwrite the other's.
+  return withPaperMutationLock(paperId, async () => {
+    const table = deps.domain.table('papers')
+    const existing = table.get(paperId)
+    // The same shared merge as the arXiv path (R29 / #230): a re-import
+    // refreshes the Zotero metadata but never wipes the workbench-curated
+    // fields — relevance and the fetched-PDF pointer included.
+    const record = mergePaperRecord({
+      arxivId: paperId,
+      title: item.title,
+      authors: [...item.authors],
+      summary: '',
+      url: item.url,
+      notes: provenance,
+      tags: [],
+      projectIds: [],
+      addedAt: new Date().toISOString(),
+      // Source publication metadata rides the re-import refresh, like title.
+      ...(item.year === '' ? {} : { published: item.year }),
+      ...(item.doi === '' ? {} : { doi: item.doi }),
+    }, existing, { linkProjectId: request.projectId })
+    await table.put(paperId, record)
+    return success({ imported: existing === undefined, paperId })
+  })
 }
 
 /**

@@ -1,11 +1,25 @@
-import { resolve } from 'node:path'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { isSameOriginWrite, isTrustedRead, projectPaperDir } from '../src/http-write-boundary.ts'
+import { isLoopbackPeer, isSameOriginWrite, isTrustedRead, projectPaperDir } from '../src/http-write-boundary.ts'
+import { realpathConfined } from '../src/paper-source.ts'
+import { canCreateSymlink } from './helpers/symlink-capability.ts'
 
 describe('isSameOriginWrite', () => {
-  it('accepts an exact HTTP or HTTPS origin-host match', () => {
+  it('accepts an exact origin-host match on the loopback listener', () => {
     expect(isSameOriginWrite({ origin: 'http://127.0.0.1:3080', host: '127.0.0.1:3080' })).toBe(true)
-    expect(isSameOriginWrite({ origin: 'https://research.example.test', host: 'research.example.test' })).toBe(true)
+    expect(isSameOriginWrite({ origin: 'https://localhost:3080', host: 'localhost:3080' })).toBe(true)
+    expect(isSameOriginWrite({ origin: 'http://[::1]:3080', host: '[::1]:3080' })).toBe(true)
+  })
+
+  it('rejects a matching Origin and Host that do not name the loopback listener (DNS rebinding)', () => {
+    // The rebound request carries the attacker's host name in BOTH headers,
+    // so the Origin==Host comparison alone passes trivially — the loopback
+    // Host whitelist is the actual defense.
+    expect(isSameOriginWrite({ origin: 'http://evil.com', host: 'evil.com' })).toBe(false)
+    expect(isSameOriginWrite({ origin: 'https://research.example.test', host: 'research.example.test' })).toBe(false)
+    expect(isSameOriginWrite({ origin: 'http://127.0.0.1.evil.com', host: '127.0.0.1.evil.com' })).toBe(false)
   })
 
   it('rejects absent, malformed, cross-origin, and non-web origins', () => {
@@ -16,39 +30,94 @@ describe('isSameOriginWrite', () => {
   })
 })
 
+describe('isLoopbackPeer', () => {
+  it('admits the IPv4 loopback block, ::1, and the IPv4-mapped spelling', () => {
+    expect(isLoopbackPeer('127.0.0.1')).toBe(true)
+    expect(isLoopbackPeer('127.0.1.53')).toBe(true)
+    expect(isLoopbackPeer('::1')).toBe(true)
+    expect(isLoopbackPeer('::ffff:127.0.0.1')).toBe(true)
+    expect(isLoopbackPeer('::FFFF:127.0.0.1')).toBe(true)
+  })
+
+  it('rejects public, private-LAN, IPv6 non-loopback, and absent addresses', () => {
+    expect(isLoopbackPeer('10.0.0.5')).toBe(false)
+    expect(isLoopbackPeer('192.168.1.10')).toBe(false)
+    expect(isLoopbackPeer('::ffff:10.0.0.5')).toBe(false)
+    expect(isLoopbackPeer('fe80::1')).toBe(false)
+    expect(isLoopbackPeer('128.0.0.1')).toBe(false)
+    expect(isLoopbackPeer(undefined)).toBe(false)
+  })
+})
+
 describe('isTrustedRead (#210)', () => {
-  it('admits loopback hosts on any port when no Origin is present', () => {
-    expect(isTrustedRead({ host: 'localhost:3080' })).toBe(true)
-    expect(isTrustedRead({ host: '127.0.0.1:9999' })).toBe(true)
-    expect(isTrustedRead({ host: '[::1]:3080' })).toBe(true)
-    expect(isTrustedRead({ host: 'LOCALHOST:3080' })).toBe(true)
+  it('admits loopback hosts on any port from a loopback peer when no Origin is present', () => {
+    expect(isTrustedRead({ host: 'localhost:3080' }, '127.0.0.1')).toBe(true)
+    expect(isTrustedRead({ host: '127.0.0.1:9999' }, '::ffff:127.0.0.1')).toBe(true)
+    expect(isTrustedRead({ host: '[::1]:3080' }, '::1')).toBe(true)
+    expect(isTrustedRead({ host: 'LOCALHOST:3080' }, '127.0.0.1')).toBe(true)
+  })
+
+  it('rejects a well-formed loopback request from a non-loopback or unknown peer', () => {
+    expect(isTrustedRead({ host: 'localhost:3080' }, '10.0.0.5')).toBe(false)
+    expect(isTrustedRead({ host: 'localhost:3080' }, undefined)).toBe(false)
+    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://localhost:3080' }, '192.168.1.10')).toBe(false)
   })
 
   it('rejects absent, non-loopback, and loopback-suffix host names', () => {
-    expect(isTrustedRead({})).toBe(false)
-    expect(isTrustedRead({ host: 'evil.com' })).toBe(false)
+    expect(isTrustedRead({}, '127.0.0.1')).toBe(false)
+    expect(isTrustedRead({ host: 'evil.com' }, '127.0.0.1')).toBe(false)
     // DNS rebinding: an attacker-controlled name must never pass.
-    expect(isTrustedRead({ host: 'localhost.evil.com' })).toBe(false)
-    expect(isTrustedRead({ host: '127.0.0.1.evil.com' })).toBe(false)
+    expect(isTrustedRead({ host: 'localhost.evil.com' }, '127.0.0.1')).toBe(false)
+    expect(isTrustedRead({ host: '127.0.0.1.evil.com' }, '127.0.0.1')).toBe(false)
   })
 
   it('applies the same-origin rule when an Origin header is present', () => {
-    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://localhost:3080' })).toBe(true)
-    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://evil.com' })).toBe(false)
-    expect(isTrustedRead({ host: 'localhost:3080', origin: 'not a URL' })).toBe(false)
+    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://localhost:3080' }, '127.0.0.1')).toBe(true)
+    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://evil.com' }, '127.0.0.1')).toBe(false)
+    expect(isTrustedRead({ host: 'localhost:3080', origin: 'not a URL' }, '127.0.0.1')).toBe(false)
   })
 })
 
 describe('projectPaperDir', () => {
-  it('uses the project directory and never accepts a request-selected override', () => {
+  it('uses the project directory and never accepts a request-selected override', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'mimir-boundary-'))
     // Expected values go through resolve() so the assertion holds on both
     // POSIX and Windows (where resolve('/research', …) gains the drive).
-    expect(projectPaperDir('/research', 'projects/p1')).toBe(resolve('/research', 'projects/p1'))
-    expect(projectPaperDir('/research', undefined)).toBe(resolve('/research', 'paper'))
+    await expect(projectPaperDir(workspace, 'projects/p1')).resolves.toBe(resolve(workspace, 'projects/p1'))
+    await expect(projectPaperDir(workspace, undefined)).resolves.toBe(resolve(workspace, 'paper'))
   })
 
-  it('rejects invalid project paper directories', () => {
-    expect(projectPaperDir('/research', '../other-project')).toBeUndefined()
-    expect(projectPaperDir('/research', '/tmp/paper')).toBeUndefined()
+  it('rejects invalid project paper directories', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'mimir-boundary-'))
+    await expect(projectPaperDir(workspace, '../other-project')).resolves.toBeUndefined()
+    await expect(projectPaperDir(workspace, '/tmp/paper')).resolves.toBeUndefined()
+  })
+
+  it.skipIf(!canCreateSymlink())('rejects a symlinked project paper directory escaping the workspace (#213)', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'mimir-boundary-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mimir-outside-'))
+    await symlink(outside, join(workspace, 'linked'), 'dir')
+    await expect(projectPaperDir(workspace, 'linked')).resolves.toBeUndefined()
+  })
+})
+
+describe('realpathConfined', () => {
+  it.skipIf(!canCreateSymlink())('confines existing files, clean missing chains, and rejects escaping symlinks', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'mimir-confined-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mimir-outside-'))
+    await mkdir(join(workspace, 'paper', 'figures'), { recursive: true })
+    await writeFile(join(workspace, 'paper', 'figures', 'ok.png'), 'png')
+    await writeFile(join(outside, 'secret.png'), 'secret')
+    await symlink(join(outside, 'secret.png'), join(workspace, 'paper', 'figures', 'link.png'))
+    const workspaceReal = await realpath(workspace)
+
+    await expect(realpathConfined(workspaceReal, join(workspace, 'paper', 'figures', 'ok.png'))).resolves.toBe(true)
+    // A missing file with a clean ancestor chain passes (the write creates a real file).
+    await expect(realpathConfined(workspaceReal, join(workspace, 'paper', 'figures', 'new.png'))).resolves.toBe(true)
+    // The workspace root itself passes.
+    await expect(realpathConfined(workspaceReal, workspaceReal)).resolves.toBe(true)
+    // A symlinked file pointing outside fails.
+    await expect(realpathConfined(workspaceReal, join(workspace, 'paper', 'figures', 'link.png'))).resolves.toBe(false)
+    await expect(realpathConfined(workspaceReal, join(outside, 'secret.png'))).resolves.toBe(false)
   })
 })

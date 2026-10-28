@@ -161,7 +161,9 @@ export async function collectInTreeSymlinks(
  * Validation (path exists and is a directory, an entry .tex with
  * `\documentclass` exists, no symlink dangles or escapes the source tree)
  * runs BEFORE anything is copied or recorded, so a rejected import changes
- * nothing. The copy excludes `.git` and `node_modules`; a slug collision
+ * nothing. A symlinked source ROOT is copied from its realpath — `cp` would
+ * otherwise preserve the root link, leaving an escaping symlink inside the
+ * workspace. The copy excludes `.git` and `node_modules`; a slug collision
  * gains a `-2`/`-3`… suffix. The title is the explicit request title, else
  * the entry file's `\title{...}`, else the source directory name. The
  * created record starts at the `writing` stage with `paperDir` pointing at
@@ -221,11 +223,15 @@ export async function importProject(
     slug = `${slugBase}-${String(suffix)}`
   }
   const target = join(importedRoot, slug)
-  await cp(source, target, {
+  // Copy from the REALPATH, never the typed path: when the source itself is
+  // a symlink, cp preserves the link as the copy's root, and the workspace
+  // would hold a link pointing out of the workspace — defeating paperDir
+  // confinement (#213). Copying the realpath materializes a real directory.
+  await cp(sourceReal, target, {
     recursive: true,
     // The root itself is always kept even when the source directory happens
     // to be NAMED like an excluded one.
-    filter: path => path === source || !EXCLUDED_DIRS.has(basename(path)),
+    filter: path => path === sourceReal || !EXCLUDED_DIRS.has(basename(path)),
   })
   // cp preserves links as links; replace each verified in-tree symlink with
   // a real copy of its target so the workspace tree holds NO symlink at all.

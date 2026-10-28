@@ -56,6 +56,30 @@ describe('wiki_note project/experiment actions', () => {
       .rejects.toThrow("no project with id 'missing'")
   })
 
+  it('set_project records the lifecycle stage the skills instruct (idea|plan|experiment|writing|done)', async () => {
+    const domain = await harness()
+    await domain.table('projects').put(PROJECT.id, PROJECT)
+
+    // Stage-only update: the skills' standing rule passes stage without a
+    // paper_dir, which used to fail the paper_dir requirement.
+    const outcome = await run(domain, { action: 'set_project', id: 'p1', stage: 'writing' })
+    expect(outcome).toMatchObject({ ok: true, table: 'projects', id: 'p1', stage: 'writing' })
+    expect(domain.table('projects').get('p1')?.stage).toBe('writing')
+    // A stage-only update leaves the paper directory untouched (absent here).
+    expect(domain.table('projects').get('p1')?.paperDir).toBeUndefined()
+
+    // Both fields together.
+    await run(domain, { action: 'set_project', id: 'p1', stage: 'done', paper_dir: 'paper' })
+    expect(domain.table('projects').get('p1')).toMatchObject({ stage: 'done', paperDir: 'paper' })
+
+    // An unknown stage is rejected at the schema boundary, an empty update
+    // by the action itself.
+    await expect(run(domain, { action: 'set_project', id: 'p1', stage: 'bogus' }))
+      .rejects.toThrow('must be one of ["idea","plan","experiment","writing","done"]')
+    await expect(run(domain, { action: 'set_project', id: 'p1' }))
+      .rejects.toThrow("at least one of 'paper_dir' or 'stage'")
+  })
+
   it('add_experiment requires an existing project and validates the status', async () => {
     const domain = await harness()
     await expect(run(domain, { action: 'add_experiment', project_id: 'p1', name: 'baseline' }))

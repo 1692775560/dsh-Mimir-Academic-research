@@ -10,7 +10,7 @@ import { mkdir, readdir, rename, stat, unlink } from 'node:fs/promises'
 import { basename, dirname, extname, join, relative, resolve, sep } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { isArtifactName, isFigureFile, listPaperFigures, readWorkspaceArtifact } from '../artifacts.ts'
-import { isNotFound, readPaperSourceUnlocked, resolvePaperDir } from '../paper-source.ts'
+import { isNotFound, readPaperSourceUnlocked, resolvePaperDirReal } from '../paper-source.ts'
 import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
 import { convertSvgFigure, svgConverterNames } from '../svg-convert.ts'
 import type { SvgConversionDeps } from '../svg-convert.ts'
@@ -294,7 +294,7 @@ export async function listFigures(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   try {
     const stats = await stat(dir)
@@ -336,7 +336,7 @@ export async function deleteFigure(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const figurePath = resolve(dir, request.relPath)
   if (!figurePath.startsWith(dir + sep) || !isFigureFile(request.relPath)) {
@@ -386,7 +386,7 @@ export async function convertFigure(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const figurePath = resolve(dir, request.relPath)
   if (!figurePath.startsWith(dir + sep) || !isFigureFile(request.relPath) || !request.relPath.toLowerCase().endsWith('.svg')) {
@@ -455,7 +455,7 @@ export async function saveFigure(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const name = request.name
   if (name === '' || name !== basename(name) || !name.toLowerCase().endsWith('.svg')) {
@@ -609,7 +609,7 @@ export async function renameFigure(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const oldPath = resolve(dir, request.relPath)
   if (!oldPath.startsWith(dir + sep) || !isFigureFile(request.relPath)) {

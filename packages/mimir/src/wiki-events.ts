@@ -64,7 +64,7 @@ export function createWikiEventsHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('wiki events are served to the loopback panel only')
       return
     }

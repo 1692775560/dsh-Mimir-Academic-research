@@ -22,7 +22,7 @@ import type {
   ResearchGenerateMeetingResult,
   ResearchMeetingDecksResult,
 } from '../types.ts'
-import { resolvePaperDir, resolvePaperDirReal, DEFAULT_PAPER_DIR } from '../paper-source.ts'
+import { resolvePaperDirReal, DEFAULT_PAPER_DIR } from '../paper-source.ts'
 import { listPaperFigures, type FigureFile } from '../artifacts.ts'
 import { isValidArxivId } from '../arxiv-id.ts'
 import { isValidProjectId } from '../project-id.ts'
@@ -505,7 +505,7 @@ export async function generateMeetingDeck(
     .filter(record => record.projectId === project.id)
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
 
-  const dir = resolvePaperDir(deps.workspaceDir, undefined, project.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, undefined, project.paperDir)
   const figures: MeetingFigureInput[] = []
   if (dir !== undefined) {
     // Scan the paper directory (not just the metadata table): figures dropped

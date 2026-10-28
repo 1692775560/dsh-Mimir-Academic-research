@@ -143,6 +143,30 @@ describe('ResearchService.submitJob validation', () => {
     // Nothing was queued by the rejections.
     await expect(service.listJobs({})).resolves.toEqual({ ok: true, value: { jobs: [] } })
   })
+
+  it('settles failed instead of crashing the host when the driver rejects between its guard rails', async () => {
+    const { domain, service } = await harness()
+    const created = await service.saveServer({ server: SERVER_INPUT })
+    if (!created.ok) throw new Error('create failed')
+    const serverId = created.value.server.id
+    // Force an infrastructure failure inside runJob: the record write that
+    // flips queued → running rejects (a store outage), before the ssh session
+    // setup. Without the rejection fallback this promise would escape into an
+    // unhandled rejection (vitest fails the run on those).
+    const jobs = domain.table('jobs')
+    const originalPut = jobs.put.bind(jobs)
+    vi.spyOn(jobs, 'put').mockImplementation(async (id, record) => {
+      if ((record as JobRecord).status === 'running') throw new Error('store unavailable')
+      return originalPut(id, record)
+    })
+
+    const submitted = await service.submitJob({ serverId, command: 'hostname' })
+    if (!submitted.ok) throw new Error('submit failed')
+
+    const settled = await settleJob(service, submitted.value.job.id)
+    expect(settled.status).toBe('failed')
+    expect(settled.stderrTail).toContain('the job driver failed internally: store unavailable')
+  })
 })
 
 describe('ResearchService job recovery', () => {

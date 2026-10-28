@@ -8,7 +8,7 @@
 
 import { createReadStream, existsSync } from 'node:fs'
 import { execFile } from 'node:child_process'
-import { mkdir, stat, writeFile } from 'node:fs/promises'
+import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, resolve, sep } from 'node:path'
@@ -30,7 +30,7 @@ import { registerReviewCommand } from './commands/review.ts'
 import { registerPaperCommands } from './commands/paper.ts'
 import { registerSkillSyncCommand } from './commands/skill-sync.ts'
 import type { ResearchCommandDeps } from './commands/common.ts'
-import { resolvePaperDirReal } from './paper-source.ts'
+import { realpathConfined, resolvePaperDirReal } from './paper-source.ts'
 import { isSameOriginWrite, isTrustedRead, projectPaperDir } from './http-write-boundary.ts'
 import type { ResearchServiceConfig } from './service.ts'
 import { isFigureFile } from './artifacts.ts'
@@ -723,7 +723,7 @@ function createPdfHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
@@ -758,6 +758,14 @@ function createPdfHandler(
     const stats = await stat(pdfPath).catch(() => undefined)
     if (stats === undefined || !stats.isFile()) {
       res.writeHead(404).end('paper pdf not found; compile first')
+      return
+    }
+    // The directory chain is realpath-clean, but the served file ITSELF could
+    // still be a symlink pointing outside: re-check its realpath against the
+    // directory's realpath before streaming.
+    const dirReal = await realpath(dir).catch(() => undefined)
+    if (dirReal === undefined || !(await realpathConfined(dirReal, pdfPath))) {
+      res.writeHead(400).end('paper pdf escapes the paper directory')
       return
     }
     res.writeHead(200, {
@@ -803,7 +811,7 @@ function createPaperPdfHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
@@ -837,6 +845,14 @@ function createPaperPdfHandler(
     const stats = await stat(pdfPath).catch(() => undefined)
     if (stats === undefined || !stats.isFile()) {
       res.writeHead(404).end('paper pdf file is gone; fetch it again')
+      return
+    }
+    // Lexical confinement is not enough: the stored path (or an intermediate
+    // directory) could be a symlink pointing outside the workspace — re-check
+    // the realpath before streaming.
+    const rootReal = await realpath(root).catch(() => undefined)
+    if (rootReal === undefined || !(await realpathConfined(rootReal, pdfPath))) {
+      res.writeHead(400).end('pdfPath escapes the research workspace')
       return
     }
     res.writeHead(200, {
@@ -923,7 +939,7 @@ function createFigureHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
@@ -965,6 +981,14 @@ function createFigureHandler(
     const stats = await stat(figurePath).catch(() => undefined)
     if (stats === undefined || !stats.isFile()) {
       res.writeHead(404).end('figure not found')
+      return
+    }
+    // The directory chain is realpath-clean, but the served file ITSELF could
+    // still be a symlink pointing outside: re-check its realpath against the
+    // directory's realpath before streaming.
+    const dirReal = await realpath(dir).catch(() => undefined)
+    if (dirReal === undefined || !(await realpathConfined(dirReal, figurePath))) {
+      res.writeHead(400).end('figure escapes the paper directory')
       return
     }
     res.writeHead(200, {
@@ -1032,8 +1056,13 @@ function createFigureUploadHandler(
       res.writeHead(400).end('name must name a figure file (.png/.jpg/.jpeg/.svg/.pdf)')
       return
     }
-    const dir = projectPaperDir(root, record.paperDir)
+    const dir = await projectPaperDir(root, record.paperDir)
     if (dir === undefined) {
+      res.writeHead(400).end('dir must be a relative path inside the research workspace')
+      return
+    }
+    const rootReal = await realpath(root).catch(() => undefined)
+    if (rootReal === undefined) {
       res.writeHead(400).end('dir must be a relative path inside the research workspace')
       return
     }
@@ -1050,7 +1079,14 @@ function createFigureUploadHandler(
     }
     const figuresDir = join(dir, 'figures')
     await mkdir(figuresDir, { recursive: true })
-    await writeFile(join(figuresDir, name), Buffer.concat(chunks))
+    // A pre-existing `figures/` symlink (or a symlinked same-name target)
+    // must not smuggle the write outside the workspace: re-check realpaths.
+    const target = join(figuresDir, name)
+    if (!(await realpathConfined(rootReal, figuresDir)) || !(await realpathConfined(rootReal, target))) {
+      res.writeHead(400).end('figure destination escapes the research workspace')
+      return
+    }
+    await writeFile(target, Buffer.concat(chunks))
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ relPath: `figures/${name}` }))
   }
@@ -1105,8 +1141,13 @@ function createTemplateUploadHandler(
       res.writeHead(400).end('name must name a LaTeX kit file (.cls/.sty/.tex/.bst/...)')
       return
     }
-    const dir = projectPaperDir(root, record.paperDir)
+    const dir = await projectPaperDir(root, record.paperDir)
     if (dir === undefined) {
+      res.writeHead(400).end('dir must be a relative path inside the research workspace')
+      return
+    }
+    const rootReal = await realpath(root).catch(() => undefined)
+    if (rootReal === undefined) {
       res.writeHead(400).end('dir must be a relative path inside the research workspace')
       return
     }
@@ -1123,7 +1164,14 @@ function createTemplateUploadHandler(
     }
     const templateDir = join(dir, TEMPLATE_DIR_NAME)
     await mkdir(templateDir, { recursive: true })
-    await writeFile(join(templateDir, name), Buffer.concat(chunks))
+    // A pre-existing `template/` symlink (or a symlinked same-name target)
+    // must not smuggle the write outside the workspace: re-check realpaths.
+    const target = join(templateDir, name)
+    if (!(await realpathConfined(rootReal, templateDir)) || !(await realpathConfined(rootReal, target))) {
+      res.writeHead(400).end('template destination escapes the research workspace')
+      return
+    }
+    await writeFile(target, Buffer.concat(chunks))
     res.writeHead(200, { 'Content-Type': 'application/json' })
     res.end(JSON.stringify({ relPath: `${TEMPLATE_DIR_NAME}/${name}` }))
   }
@@ -1149,7 +1197,7 @@ function createMeetingDeckHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }

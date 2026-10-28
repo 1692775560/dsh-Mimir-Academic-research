@@ -18,7 +18,7 @@ import { addEvidenceEdge, retractEvidenceEdge } from '../services/evidence.ts'
 import type { AddEvidenceEdgeRequest } from '../types.ts'
 import { evidenceScopeOf, queryKeyOf } from '../evidence-identity.ts'
 import { mergePaperRecord } from '../services/library.ts'
-import { withProjectMutationLock } from '../services/mutation-locks.ts'
+import { withPaperMutationLock, withProjectMutationLock } from '../services/mutation-locks.ts'
 
 const ACTIONS = [
   'add_paper', 'set_paper', 'add_idea', 'fail_idea', 'add_claim', 'set_claim', 'set_project',
@@ -26,6 +26,7 @@ const ACTIONS = [
 ] as const
 const TABLES = ['papers', 'ideas', 'claims', 'projects', 'experiments'] as const
 const EXPERIMENT_STATUSES = ['running', 'success', 'failed'] as const
+const PROJECT_STAGES = ['idea', 'plan', 'experiment', 'writing', 'done'] as const
 
 type Action = typeof ACTIONS[number]
 type TableName = typeof TABLES[number]
@@ -50,6 +51,7 @@ interface WikiArgs {
   readonly status?: string
   readonly evidence?: string
   readonly paper_dir?: string
+  readonly stage?: string
   readonly project_id?: string
   readonly name?: string
   readonly metrics?: Record<string, JsonValue>
@@ -120,65 +122,76 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
       if (!isValidArxivId(arxivId)) {
         throw new Error(`wiki_note action 'add_paper' got an unsafe arxiv_id '${arxivId}'`)
       }
-      const existing = domain.table('papers').get(arxivId)
-      // The same shared merge as the panel/Zotero imports (R29 / #230): an
-      // agent-driven re-add refreshes the metadata but never wipes
-      // workbench-curated fields (notes/tags/projects/relevance/PDF
-      // pointer), and the first-import timestamp no longer resets.
-      const record = mergePaperRecord({
-        arxivId,
-        title: requireField(args.title, 'title', args.action),
-        authors: args.authors ?? [],
-        summary: requireField(args.summary, 'summary', args.action),
-        url: args.url ?? `https://arxiv.org/abs/${arxivId}`,
-        notes: args.notes ?? '',
-        tags: [],
-        projectIds: [],
-        addedAt: new Date().toISOString(),
-      }, existing, { ...(args.notes === undefined ? {} : { notes: args.notes }) })
-      await domain.table('papers').put(arxivId, record)
-      await emit(domain, 'literature.paper.imported', { paperId: arxivId }, { title: record.title, imported: existing === undefined })
-      return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
+      // The papers-table read-modify-write serializes on the per-paper lock
+      // against every other mutation channel (panel import, paper_fetch,
+      // Zotero import, delete) — an unlocked get→merge→put could overwrite a
+      // concurrent winner's curated fields.
+      return withPaperMutationLock(arxivId, async () => {
+        const existing = domain.table('papers').get(arxivId)
+        // The same shared merge as the panel/Zotero imports (R29 / #230): an
+        // agent-driven re-add refreshes the metadata but never wipes
+        // workbench-curated fields (notes/tags/projects/relevance/PDF
+        // pointer), and the first-import timestamp no longer resets.
+        const record = mergePaperRecord({
+          arxivId,
+          title: requireField(args.title, 'title', args.action),
+          authors: args.authors ?? [],
+          summary: requireField(args.summary, 'summary', args.action),
+          url: args.url ?? `https://arxiv.org/abs/${arxivId}`,
+          notes: args.notes ?? '',
+          tags: [],
+          projectIds: [],
+          addedAt: new Date().toISOString(),
+        }, existing, { ...(args.notes === undefined ? {} : { notes: args.notes }) })
+        await domain.table('papers').put(arxivId, record)
+        await emit(domain, 'literature.paper.imported', { paperId: arxivId }, { title: record.title, imported: existing === undefined })
+        return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
+      })
     }
     case 'set_paper': {
       const arxivId = requireField(args.arxiv_id, 'arxiv_id', args.action)
       const table = domain.table('papers')
-      const existing = table.get(arxivId)
-      if (existing === undefined) throw new Error(`wiki_note: no paper with id '${arxivId}'`)
-      let projectIds = [...(args.project_ids ?? existing.projectIds)]
-      let relevance = existing.relevance
-      if (args.relevance_score !== undefined) {
-        const projectId = requireField(args.project_id, 'project_id', args.action)
-        if (domain.table('projects').get(projectId) === undefined) {
-          throw new Error(`wiki_note: no project with id '${projectId}'`)
+      // Same per-paper lock as add_paper: the relevance merge below reads the
+      // stored map and adds one key, so two concurrent scores of the same
+      // paper against different projects must serialize or one key is lost.
+      return withPaperMutationLock(arxivId, async () => {
+        const existing = table.get(arxivId)
+        if (existing === undefined) throw new Error(`wiki_note: no paper with id '${arxivId}'`)
+        let projectIds = [...(args.project_ids ?? existing.projectIds)]
+        let relevance = existing.relevance
+        if (args.relevance_score !== undefined) {
+          const projectId = requireField(args.project_id, 'project_id', args.action)
+          if (domain.table('projects').get(projectId) === undefined) {
+            throw new Error(`wiki_note: no project with id '${projectId}'`)
+          }
+          if (!Number.isFinite(args.relevance_score) || args.relevance_score < 0 || args.relevance_score > 10) {
+            throw new Error(`wiki_note action 'set_paper' requires relevance_score between 0 and 10, got '${args.relevance_score}'`)
+          }
+          const reason = requireField(args.relevance_reason, 'relevance_reason', args.action)
+          relevance = {
+            ...relevance,
+            [projectId]: { score: args.relevance_score, reason, at: new Date().toISOString() },
+          }
+          // Scoring a paper against a project implies the link.
+          if (!projectIds.includes(projectId)) projectIds = [...projectIds, projectId]
         }
-        if (!Number.isFinite(args.relevance_score) || args.relevance_score < 0 || args.relevance_score > 10) {
-          throw new Error(`wiki_note action 'set_paper' requires relevance_score between 0 and 10, got '${args.relevance_score}'`)
+        for (const projectId of projectIds) {
+          if (domain.table('projects').get(projectId) === undefined) {
+            throw new Error(`wiki_note: no project with id '${projectId}'`)
+          }
         }
-        const reason = requireField(args.relevance_reason, 'relevance_reason', args.action)
-        relevance = {
-          ...relevance,
-          [projectId]: { score: args.relevance_score, reason, at: new Date().toISOString() },
+        const record = {
+          ...existing,
+          notes: args.notes ?? existing.notes,
+          tags: args.tags === undefined
+            ? existing.tags
+            : [...new Set(args.tags.map(tag => tag.trim()).filter(tag => tag !== ''))],
+          projectIds,
+          ...(relevance === undefined ? {} : { relevance }),
         }
-        // Scoring a paper against a project implies the link.
-        if (!projectIds.includes(projectId)) projectIds = [...projectIds, projectId]
-      }
-      for (const projectId of projectIds) {
-        if (domain.table('projects').get(projectId) === undefined) {
-          throw new Error(`wiki_note: no project with id '${projectId}'`)
-        }
-      }
-      const record = {
-        ...existing,
-        notes: args.notes ?? existing.notes,
-        tags: args.tags === undefined
-          ? existing.tags
-          : [...new Set(args.tags.map(tag => tag.trim()).filter(tag => tag !== ''))],
-        projectIds,
-        ...(relevance === undefined ? {} : { relevance }),
-      }
-      await table.put(arxivId, record)
-      return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
+        await table.put(arxivId, record)
+        return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
+      })
     }
     case 'add_idea': {
       const id = randomUUID()
@@ -263,17 +276,32 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
     }
     case 'set_project': {
       const id = requireField(args.id, 'id', args.action)
-      const paperDir = requireField(args.paper_dir, 'paper_dir', args.action)
+      const paperDir = args.paper_dir?.trim() ?? ''
+      const stage = args.stage
+      // At least one of the two mutable fields must be present — a bare
+      // set_project would be a silent no-op.
+      if (paperDir === '' && stage === undefined) {
+        throw new Error(`wiki_note action 'set_project' requires at least one of 'paper_dir' or 'stage'`)
+      }
+      if (stage !== undefined && !(PROJECT_STAGES as readonly string[]).includes(stage)) {
+        throw new Error(`wiki_note action 'set_project' requires stage ${PROJECT_STAGES.join('|')}, got '${stage}'`)
+      }
       if (domain.table('projects').get(id) === undefined) {
         throw new Error(`wiki_note: no project with id '${id}'`)
       }
       await domain.table('projects').update(id, current => ({
         ...current,
-        paperDir,
+        ...(paperDir === '' ? {} : { paperDir }),
+        ...(stage === undefined ? {} : { stage: stage as typeof PROJECT_STAGES[number] }),
         updatedAt: new Date().toISOString(),
       }))
-      await emit(domain, 'knowledge.project.paperdir', { projectId: id }, { paperDir })
-      return { ok: true, table: 'projects', id, paperDir }
+      if (paperDir !== '') {
+        await emit(domain, 'knowledge.project.paperdir', { projectId: id }, { paperDir })
+      }
+      if (stage !== undefined) {
+        await emit(domain, 'knowledge.project.stage', { projectId: id }, { stage })
+      }
+      return { ok: true, table: 'projects', id, ...(paperDir === '' ? {} : { paperDir }), ...(stage === undefined ? {} : { stage }) }
     }
     case 'add_experiment': {
       const projectId = requireField(args.project_id, 'project_id', args.action)
@@ -415,7 +443,7 @@ function renderOutcome(value: Record<string, JsonValue | undefined>): string {
 export function createWikiNoteTool(domain: ResearchWikiDomain): ToolDefinition {
   return defineTool({
     name: 'wiki_note',
-    description: 'Read and write the persistent research wiki: remembered papers (add_paper; set_paper updates notes/tags/project links and records a 0-10 relevance score against a project), ideas including never-deleted failed ones (add_idea, fail_idea), tracked claims (add_claim, set_claim), project records (set_project points a project at its paper directory), and experiment runs (add_experiment, set_experiment); list and get read any table. Always check the ideas table before proposing work, to avoid re-proving failed directions. Save useful papers you find with add_paper, record every experiment run with add_experiment/set_experiment, and call figure_save right after generating a paper-worthy image — the workbench only shows what the wiki remembers.',
+    description: 'Read and write the persistent research wiki: remembered papers (add_paper; set_paper updates notes/tags/project links and records a 0-10 relevance score against a project), ideas including never-deleted failed ones (add_idea, fail_idea), tracked claims (add_claim, set_claim), project records (set_project points a project at its paper directory and/or records its lifecycle stage), and experiment runs (add_experiment, set_experiment); list and get read any table. Always check the ideas table before proposing work, to avoid re-proving failed directions. Save useful papers you find with add_paper, record every experiment run with add_experiment/set_experiment, and call figure_save right after generating a paper-worthy image — the workbench only shows what the wiki remembers.',
     parameters: {
       action: { type: 'string', enum: ACTIONS, required: true, description: 'The wiki operation to perform.' },
       table: { type: 'string', enum: TABLES, description: 'Table for list/get (papers|ideas|claims|projects|experiments).' },
@@ -435,7 +463,8 @@ export function createWikiNoteTool(domain: ResearchWikiDomain): ToolDefinition {
       text: { type: 'string', description: 'Claim text for add_claim.' },
       status: { type: 'string', description: 'New status for set_claim (supported|invalidated|pending) or add_experiment/set_experiment (running|success|failed).' },
       evidence: { type: 'string', description: 'Evidence pointer for add_claim/set_claim.' },
-      paper_dir: { type: 'string', description: "Paper directory for set_project, relative to the research workspace (default 'paper')." },
+      paper_dir: { type: 'string', description: "Paper directory for set_project, relative to the research workspace (default 'paper'). At least one of paper_dir or stage is required." },
+      stage: { type: 'string', enum: PROJECT_STAGES, description: 'Lifecycle stage for set_project (idea|plan|experiment|writing|done); record it as the work crosses each gate. At least one of paper_dir or stage is required.' },
       project_id: { type: 'string', description: 'Owning project id for add_experiment; for add_idea it registers the idea into that project and auto-adopts it into the worktree (omit it to keep the idea standalone and active).' },
       name: { type: 'string', description: 'Experiment name for add_experiment/set_experiment.' },
       metrics: { type: 'object', additionalProperties: true, description: 'Scalar metrics for add_experiment/set_experiment (string/number values).' },
