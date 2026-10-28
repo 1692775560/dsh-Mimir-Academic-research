@@ -90,4 +90,24 @@ describe('automatic paper capture', () => {
     await expect(rememberFetchedPaper(domain, { ...ENTRY, id: '../escape' })).rejects.toThrow("unsafe arXiv id '../escape'")
     expect(domain.table('papers').size).toBe(0)
   })
+
+  it('keeps relevance verdicts across a re-fetch and lands the import event (R29 / #230)', async () => {
+    const domain = await domainHarness()
+    await domain.table('projects').put('p1', { id: 'p1', title: 'P1', stage: 'idea', artifacts: [], reviewRounds: 0, updatedAt: new Date().toISOString() })
+    await rememberFetchedPaper(domain, ENTRY, { projectId: 'p1' })
+    const relevance = { p1: { score: 9, reason: 'core reference', at: '2026-02-01T00:00:00.000Z' } }
+    await domain.table('papers').update(ENTRY.id, current => ({ ...current, relevance }))
+
+    const refreshed = await rememberFetchedPaper(domain, { ...ENTRY, title: 'Updated title' }, { projectId: 'p1' })
+
+    // The shared merge: a re-fetch never drops the workbench's verdict.
+    expect(refreshed.relevance).toEqual(relevance)
+    // The agent channel records the same ledger event as the panel import.
+    const events = [...domain.table('events').entries()].map(([, event]) => event)
+    const imports = events.filter(event => event.action === 'literature.paper.imported')
+    expect(imports.map(event => event.payload)).toEqual([
+      { title: ENTRY.title, imported: true },
+      { title: 'Updated title', imported: false },
+    ])
+  })
 })
