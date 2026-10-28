@@ -815,10 +815,28 @@ export interface ServerRecord {
   readonly note: string
   /** Operator-assigned grouping labels. */
   readonly tags: readonly string[]
+  /**
+   * SSH login password (#263). Stored host-side only: it never crosses the
+   * RPC boundary (the panel and the model tools see {@link ServerView}),
+   * never enters an event payload, and is stripped from wiki exports. The
+   * ssh client receives it through the askpass helper's environment, never
+   * through argv. Absent means key/agent auth.
+   */
+  readonly password?: string | undefined
   /** ISO-8601 timestamp of the record's first write. */
   readonly createdAt: string
   /** ISO-8601 timestamp of the last write. */
   readonly updatedAt: string
+}
+
+/**
+ * The panel-facing view of one remembered server: everything of
+ * {@link ServerRecord} except the password, plus `hasPassword` so the edit
+ * form can say a password is stored without ever seeing it.
+ */
+export interface ServerView extends Omit<ServerRecord, 'password'> {
+  /** Whether a login password is stored host-side (the secret never leaves the host). */
+  readonly hasPassword: boolean
 }
 
 /** Upsert payload of `saveServer`: `id` present updates, absent creates. */
@@ -831,6 +849,12 @@ export interface ServerInput {
   readonly note: string
   /** Replacement tag list; omitted keeps the existing tags on update. */
   readonly tags?: string[] | undefined
+  /**
+   * SSH login password (#263). Omitted keeps the stored password on update
+   * (and means key/agent auth on create); an empty string clears a stored
+   * password; any other value replaces/sets it.
+   */
+  readonly password?: string | undefined
 }
 
 /** One GPU row parsed from a remote `nvidia-smi` probe. */
@@ -869,10 +893,10 @@ export interface ServerStatusView {
 }
 
 /** `listServers` result: every remembered server, most recently updated first. */
-export type ResearchListServersResult = ResearchResult<{ readonly servers: readonly ServerRecord[] }>
+export type ResearchListServersResult = ResearchResult<{ readonly servers: readonly ServerView[] }>
 
 /** `saveServer` result: the upserted record (with its generated id on create). */
-export type ResearchSaveServerResult = ResearchResult<{ readonly server: ServerRecord }>
+export type ResearchSaveServerResult = ResearchResult<{ readonly server: ServerView }>
 
 /** `deleteServer` result: the deleted record's id. */
 export type ResearchDeleteServerResult = ResearchResult<{ readonly id: string }>

@@ -14,7 +14,7 @@ import type { ZodType } from 'zod'
 import {
   claimRecord, eventRecord, experimentRecord, figureRecord, ideaRecord, paperRecord, projectRecord, serverRecord,
 } from './store.ts'
-import type { ResearchWikiSnapshot, ResearchWikiTableName } from './types.ts'
+import type { ResearchWikiSnapshot, ResearchWikiTableName, ServerRecord } from './types.ts'
 
 /** Snapshot envelope marker (`format` field). */
 export const WIKI_SNAPSHOT_FORMAT = 'mimir-wiki'
@@ -80,6 +80,13 @@ export interface WikiSnapshotSource {
 export function buildWikiSnapshot(domain: WikiSnapshotSource, now = new Date()): ResearchWikiSnapshot {
   const rows = (name: ResearchWikiTableName): readonly unknown[] =>
     Object.freeze([...domain.table(name).entries()].map(([, record]) => record))
+  // Credentials never leave the host (#263): the servers table strips each
+  // record's password before it enters a snapshot, so exports and scheduled
+  // backups stay shareable.
+  const serverRows = Object.freeze([...domain.table('servers').entries()].map(([, record]) => {
+    const { password: _password, ...rest } = record as ServerRecord
+    return rest
+  }))
   return {
     format: WIKI_SNAPSHOT_FORMAT,
     version: WIKI_SNAPSHOT_VERSION,
@@ -90,7 +97,7 @@ export function buildWikiSnapshot(domain: WikiSnapshotSource, now = new Date()):
       claims: rows('claims') as ResearchWikiSnapshot['tables']['claims'],
       projects: rows('projects') as ResearchWikiSnapshot['tables']['projects'],
       experiments: rows('experiments') as ResearchWikiSnapshot['tables']['experiments'],
-      servers: rows('servers') as ResearchWikiSnapshot['tables']['servers'],
+      servers: serverRows as ResearchWikiSnapshot['tables']['servers'],
       figures: rows('figures') as ResearchWikiSnapshot['tables']['figures'],
       events: rows('events') as ResearchWikiSnapshot['tables']['events'],
     },

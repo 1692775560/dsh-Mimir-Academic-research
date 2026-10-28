@@ -8,40 +8,16 @@
  */
 
 import { useEffect, useState } from 'react'
-import type { ExperimentRecord, ServerInput, ServerRecord } from 'dsh-mimir/types'
+import type { ExperimentRecord, ServerInput, ServerView } from 'dsh-mimir/types'
 import type {
   ResearchFailureView, ResearchJobsView, ResearchProjectSlice, ResearchServersView, ServerCheckState,
 } from './controller.ts'
 import { collectServerTags, failureCopy, filterServers, PROBE_FAILURE_KEYS, PROBE_STAGE_KEYS, probeStageOf, relativeTime, type ResearchT } from './view-common.ts'
+import { EMPTY_SERVER_FORM, serverFormOf, serverInputOf, type ServerFormState } from './server-form.ts'
 import { EmptyState } from './EmptyState.tsx'
 import { ViewHead } from './ViewHead.tsx'
 import { JobsSection } from './JobsSection.tsx'
 import css from './ResearchPanel.module.css'
-
-/** Form field state: the port stays text until submit. */
-interface ServerFormState {
-  readonly name: string
-  readonly host: string
-  readonly port: string
-  readonly username: string
-  readonly note: string
-  readonly tags: readonly string[]
-}
-
-/** The blank form the add button opens. */
-const EMPTY_FORM: ServerFormState = { name: '', host: '', port: '22', username: '', note: '', tags: [] }
-
-/** Form state of one existing record (the edit path's refill). */
-function formOf(record: ServerRecord): ServerFormState {
-  return {
-    name: record.name,
-    host: record.host,
-    port: String(record.port),
-    username: record.username,
-    note: record.note,
-    tags: [...record.tags],
-  }
-}
 
 /** The status-dot data-state of one server's probe lifecycle. */
 function dotStateOf(check: ServerCheckState | undefined): string {
@@ -101,12 +77,14 @@ export function ServersView({
 }) {
   /** 'new' for the add form, a server id for the edit form, null when closed. */
   const [editing, setEditing] = useState<'new' | string | null>(null)
-  const [form, setForm] = useState<ServerFormState>(EMPTY_FORM)
+  const [form, setForm] = useState<ServerFormState>(EMPTY_SERVER_FORM)
   const [formError, setFormError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   const [tagInput, setTagInput] = useState('')
+  /** The edit form's explicit clear-the-stored-password checkbox (#263). */
+  const [clearPassword, setClearPassword] = useState(false)
   /** The card whose probe-failure line is expanded; null collapses them all. */
   const [openMessageId, setOpenMessageId] = useState<string | null>(null)
 
@@ -123,15 +101,17 @@ export function ServersView({
 
   const openAdd = (): void => {
     setEditing('new')
-    setForm(EMPTY_FORM)
+    setForm(EMPTY_SERVER_FORM)
     setFormError(null)
     setTagInput('')
+    setClearPassword(false)
   }
-  const openEdit = (record: ServerRecord): void => {
+  const openEdit = (record: ServerView): void => {
     setEditing(record.id)
-    setForm(formOf(record))
+    setForm(serverFormOf(record))
     setFormError(null)
     setTagInput('')
+    setClearPassword(false)
   }
   const patchForm = (patch: Partial<ServerFormState>): void => {
     setForm(current => ({ ...current, ...patch }))
@@ -146,19 +126,7 @@ export function ServersView({
     if (saving) return
     setSaving(true)
     setFormError(null)
-    // A tag typed but not yet committed with Enter rides along.
-    const pending = tagInput.trim()
-    const tags = pending === '' || form.tags.includes(pending) ? form.tags : [...form.tags, pending]
-    const server: ServerInput = {
-      id: editing === 'new' || editing === null ? undefined : editing,
-      name: form.name,
-      host: form.host,
-      port: Number(form.port),
-      username: form.username,
-      note: form.note,
-      tags: [...tags],
-    }
-    void saveServer(server)
+    void saveServer(serverInputOf(form, tagInput, editing, clearPassword))
       .then((failure) => {
         if (failure !== null) {
           setFormError(failure.message)
@@ -168,7 +136,7 @@ export function ServersView({
       })
       .finally(() => { setSaving(false) })
   }
-  const removeServer = (record: ServerRecord): void => {
+  const removeServer = (record: ServerView): void => {
     if (!window.confirm(t('servers.confirmDelete'))) return
     void deleteServer(record.id).then((failure) => {
       setActionError(failure === null ? null : `${t('servers.deleteFailed')}：${failure.message}`)
@@ -241,6 +209,29 @@ export function ServersView({
                 onChange={event => { patchForm({ username: event.target.value }) }}
               />
             </label>
+            <label className={css.field}>
+              <span className={css.fieldLabel}>{t('servers.form.password')}</span>
+              <input
+                className={css.input}
+                type="password"
+                autoComplete="new-password"
+                value={form.password}
+                placeholder={editingRecord?.hasPassword === true
+                  ? t('servers.form.passwordKeepPlaceholder')
+                  : t('servers.form.passwordPlaceholder')}
+                onChange={event => { patchForm({ password: event.target.value }) }}
+              />
+            </label>
+            {editingRecord?.hasPassword === true && (
+              <label className={css.field} data-wide>
+                <input
+                  type="checkbox"
+                  checked={clearPassword}
+                  onChange={event => { setClearPassword(event.target.checked) }}
+                />
+                {' '}{t('servers.form.clearPassword')}
+              </label>
+            )}
             <label className={css.field} data-wide>
               <span className={css.fieldLabel}>{t('servers.form.note')}</span>
               <input

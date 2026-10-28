@@ -1,16 +1,19 @@
 /**
  * Server domain module: remembered compute servers CRUD, the two-stage
  * checkServer probe (TCP then best-effort ssh GPU readout), and the remote
- * job lifecycle (submitJob queues and drives a job over batch-mode ssh in
- * the background; the panel polls listJobs for the flips). The job counter
- * lives on an explicit `ServiceState`. Thin forwarding of the `server.*`
- * Remote namespace lives in `service.ts`.
+ * job lifecycle (submitJob queues and drives a job over ssh in the
+ * background; the panel polls listJobs for the flips). Key-auth servers run
+ * batch-mode; a stored password switches the call to the SSH_ASKPASS
+ * hand-off (#263, see sshInvocation). The job counter lives on an explicit
+ * `ServiceState`. Thin forwarding of the `server.*` Remote namespace lives
+ * in `service.ts`.
  * @module dsh-mimir/src/services/server
  */
 
 import { execFile } from 'node:child_process'
-import { appendFile } from 'node:fs/promises'
+import { appendFile, chmod, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { connect } from 'node:net'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { emitEvent, PANEL_ACTOR, SERVICE_ACTOR } from '../ledger.ts'
@@ -31,6 +34,7 @@ import type {
   ServerInput,
   ServerRecord,
   ServerStatusView,
+  ServerView,
 } from '../types.ts'
 import { nextRecordId, rejected, success } from './common.ts'
 import type { ServiceState } from './common.ts'
@@ -121,36 +125,101 @@ type GpuProbeOutcome =
   | { readonly ok: true; readonly gpus: readonly ServerGpuView[] }
   | { readonly ok: false; readonly stage: 'ssh' | 'gpu'; readonly message: string }
 
+/** One ssh call's argv and environment, plus the askpass cleanup hook. */
+interface SshInvocation {
+  readonly args: readonly string[]
+  /** Undefined keeps the default environment inheritance (the key-auth path). */
+  readonly env: NodeJS.ProcessEnv | undefined
+  /** Removes the askpass helper dir; undefined when no helper was needed. */
+  readonly cleanup: (() => Promise<void>) | undefined
+}
+
 /**
- * Read one server's GPU table over a batch-mode ssh call. Best-effort: an ssh
- * or `nvidia-smi` failure is the `ok: false` branch, never a rejection, so the
- * caller can still report the server itself as reachable.
- * @param record - the server to probe (host, port, and login user).
+ * Assemble one ssh invocation for `server` (#263). Key/agent auth stays the
+ * batch-mode call it always was. A stored password switches the call to the
+ * SSH_ASKPASS hand-off: the password rides the askpass helper's ENVIRONMENT
+ * (never argv, where `ps` would show it), BatchMode must lift so ssh prompts
+ * at all (the helper answers the prompt), and `PreferredAuthentications`
+ * pins the session to a single password prompt so a wrong password fails
+ * fast instead of hanging the probe budget. The helper is a constant
+ * one-liner in a private mkdtemp dir (mkdtemp's 0700, the script 0500) that
+ * echoes `$MIMIR_SSH_ASKPASS_PASSWORD`; `cleanup` deletes the dir when the
+ * call settles. No sshpass dependency: OpenSSH ≥ 8.4 honors
+ * `SSH_ASKPASS_REQUIRE=force`, and the dummy DISPLAY keeps older clients on
+ * the same no-tty path.
+ * @param server - the target record (host, port, login user, password).
+ * @param remoteCommand - the command line ssh runs on the remote side.
+ * @returns argv, environment, and the cleanup hook.
+ */
+async function sshInvocation(server: ServerRecord, remoteCommand: string): Promise<SshInvocation> {
+  const base = [
+    '-o', `ConnectTimeout=${String(GPU_PROBE_SSH_CONNECT_TIMEOUT_S)}`,
+    '-p', String(server.port),
+    // `--` ends option parsing: a stored record predating input validation
+    // can never turn the login target into an ssh flag.
+    '--',
+    `${server.username}@${server.host}`,
+    remoteCommand,
+  ]
+  if (server.password === undefined) {
+    return { args: ['-o', 'BatchMode=yes', ...base], env: undefined, cleanup: undefined }
+  }
+  const dir = await mkdtemp(join(tmpdir(), 'mimir-askpass-'))
+  const helper = join(dir, 'askpass.sh')
+  await writeFile(helper, '#!/bin/sh\nprintf \'%s\\n\' "$MIMIR_SSH_ASKPASS_PASSWORD"\n')
+  await chmod(helper, 0o500)
+  return {
+    args: [
+      // BatchMode=yes would suppress the password prompt entirely; the
+      // askpass hand-off needs ssh to ask (and the helper answers).
+      '-o', 'BatchMode=no',
+      '-o', 'PreferredAuthentications=password',
+      '-o', 'PubkeyAuthentication=no',
+      '-o', 'NumberOfPasswordPrompts=1',
+      ...base,
+    ],
+    env: {
+      ...process.env,
+      SSH_ASKPASS: helper,
+      SSH_ASKPASS_REQUIRE: 'force',
+      DISPLAY: process.env.DISPLAY ?? 'mimir-askpass:0',
+      MIMIR_SSH_ASKPASS_PASSWORD: server.password,
+    },
+    cleanup: async () => { await rm(dir, { recursive: true, force: true }) },
+  }
+}
+
+/**
+ * Read one server's GPU table over ssh. Best-effort: an ssh or `nvidia-smi`
+ * failure is the `ok: false` branch, never a rejection, so the caller can
+ * still report the server itself as reachable.
+ * @param record - the server to probe (host, port, login user, password).
  * @returns the parsed GPU rows, or the failure stage (`ssh` session vs `gpu`
  * readout) plus the failure message.
  */
 async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
+  const invocation = await sshInvocation(record, NVIDIA_SMI_QUERY)
   try {
-    const { stdout } = await execFileAsync('ssh', [
-      '-o', 'BatchMode=yes',
-      '-o', `ConnectTimeout=${String(GPU_PROBE_SSH_CONNECT_TIMEOUT_S)}`,
-      '-p', String(record.port),
-      // `--` ends option parsing: a stored record predating input validation
-      // can never turn the login target into an ssh flag.
-      '--',
-      `${record.username}@${record.host}`,
-      NVIDIA_SMI_QUERY,
-    ], { timeout: GPU_PROBE_TIMEOUT_MS })
+    const { stdout } = await execFileAsync('ssh', [...invocation.args], {
+      timeout: GPU_PROBE_TIMEOUT_MS,
+      ...(invocation.env === undefined ? {} : { env: invocation.env }),
+    })
     const gpus: ServerGpuView[] = []
     for (const line of stdout.split('\n')) {
       const trimmed = line.trim()
       if (trimmed === '') continue
       const [name, utilizationPct, memoryUsedMb, memoryTotalMb] = trimmed.split(',').map(field => field.trim())
+      const utilization = Number(utilizationPct)
+      const usedMb = Number(memoryUsedMb)
+      const totalMb = Number(memoryTotalMb)
+      // #236: a malformed nvidia-smi row (NaN/Infinity) is skipped outright,
+      // never stored as a NaN bar.
+      if (!Number.isFinite(utilization) || !Number.isFinite(usedMb) || !Number.isFinite(totalMb)) continue
       gpus.push({
         name: name ?? '',
-        utilizationPct: Number(utilizationPct),
-        memoryUsedMb: Number(memoryUsedMb),
-        memoryTotalMb: Number(memoryTotalMb),
+        utilizationPct: utilization,
+        memoryUsedMb: usedMb,
+        memoryTotalMb: totalMb,
       })
     }
     return { ok: true, gpus: Object.freeze(gpus) }
@@ -168,6 +237,8 @@ async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
     // land on the `gpu` stage.
     const code = (error as { code?: unknown }).code
     return { ok: false, stage: code === 255 ? 'ssh' : 'gpu', message }
+  } finally {
+    await invocation.cleanup?.()
   }
 }
 
@@ -178,6 +249,17 @@ async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
  */
 const SSH_TOKEN_RE = /^[a-zA-Z0-9._:-]+$/
 const SSH_USERNAME_RE = /^[a-zA-Z0-9._-]+$/
+
+/**
+ * Password bounds (#263): the cap exists only so a pathological payload
+ * cannot bloat the child environment the password travels in; control
+ * characters would break that hand-off (NUL aborts spawn outright, a
+ * newline would corrupt the askpass line protocol). Everything else —
+ * spaces, shell punctuation — is legitimate password content and safe
+ * because the password never appears in argv or a shell line.
+ */
+const SERVER_PASSWORD_MAX_CHARS = 256
+const SERVER_PASSWORD_CONTROL_RE = /[\x00-\x1f\x7f]/
 
 /** First invalid-input message for one server upsert payload, or null when valid. */
 function validateServerInput(input: ServerInput): string | null {
@@ -193,7 +275,25 @@ function validateServerInput(input: ServerInput): string | null {
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
     return 'port must be an integer between 1 and 65535'
   }
+  if (input.password !== undefined && input.password !== '') {
+    if (input.password.length > SERVER_PASSWORD_MAX_CHARS) {
+      return `password must be at most ${String(SERVER_PASSWORD_MAX_CHARS)} characters`
+    }
+    if (SERVER_PASSWORD_CONTROL_RE.test(input.password)) {
+      return 'password must not contain control characters'
+    }
+  }
   return null
+}
+
+/**
+ * The panel/tool-facing view of one stored record (#263): the password is
+ * dropped and replaced by `hasPassword`, so the secret never crosses the RPC
+ * boundary while the edit form can still say a password is stored.
+ */
+function toServerView(record: ServerRecord): ServerView {
+  const { password, ...rest } = record
+  return { ...rest, hasPassword: password !== undefined && password !== '' }
 }
 
 /**
@@ -203,7 +303,7 @@ function validateServerInput(input: ServerInput): string | null {
  */
 export function listServers(deps: ServerDeps): Promise<ResearchListServersResult> {
   const servers = [...deps.domain.table('servers').entries()]
-    .map(([, record]) => record)
+    .map(([, record]) => toServerView(record))
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
   return Promise.resolve(success({ servers: Object.freeze(servers) }))
 }
@@ -215,11 +315,14 @@ export function listServers(deps: ServerDeps): Promise<ResearchListServersResult
  * non-empty and the port a valid TCP port — violations are `invalid-input`,
  * an unknown update id is `server-not-found`. A present `tags` list is
  * trimmed, emptied out, and deduped before it replaces the record's tags;
- * an omitted list keeps them.
+ * an omitted list keeps them. Password semantics (#263): an omitted
+ * `password` keeps the stored one on update, an empty string clears it, any
+ * other value sets/replaces it; the stored secret never leaves the host —
+ * the returned view carries `hasPassword` instead.
  * @param deps - open wiki domain.
  * @param state - per-instance counters backing the collision-safe id.
  * @param request - the server fields, with `id` marking the update form.
- * @returns the stored record.
+ * @returns the stored record's view (password stripped).
  */
 export async function saveServer(
   deps: ServerDeps,
@@ -235,17 +338,26 @@ export async function saveServer(
   const tags = input.tags === undefined
     ? undefined
     : [...new Set(input.tags.map(tag => tag.trim()).filter(tag => tag !== ''))]
+  // Password: omitted keeps the stored one (update), empty clears, otherwise
+  // set. The key is omitted outright rather than written as undefined so the
+  // stored JSON stays clean.
+  const passwordPatch = (existing: string | undefined): { readonly password?: string } =>
+    input.password === undefined
+      ? (existing === undefined ? {} : { password: existing })
+      : input.password === '' ? {} : { password: input.password }
   if (input.id !== undefined) {
     const existing = table.get(input.id)
     if (existing === undefined) return rejected({ code: 'server-not-found', id: input.id })
     const next: ServerRecord = {
-      ...existing,
+      id: existing.id,
       name: input.name,
       host: input.host,
       port: input.port,
       username: input.username,
       note: input.note,
       tags: tags ?? existing.tags,
+      ...passwordPatch(existing.password),
+      createdAt: existing.createdAt,
       updatedAt: now,
     }
     await table.put(input.id, next)
@@ -255,7 +367,7 @@ export async function saveServer(
       refs: { serverId: next.id },
       payload: { name: next.name, host: next.host, created: false },
     })
-    return success({ server: next })
+    return success({ server: toServerView(next) })
   }
   const created: ServerRecord = {
     id: nextRecordId(state, 'srv'),
@@ -265,6 +377,7 @@ export async function saveServer(
     username: input.username,
     note: input.note,
     tags: tags ?? [],
+    ...passwordPatch(undefined),
     createdAt: now,
     updatedAt: now,
   }
@@ -275,7 +388,7 @@ export async function saveServer(
     refs: { serverId: created.id },
     payload: { name: created.name, host: created.host, created: true },
   })
-  return success({ server: created })
+  return success({ server: toServerView(created) })
 }
 
 /**
@@ -306,8 +419,8 @@ export async function deleteServer(
 /**
  * Probe one remembered server. The probe is two best-effort stages: a TCP
  * connect (failure settles the view `offline`), then — only when the TCP
- * probe connected and the record names a login user — a batch-mode ssh
- * `nvidia-smi` readout whose failure downgrades the GPU table to empty
+ * probe connected and the record names a login user — an ssh `nvidia-smi`
+ * readout whose failure downgrades the GPU table to empty
  * without flipping the state. The settled view reports the stage where the
  * probe stopped (`stage`: the failed stage on failure, the deepest completed
  * stage on success) and the per-stage latencies (`tcpLatencyMs`,
@@ -521,7 +634,7 @@ export async function deleteJob(
 }
 
 /**
- * Drive one queued job to its terminal state over a batch-mode ssh call:
+ * Drive one queued job to its terminal state over one ssh call:
  * flip the record `running`, wait on the remote command, then settle per the
  * lifecycle contract (#225, see job-lifecycle.ts): `succeeded` (exit 0),
  * `failed` (remote non-zero exit, a pre-command session failure, or the
@@ -570,18 +683,13 @@ async function runJob(
     return
   }
   let settled: JobRecord
+  const invocation = await sshInvocation(server, running.command)
   try {
-    const { stdout, stderr } = await execFileAsync('ssh', [
-      '-o', 'BatchMode=yes',
-      '-o', `ConnectTimeout=${String(GPU_PROBE_SSH_CONNECT_TIMEOUT_S)}`,
-      '-p', String(server.port),
-      '--',
-      `${server.username}@${server.host}`,
-      running.command,
-    ], {
+    const { stdout, stderr } = await execFileAsync('ssh', [...invocation.args], {
       timeout: deps.jobs?.timeoutMs ?? SSH_JOB_TIMEOUT_MS,
       maxBuffer: deps.jobs?.maxBufferBytes ?? SSH_JOB_MAX_BUFFER_BYTES,
       signal,
+      ...(invocation.env === undefined ? {} : { env: invocation.env }),
     })
     settled = {
       ...running, status: 'succeeded', exitCode: 0,
@@ -590,6 +698,7 @@ async function runJob(
     }
   } catch (error) {
     if (signal.aborted) {
+      await invocation.cleanup?.()
       await settleStoppedJob(deps, state, running, state.jobStopStatus.get(id) ?? 'cancelled', error)
       return
     }
@@ -634,6 +743,7 @@ async function runJob(
       }
     }
   }
+  await invocation.cleanup?.()
   await finishJob(deps, state, settled)
 }
 

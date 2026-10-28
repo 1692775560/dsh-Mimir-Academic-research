@@ -148,8 +148,8 @@ import type {
   SectionMove,
   SectionOutlineTitles,
   ServerInput,
-  ServerRecord,
   ServerStatusView,
+  ServerView,
   SubsectionMove,
   WebSearchEntry,
   ZoteroCollectionView,
@@ -645,7 +645,7 @@ export interface ResearchArtifactView {
 /** The servers view: every remembered compute server. */
 export interface ResearchServersView {
   readonly status: ResearchLoadStatus
-  readonly list: readonly ServerRecord[]
+  readonly list: readonly ServerView[]
   readonly failure: ResearchFailureView | null
 }
 

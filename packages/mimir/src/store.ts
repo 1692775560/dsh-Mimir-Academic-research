@@ -130,6 +130,10 @@ export const serverRecord = z.object({
   // Added WITHOUT a version bump: `.default([])` fills the field when a
   // stored record predates it, so existing v2 JSON stores keep loading.
   tags: z.array(z.string()).default([]),
+  // Added WITHOUT a version bump (#263): `.optional()` leaves the field
+  // absent on records that predate it. The password is stored host-side
+  // only — RPC views and wiki exports never carry it.
+  password: z.string().max(256).optional(),
   createdAt: z.string(),
   updatedAt: z.string(),
 })

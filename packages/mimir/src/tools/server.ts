@@ -1,8 +1,9 @@
 /**
  * Model-callable tools that forward to the live `server.*` Remote namespace
  * (`ResearchService`): list remembered servers, probe one (TCP connect plus
- * best-effort ssh `nvidia-smi` GPU readout), submit a job over batch-mode
- * ssh, and list jobs. Thin forwarding only — the domain logic, its input
+ * best-effort ssh `nvidia-smi` GPU readout), submit a job over ssh
+ * (batch-mode for key auth, SSH_ASKPASS hand-off for password auth, #263),
+ * and list jobs. Thin forwarding only — the domain logic, its input
  * validation, and its job state stay in `services/server.ts`, so a
  * model-dispatched job shares the panel's `ServiceState` (the same job
  * counter and SSH abort handles).
@@ -20,7 +21,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
-import type { ResearchFailure, ServerRecord } from '../types.ts'
+import type { ResearchFailure, ServerView } from '../types.ts'
 import type { ResearchService } from '../service.ts'
 
 /**
@@ -76,7 +77,7 @@ function asJson<T>(value: T): JsonValue {
 export function createServerListTool(getResearch: ResearchServiceResolver): ToolDefinition {
   return defineTool({
     name: 'server_list',
-    description: 'List every remembered compute server, most recently updated first. Each entry carries the server id (server_id), host, port, ssh login user (empty for a TCP-only record), tags, and note. Call this before promising or submitting a run so you address a real registered machine.',
+    description: 'List every remembered compute server, most recently updated first. Each entry carries the server id (server_id), host, port, ssh login user (empty for a TCP-only record), tags, note, and whether a login password is stored (the password itself never leaves the host). Call this before promising or submitting a run so you address a real registered machine.',
     parameters: {
       detail: { type: 'boolean', description: 'Default true; false returns only server ids and names, which keeps the tool call cheap when you only need an id.' },
     },
@@ -86,7 +87,7 @@ export function createServerListTool(getResearch: ResearchServiceResolver): Tool
       if (!('servers' in result)) return asJson(result)
       if (args.detail === false) {
         return asJson({
-          servers: (result as { servers: readonly ServerRecord[] }).servers.map(server => ({ server_id: server.id, name: server.name })),
+          servers: (result as { servers: readonly ServerView[] }).servers.map(server => ({ server_id: server.id, name: server.name })),
         })
       }
       return asJson(result)
@@ -121,7 +122,7 @@ export function createServerCheckTool(getResearch: ResearchServiceResolver): Too
 export function createServerSubmitJobTool(getResearch: ResearchServiceResolver): ToolDefinition {
   return defineTool({
     name: 'server_submit_job',
-    description: 'Queue one batch-mode ssh command on a remembered server (its login shell runs the command). Non-blocking: returns the queued job record (id, server_id, command, status "queued") once durable; poll server_list_jobs for the flips to running, then succeeded/failed. A non-empty command up to 4000 characters is required; the server must name an ssh login user; an optional experiment_id links the run and flips that experiment record to running on submit, then to success/failed when the job settles. Rejections (server-not-found, invalid-input, experiment-not-found) return as a failure, not an error.',
+    description: 'Queue one ssh command on a remembered server (its login shell runs the command). Non-blocking: returns the queued job record (id, server_id, command, status "queued") once durable; poll server_list_jobs for the flips to running, then succeeded/failed. A non-empty command up to 4000 characters is required; the server must name an ssh login user; an optional experiment_id links the run and flips that experiment record to running on submit, then to success/failed when the job settles. Rejections (server-not-found, invalid-input, experiment-not-found) return as a failure, not an error.',
     parameters: {
       server_id: { type: 'string', required: true, description: 'Id of a remembered ssh-capable server (see server_list).' },
       command: { type: 'string', required: true, description: 'The remote command line, executed by the server\'s login shell; at most 4000 characters.' },
