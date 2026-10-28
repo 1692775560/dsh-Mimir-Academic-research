@@ -46,16 +46,16 @@ dsh plugin --profile web add dsh-mimir@latest   # 安装即自动激活
 dsh web                                          # 然后打开 http://127.0.0.1:3080
 ```
 
-装到了旧版本（比如 0.11.x/0.12.x）？dsh 的插件商店走 pnpm，默认会延迟加载刚发布的新版本。改用精确版本号：`dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.21.1`
+装到了旧版本（比如 0.11.x/0.12.x）？dsh 的插件商店走 pnpm，默认会延迟加载刚发布的新版本。改用精确版本号：`dsh plugin --profile web remove dsh-mimir && dsh plugin --profile web add dsh-mimir@0.21.2`
 
-版本兼容：**0.21.1 需要 dsh ≥ 0.2.0-rc.1**（上游删除了 runtime-invariants 包，并把全局当前会话 API 换成 mainView 引用保持 + `uiWorkspace.openSession`；已对 0.2.1-alpha.2 验证）。dsh 0.1.x 请钉住上一个版本：`dsh plugin --profile web add dsh-mimir@0.21.0`。**0.18.x–0.21.0 需要 dsh ≥ 0.1.2-alpha.4**；更旧的 dsh 请钉 0.16.0。
+版本兼容：**0.21.2 需要 dsh ≥ 0.2.0-rc.1**（上游删除了 runtime-invariants 包，并把全局当前会话 API 换成 mainView 引用保持 + `uiWorkspace.openSession`；已对 0.2.1-alpha.2 验证）。0.21.0 与 0.21.1 在 dsh 0.2.x 上不可用——它们的 Typert manifest 仍在输出已退役的 `schema:` codec，整个 `research` Remote 组合失败，所有工作区读出来是空的；请升级到 0.21.2。dsh 0.1.x 请钉住上一个版本：`dsh plugin --profile web add dsh-mimir@0.21.0`。**0.18.x–0.21.1 需要 dsh ≥ 0.1.2-alpha.4**；更旧的 dsh 请钉 0.16.0。
 
 点击侧栏底部的 **Mimir**。wiki 存在 `~/.dsh/storages/research_wiki.json`，工件落盘 `./.research`。
 
 可选能力：
 
 - **论文编译**——装一个 LaTeX 引擎（`brew install tectonic` 最省事），或把 `latex.engine` 指到二进制路径
-- **Web 搜索**——sxng CLI 已随包安装，一条命令给它一个本地 SearXNG（免 Docker，venv 运行）：
+- **Web 搜索**——digdig CLI（`dg`）已随包安装，一条命令给它一个本地 SearXNG（免 Docker，venv 运行）：
   ```sh
   bash scripts/setup-web-search.sh
   ```
@@ -73,7 +73,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 | --- | --- | --- |
 | `workspaceDir` | `.research` | 研究工作区根目录（工件、备份） |
 | `latex.engine` | `auto` | 依次探测 `latexmk` / `tectonic`，或填二进制绝对路径 |
-| `search.command` | `auto` | Web 搜索：`auto` 用 PATH 上的 `sxng` 或随包副本 |
+| `search.command` | `auto` | Web 搜索：`auto` 用 PATH 上的 `dg` 或随包副本 |
 | `reviewer.maxRounds` | `3` | 每个项目的评审轮次预算 |
 | `backup.enabled` / `intervalMinutes` / `keep` | `true` / `60` / `24` | 定时 wiki 快照 |
 | `skills.enabled` | `true` | 注册十一个内置科研技能（含 `research-paper-deai` 去 AI 味） |
@@ -81,12 +81,14 @@ dsh web                                          # 然后打开 http://127.0.0.1
 ## 故障排查
 
 - **找不到插件**——dsh 从 profile 目录解析插件名；用 `dsh plugin --profile web add dsh-mimir@latest` 安装，别在当前目录直接跑。
+- **启动时报 `Cannot find package '@deepseek-ai/dsh-…'`**——profile 里只有插件、没有宿主本该提供的那批 dsh 包。Mimir 在模块作用域就 import 了 `@deepseek-ai/dsh-storage-domain`、`dsh-tools`、`dsh-atomic-write`、`dsh-llm`、`dsh-typert-protocol`：`@Remote` 装饰器和 wiki domain spec 都在模块加载时求值，既不能懒加载也不能自带副本（它们要把宿主的 `Service` 与工具注册表实例交给插件）。凡是会 provision peer 的安装方式——`dsh plugin … add`，或保持 peer 安装开启的 `npm`/`pnpm`——都能解析到；不 provision peer 的安装方式会留下一个 import 不进来的插件。遇到这个报错请用 `dsh plugin --profile <profile> add dsh-mimir@latest` 重装，不要手工把包拷进 profile。
 - **LaTeX 引擎未找到**——`brew install tectonic`，或把 `latex.engine` 指到绝对路径；tectonic 首次编译要联网下载宏包，超时就把 `latex.timeoutMs` 调大。
 - **arXiv 失败**——走代理时在启动 dsh 前 export `HTTPS_PROXY`。
-- **Web 搜索不可用**——运行 `bash scripts/setup-web-search.sh`（本地 SearXNG），或 `sxng init` 对接自己的实例，然后重启 dsh。
+- **Web 搜索不可用**——运行 `bash scripts/setup-web-search.sh`（本地 SearXNG），或 `dg init` 对接自己的实例，然后重启 dsh。
 
 ## 更新日志
 
+- **0.21.2**——修复 dsh 0.2.x 上的空白工作台回归：Typert manifest 仍在输出已退役的 `schema:` codec 形状，而 dsh 整批原子校验，一个陈旧的 codec 就会让 `research` Remote 的全部 strict 端点撤销注册——此前加过的工作区全部消失、新工作区加不进去（[#276](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/276)、[#268](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/268)）；生成器现在为全部 165 个 strict codec 输出 `create()` 工厂，并新增逐 face 的契约单测，回归会挂测试而不是发出去 · **破坏性变更**：Web 搜索集成从 `sxng` CLI 迁移到 `digdig` CLI（`dg`）（[#277](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/277)）——`search.command` 改为解析 `dg`（`auto` 用随包副本），面板配置块与 `getSxngConfig`/`setSxngConfig` Remote 方法改名为对应的 `digdig` 版本，`/skill-sync` 复制 digdig 技能；升级后请重跑 `bash scripts/setup-web-search.sh` 或 `dg init`
 - **0.21.1**——适配 dsh 0.2.x：上游 runtime-invariants 包已删除（两个 invariant 伴随插件与 `dsh-invariants` peer 一并移除），reviewer 子代理迁移到 `subagents.startActivation`，会话改为 mainView 引用保持语义、切换走 `uiWorkspace.openSession` · 修复 0.21.0 在 dsh ≥ 0.2 无法安装的问题（其 peer 依赖了已被删除的 `dsh-invariants`）
 - **0.21.0**——面板内项目管理：新建 / 重命名 / 删除（级联清理实验、图表、会议追踪、想法、文献链接与组会 deck；仅 imported 项目一并删除源码目录），外加「… with AI」目标的 dsh 会话切换（[#160](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/160)）；删除按磁盘优先的编排器在项目 / 文献 mutation 锁下执行，取消选择项目会冲刷草稿并清空所有项目切片 · venue_search 时间线 schema 修复 + arXiv 搜索回退 + 可配置 `arxiv.timeoutMs`（[#264](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/264)）· 组会 PPT 选文优化：预选 top5 候选、搜索、逐篇评分理由
 - **0.20.0**——quality 第四批：编译状态跨重启保留（从磁盘上的 PDF 回填为「上次会话已编译」）（[#221](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/221)）· 定时任务失败按有界指数退避，概览页新增逐任务健康行（[#223](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/223)）· 远程 job 生命周期契约统一——超时长杀落 `unknown`（结果失去观测）、超捕获上限落显式 `failed`（[#225](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/225)）· 实验指标支持 min/max 方向与零基线对比图（负值条向左延伸、最优 run 高亮）（[#220](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/220)）· 长任务取消契约统一——编译与组会 deck 在面板取消和宿主 dispose 下都会中止，`lastJob` schema 接受 `cancelled`（[#247](https://github.com/1692775560/dsh-Mimir-Academic-research/issues/247)）· 社区合入：增量证据图谱（含撤回与审计时间线）+ ledger 修复，[@EriXPsy](https://github.com/EriXPsy) 贡献（[#262](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/262)、[#155](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/155)）· PaperViz 暖纸配色（[#258](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/258)）· 待定 wiki 导入恢复，[@hkwuks](https://github.com/hkwuks) 贡献（[#259](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/259)）· 宿主失败码本地化，[@AshlynYang-dev](https://github.com/AshlynYang-dev) 贡献（[#260](https://github.com/1692775560/dsh-Mimir-Academic-research/pull/260)）· 官网与 README 互链社区桌面版 [Mimir-Desktop](https://github.com/hxhy00/Mimir-Desktop)（[@hxhy00](https://github.com/hxhy00)）

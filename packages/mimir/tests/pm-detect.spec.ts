@@ -63,8 +63,8 @@ describe('detectPackageManagerFromPath', () => {
 
 describe('installCommandFor', () => {
   it('emits a pnpm command for pnpm and an npm command for npm', () => {
-    expect(installCommandFor('pnpm')).toBe('pnpm add -g sxng-cli')
-    expect(installCommandFor('npm')).toBe('npm install -g sxng-cli')
-    expect(installCommandFor('unknown')).toContain('npm install -g sxng-cli')
+    expect(installCommandFor('pnpm')).toBe('pnpm add -g digdig')
+    expect(installCommandFor('npm')).toBe('npm install -g digdig')
+    expect(installCommandFor('unknown')).toContain('npm install -g digdig')
   })
 })

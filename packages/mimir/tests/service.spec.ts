@@ -412,6 +412,30 @@ describe('ResearchService.checkServer', () => {
       await new Promise<void>((resolveClose) => { listener.close(() => { resolveClose() }) })
     }
   })
+
+  it('skips malformed nvidia-smi rows whose numbers are not finite (#236)', async () => {
+    const listener = createServer()
+    await new Promise<void>((resolveListen) => { listener.listen(0, '127.0.0.1', resolveListen) })
+    try {
+      const port = (listener.address() as AddressInfo).port
+      await stubFakeSshWithMalformedGpuRow()
+      const { service } = await harness()
+      const created = await service.saveServer({
+        server: { ...SERVER_INPUT, host: '127.0.0.1', port },
+      })
+      if (!created.ok) throw new Error('create failed')
+      const checked = await service.checkServer({ id: created.value.server.id })
+      if (!checked.ok) throw new Error('check rejected')
+      expect(checked.value.state).toBe('online')
+      expect(checked.value.stage).toBe('gpu')
+      // The NaN/Infinity rows are dropped; only the well-formed row lands.
+      expect(checked.value.gpus).toEqual([
+        { name: 'Fake GPU 1', utilizationPct: 12, memoryUsedMb: 1024, memoryTotalMb: 24576 },
+      ])
+    } finally {
+      await new Promise<void>((resolveClose) => { listener.close(() => { resolveClose() }) })
+    }
+  })
 })
 
 /**
@@ -428,6 +452,26 @@ async function stubFakeSshForGpuProbe(): Promise<void> {
     '  case "$arg" in *gpu-fail@*) echo "nvidia-smi exploded" >&2; exit 3 ;; esac',
     'done',
     'echo "Fake GPU 0, 37, 2048, 24576"',
+    'exit 0',
+    '',
+  ].join('\n')
+  await writeFile(join(binDir, 'ssh'), script)
+  await chmod(join(binDir, 'ssh'), 0o755)
+  vi.stubEnv('PATH', `${binDir}:${process.env.PATH ?? ''}`)
+}
+
+/**
+ * Variant of {@link stubFakeSshForGpuProbe} whose `nvidia-smi` output mixes
+ * one well-formed row with rows whose numbers parse to NaN/Infinity (#236):
+ * only the well-formed row may land in the view.
+ */
+async function stubFakeSshWithMalformedGpuRow(): Promise<void> {
+  const binDir = await mkdtemp(join(tmpdir(), 'mimir-fake-ssh-gpu-nan-'))
+  const script = [
+    '#!/bin/bash',
+    'echo "Fake GPU 0, NaN, 2048, 24576"',
+    'echo "Fake GPU 1, 12, 1024, 24576"',
+    'echo "Fake GPU 2, 40, Infinity, 24576"',
     'exit 0',
     '',
   ].join('\n')
@@ -599,7 +643,7 @@ describe('ResearchService.searchArxiv', () => {
 })
 
 describe('ResearchService.searchWeb', () => {
-  const SXNG_OK = JSON.stringify({
+  const DIGDIG_OK = JSON.stringify({
     status: 'ok',
     data: {
       query: 'q',
@@ -619,7 +663,7 @@ describe('ResearchService.searchWeb', () => {
       domain: built.domain,
       latex: { engine: 'auto', timeoutMs: 1000 },
       search: {
-        command: 'sxng',
+        command: 'dg',
         timeoutMs: 5_000,
         run: (_command, args) => { calls.push([...args]); return Promise.resolve(stdout) },
       },
@@ -633,7 +677,7 @@ describe('ResearchService.searchWeb', () => {
   })
 
   it('rejects an empty query and a bad maxResults as invalid-input', async () => {
-    const service = await serviceWithSearch(SXNG_OK)
+    const service = await serviceWithSearch(DIGDIG_OK)
     await expect(service.searchWeb({ query: '   ' }))
       .resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
     await expect(service.searchWeb({ query: 'mesh', maxResults: 0 }))
@@ -644,7 +688,7 @@ describe('ResearchService.searchWeb', () => {
 
   it('runs the configured CLI and returns parsed rows', async () => {
     const calls: string[][] = []
-    const service = await serviceWithSearch(SXNG_OK, calls)
+    const service = await serviceWithSearch(DIGDIG_OK, calls)
     const outcome = await service.searchWeb({ query: 'mesh recovery', maxResults: 3 })
     expect(outcome).toEqual({
       ok: true,

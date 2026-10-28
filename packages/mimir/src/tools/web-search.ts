@@ -1,6 +1,6 @@
 /**
- * The `web_search` tool: SearXNG multi-engine web search through the `sxng`
- * CLI (a self-hosted SearXNG deployment is the CLI's own concern — its
+ * The `web_search` tool: SearXNG multi-engine web search through the digdig
+ * CLI (`dg`; a self-hosted SearXNG deployment is the CLI's own concern — its
  * config carries the base URL). One flat parameter set; the output mirrors
  * the CLI's JSON envelope (`{status, data.results[]}`). The runner is
  * injectable so tests never touch the real executable.
@@ -16,7 +16,7 @@ import { installCommandFor, detectPackageManager } from '../pm-detect.ts'
 /** Install hint carried in every missing-CLI error, tuned to the detected PM. */
 function installGuidance(): string {
   const command = installCommandFor(detectPackageManager())
-  return ['Install the sxng CLI with ', command, ' and point it at a self-hosted SearXNG instance (`sxng init`), or set search.command to the binary path.'].join('')
+  return ['Install the digdig CLI with ', command, ' and point it at a self-hosted SearXNG instance (`dg init`), or set search.command to the binary path.'].join('')
 }
 
 /** Whether one command resolves to a runnable executable. Injectable so tests never touch the real PATH. */
@@ -29,7 +29,7 @@ export type WebSearchRunner = (
 
 /** Deployment knobs for the web search tool. */
 export interface WebSearchOptions {
-  /** The sxng executable: a bare name resolved on PATH or an absolute path. */
+  /** The digdig executable: a bare name resolved on PATH or an absolute path. */
   readonly command: string
   /** Positive kill timeout in milliseconds. */
   readonly timeoutMs: number
@@ -50,7 +50,7 @@ export interface WebSearchEntry {
 }
 
 /** Raw shape of one row inside the CLI's JSON envelope. */
-interface RawSxngRow {
+interface RawDigdigRow {
   title?: unknown
   url?: unknown
   content?: unknown
@@ -97,7 +97,7 @@ interface WebSearchModifiers {
 }
 
 /**
- * Run one web search through the sxng CLI and parse the JSON envelope.
+ * Run one web search through the digdig CLI and parse the JSON envelope.
  * @param query - free-text query.
  * @param options - deployment knobs plus the optional per-call modifiers and
  * the test runner.
@@ -123,22 +123,22 @@ export async function fetchWebSearch(
   try {
     parsed = JSON.parse(stdout)
   } catch {
-    throw new Error('sxng output was not valid JSON — is search.command pointing at the sxng CLI?')
+    throw new Error('digdig output was not valid JSON — is search.command pointing at the digdig CLI?')
   }
   const envelope = parsed as { status?: unknown; data?: unknown; error?: unknown }
   if (envelope.status === 'error') {
     const message = typeof (envelope.error as { message?: unknown } | null)?.message === 'string'
       ? String((envelope.error as { message: string }).message)
-      : 'sxng reported an unspecified failure'
+      : 'digdig reported an unspecified failure'
     throw new Error(message)
   }
   if (envelope.status !== 'ok' || typeof envelope.data !== 'object' || envelope.data === null) {
-    throw new Error('unexpected sxng output shape')
+    throw new Error('unexpected digdig output shape')
   }
   const rows = (envelope.data as { results?: unknown }).results
   if (!Array.isArray(rows)) return []
   const entries: WebSearchEntry[] = []
-  for (const row of rows as RawSxngRow[]) {
+  for (const row of rows as RawDigdigRow[]) {
     const url = field(row.url)
     if (url === '') continue
     entries.push({
@@ -189,7 +189,7 @@ interface WebSearchArgs {
 export function createWebSearchTool(options: WebSearchOptions): ToolDefinition {
   return defineTool({
     name: 'web_search',
-    description: 'Search the web through a self-hosted SearXNG instance (via the sxng CLI): Google/Bing/DuckDuckGo/GitHub/StackOverflow/arXiv-portal and more. Complements arxiv_search with non-arXiv sources — official docs, blog posts, code repositories. Returns titles, URLs, snippets, engines, and publish dates.',
+    description: 'Search the web through a self-hosted SearXNG instance (via the digdig CLI): Google/Bing/DuckDuckGo/GitHub/StackOverflow/arXiv-portal and more. Complements arxiv_search with non-arXiv sources — official docs, blog posts, code repositories. Returns titles, URLs, snippets, engines, and publish dates.',
     parameters: {
       query: { type: 'string', required: true, description: 'Free-text web search query.' },
       limit: { type: 'integer', description: `Maximum results to return (default ${options.maxResults}).` },

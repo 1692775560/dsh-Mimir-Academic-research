@@ -18,7 +18,7 @@
         arxiv:
           maxResults: 10              # default arxiv_search result cap
         search:
-          command: auto               # auto (register web_search when the sxng CLI is on PATH or bundled as the optional dependency), a binary name, or a path
+          command: auto               # auto (register web_search when dg, the digdig CLI, is on PATH or bundled as the optional dependency), a binary name, or a path
           timeoutMs: 30000            # web search kill timeout
         backup:
           enabled: true               # scheduled wiki backup timer

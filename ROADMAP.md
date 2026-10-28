@@ -107,7 +107,7 @@ Mimir's biggest external risk is dsh drift (the 0.1.2-alpha.4 adaptation:
 ### Known tech debt (good first issues)
 
 - `packages/ui-mimir` tests don't run under `tsc` — add a typecheck gate.
-- `setup-web-search.sh` overwrites existing sxng config (e.g. ollamaApiKey)
+- `setup-web-search.sh` overwrites existing digdig config (e.g. ollamaApiKey)
   on re-run — merge instead of replace.
 - Ledger moment candidates (#127): `getMomentIndex` lookback truncation skips
   silences; `resolveWindow` doesn't guard `since > until`.

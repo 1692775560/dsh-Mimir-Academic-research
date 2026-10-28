@@ -84,7 +84,7 @@ session/interaction 破坏性变更）。策略：
 ### 已知技术债（good first issue 池）
 
 - `packages/ui-mimir` 的测试不过 `tsc`——补一个 typecheck 门禁。
-- `setup-web-search.sh` 重跑会覆盖已有 sxng 配置（如 ollamaApiKey）——改成合并而非替换。
+- `setup-web-search.sh` 重跑会覆盖已有 digdig 配置（如 ollamaApiKey）——改成合并而非替换。
 - 记录页瞬间时间线（#127）遗留：`getMomentIndex` lookback 截断不进 silences；
   `resolveWindow` 不防 `since > until`。
 - dsh 树内 ui-mimir 有 36 个预存 `tsc` 错误。

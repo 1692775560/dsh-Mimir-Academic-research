@@ -10,7 +10,7 @@
  * @module dsh-client-ui-mimir/client/view-common
  */
 
-import type { BibEntry, ExperimentRecord, ExperimentStatus, MetricDirection, OutlineNode, PaperRecord, ProjectStage, SectionMove, SectionOutlineTitles, ServerRecord, SubsectionMove } from 'dsh-mimir/types'
+import type { BibEntry, ExperimentRecord, ExperimentStatus, MetricDirection, OutlineNode, PaperRecord, ProjectStage, SectionMove, SectionOutlineTitles, ServerView, SubsectionMove } from 'dsh-mimir/types'
 import type { ResearchFailureView, ResearchSaveState } from './controller.ts'
 import type { ResearchKey } from './locales.ts'
 
@@ -471,7 +471,7 @@ export function collectTags(papers: readonly PaperRecord[]): string[] {
 }
 
 /** All tags across the server list, deduped and alphabetically sorted (the filter bar). */
-export function collectServerTags(servers: readonly ServerRecord[]): string[] {
+export function collectServerTags(servers: readonly ServerView[]): string[] {
   const tags = new Set<string>()
   for (const server of servers) for (const tag of server.tags) tags.add(tag)
   return [...tags].sort()
@@ -515,9 +515,9 @@ export const PROBE_FAILURE_KEYS: Record<ProbeStage, ResearchKey> = {
 
 /** Filter the server list by one active tag; a null selector passes everything. */
 export function filterServers(
-  servers: readonly ServerRecord[],
+  servers: readonly ServerView[],
   tag: string | null,
-): ServerRecord[] {
+): ServerView[] {
   return servers.filter(server => tag === null || server.tags.includes(tag))
 }
 

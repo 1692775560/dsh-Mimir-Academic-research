@@ -104,7 +104,7 @@ import type {
   ResearchDeleteMeetingDeckResult,
   ResearchGenerateMeetingResult,
   ResearchGetImageGenConfigResult,
-  ResearchGetSxngConfigResult,
+  ResearchGetDigdigConfigResult,
   ResearchMeetingDecksResult,
   MeetingDeckView,
   MeetingInclude,
@@ -130,7 +130,7 @@ import type {
   ResearchSearchArxivResult,
   ResearchSearchWebResult,
   ResearchSetImageGenConfigResult,
-  ResearchSetSxngConfigResult,
+  ResearchSetDigdigConfigResult,
   ResearchSubmitJobResult,
   ResearchUpdateExperimentResult,
   ResearchUpdateFigureResult,
@@ -148,8 +148,8 @@ import type {
   SectionMove,
   SectionOutlineTitles,
   ServerInput,
-  ServerRecord,
   ServerStatusView,
+  ServerView,
   SubsectionMove,
   WebSearchEntry,
   ZoteroCollectionView,
@@ -288,8 +288,8 @@ export interface ResearchRemote {
     model?: string | undefined
     size?: string | undefined
   }) => Promise<RemoteResult<ResearchSetImageGenConfigResult>>
-  getSxngConfig: () => Promise<RemoteResult<ResearchGetSxngConfigResult>>
-  setSxngConfig: (request: {
+  getDigdigConfig: () => Promise<RemoteResult<ResearchGetDigdigConfigResult>>
+  setDigdigConfig: (request: {
     baseUrl?: string | undefined
     defaultEngine?: string | undefined
     allowedEngines?: readonly string[] | undefined
@@ -301,7 +301,7 @@ export interface ResearchRemote {
     ollamaApiKey?: string | undefined
     redundancyThreshold?: number | undefined
     redundancyBigramThreshold?: number | undefined
-  }) => Promise<RemoteResult<ResearchSetSxngConfigResult>>
+  }) => Promise<RemoteResult<ResearchSetDigdigConfigResult>>
   saveServer: (request: { server: ServerInput }) => Promise<RemoteResult<ResearchSaveServerResult>>
   deleteServer: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteServerResult>>
   checkServer: (request: { id: string }) => Promise<RemoteResult<ResearchCheckServerResult>>
@@ -614,8 +614,8 @@ export interface ResearchImageGenView {
   readonly failure: ResearchFailureView | null
 }
 
-/** The Papers view's native sxng-cli configuration. */
-export interface ResearchSxngConfigView {
+/** The Papers view's native digdig configuration. */
+export interface ResearchDigdigConfigView {
   readonly status: ResearchLoadStatus
   readonly configured: boolean
   readonly baseUrl: string
@@ -645,7 +645,7 @@ export interface ResearchArtifactView {
 /** The servers view: every remembered compute server. */
 export interface ResearchServersView {
   readonly status: ResearchLoadStatus
-  readonly list: readonly ServerRecord[]
+  readonly list: readonly ServerView[]
   readonly failure: ResearchFailureView | null
 }
 
@@ -816,8 +816,8 @@ export interface ResearchView {
   readonly meetings: ResearchProjectSlice<readonly MeetingDeckView[]> | null
   /** The meetings view's image-generation config; `cold` until first fetched. */
   readonly imageGen: ResearchImageGenView
-  /** The Papers view's sxng-cli config; `cold` until its Web tab opens. */
-  readonly sxngConfig: ResearchSxngConfigView
+  /** The Papers view's digdig config; `cold` until its Web tab opens. */
+  readonly digdigConfig: ResearchDigdigConfigView
   readonly servers: ResearchServersView
   /** Per-server probe state, keyed by server id; absent means never probed. */
   readonly serverChecks: Readonly<Record<string, ServerCheckState>>
@@ -885,7 +885,7 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   imageGen: Object.freeze({
     status: 'cold', configured: false, baseUrl: '', model: '', size: '', apiKeyPreview: '', failure: null,
   }),
-  sxngConfig: Object.freeze({
+  digdigConfig: Object.freeze({
     status: 'cold', configured: false, baseUrl: '', defaultEngine: '', allowedEngines: Object.freeze([]), defaultLimit: 10,
     defaultFormat: 'md', useProxy: false, proxyUrl: '', timeout: 30_000, ollamaApiKeyPreview: '',
     redundancyThreshold: 0.7, redundancyBigramThreshold: 0.5, failure: null,
@@ -995,7 +995,7 @@ export class ResearchController implements HostObservable<ResearchView> {
   private meetingsInFlight = false
   private meetingsRefreshProject: string | null = null
   private imageGenInFlight = false
-  private sxngConfigInFlight = false
+  private digdigConfigInFlight = false
   /** A venue-registry load already in flight is left alone. */
   private venueTemplatesInFlight = false
   /** A venue-catalog load already in flight is left alone. */
@@ -2426,35 +2426,35 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
   }
 
-  getSxngConfig(): void {
-    if (this.sxngConfigInFlight || this.view.sxngConfig.status === 'ready') return
-    void this.loadSxngConfig()
+  getDigdigConfig(): void {
+    if (this.digdigConfigInFlight || this.view.digdigConfig.status === 'ready') return
+    void this.loadDigdigConfig()
   }
 
-  private async loadSxngConfig(): Promise<void> {
-    this.sxngConfigInFlight = true
-    this.publish({ sxngConfig: Object.freeze({ ...this.view.sxngConfig, status: 'loading', failure: null }) })
+  private async loadDigdigConfig(): Promise<void> {
+    this.digdigConfigInFlight = true
+    this.publish({ digdigConfig: Object.freeze({ ...this.view.digdigConfig, status: 'loading', failure: null }) })
     try {
-      const carried = await this.remote.getSxngConfig()
+      const carried = await this.remote.getDigdigConfig()
       if (this.disposed) return
       if (!carried.ok) {
-        this.publish({ sxngConfig: Object.freeze({ ...this.view.sxngConfig, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }) })
+        this.publish({ digdigConfig: Object.freeze({ ...this.view.digdigConfig, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }) })
         return
       }
       const result = carried.value
       if (!result.ok) {
-        this.publish({ sxngConfig: Object.freeze({ ...this.view.sxngConfig, status: 'error', failure: businessFailure(result.error) }) })
+        this.publish({ digdigConfig: Object.freeze({ ...this.view.digdigConfig, status: 'error', failure: businessFailure(result.error) }) })
         return
       }
-      this.publish({ sxngConfig: Object.freeze({ status: 'ready', ...result.value, failure: null }) })
+      this.publish({ digdigConfig: Object.freeze({ status: 'ready', ...result.value, failure: null }) })
     } catch (error) {
-      if (!this.disposed) this.publish({ sxngConfig: Object.freeze({ ...this.view.sxngConfig, status: 'error', failure: transportFailure(error) }) })
+      if (!this.disposed) this.publish({ digdigConfig: Object.freeze({ ...this.view.digdigConfig, status: 'error', failure: transportFailure(error) }) })
     } finally {
-      this.sxngConfigInFlight = false
+      this.digdigConfigInFlight = false
     }
   }
 
-  async saveSxngConfig(input: {
+  async saveDigdigConfig(input: {
     baseUrl?: string | undefined
     defaultEngine?: string | undefined
     allowedEngines?: readonly string[] | undefined
@@ -2468,12 +2468,12 @@ export class ResearchController implements HostObservable<ResearchView> {
     redundancyBigramThreshold?: number | undefined
   }): Promise<ResearchFailureView | null> {
     try {
-      const carried = await this.remote.setSxngConfig(input)
+      const carried = await this.remote.setDigdigConfig(input)
       if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
       const result = carried.value
       if (!result.ok) return businessFailure(result.error)
-      this.publish({ sxngConfig: Object.freeze({ status: 'ready', ...result.value, failure: null }) })
-      this.notify('success', 'papers.sxngConfigSaved')
+      this.publish({ digdigConfig: Object.freeze({ status: 'ready', ...result.value, failure: null }) })
+      this.notify('success', 'papers.digdigConfigSaved')
       return null
     } catch (error) {
       return transportFailure(error)
@@ -3110,7 +3110,7 @@ export class ResearchController implements HostObservable<ResearchView> {
   }
 
   /**
-   * Search the web (SearXNG through the sxng CLI) for one query and publish
+   * Search the web (SearXNG through the digdig CLI) for one query and publish
    * the outcome to the papers view. Mirrors {@link searchArxiv}'s supersede
    * semantics: a newer search discards an in-flight one's late reply, and an
    * empty query never leaves the client.
