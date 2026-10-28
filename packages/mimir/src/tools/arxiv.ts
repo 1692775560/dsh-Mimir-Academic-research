@@ -12,6 +12,9 @@
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { isValidArxivId } from '../arxiv-id.ts'
+import { emitEvent, WIKI_AGENT_ACTOR } from '../ledger.ts'
+import { mergePaperRecord } from '../services/library.ts'
+import { withPaperMutationLock } from '../services/mutation-locks.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type { ArxivEntry, PaperRecord, ProjectRecord } from '../types.ts'
 
@@ -258,8 +261,13 @@ function latestProject(domain: ResearchWikiDomain): ProjectRecord | undefined {
 
 /**
  * Persist a deliberately fetched paper and associate it with the active
- * project. Re-fetching refreshes arXiv metadata while preserving the user's
- * organization, downloaded PDF, first-save timestamp, and prior notes.
+ * project. The read-modify-write rides the shared {@link mergePaperRecord}
+ * (R29 / #230) inside the paper mutation lock, so a re-fetch refreshes the
+ * arXiv metadata but never drops workbench-curated fields — notes, tags,
+ * project links, relevance verdicts, the fetched-PDF pointer, and the
+ * first-save timestamp all survive — and the re-import lands in the ledger
+ * like every other import channel. The tool's own contract stays: `notes`
+ * appends (never erases) and `tags` unions.
  */
 export async function rememberFetchedPaper(
   domain: ResearchWikiDomain,
@@ -276,34 +284,49 @@ export async function rememberFetchedPaper(
     throw new Error(`paper_fetch: no project with id '${options.projectId}'`)
   }
   const project = explicitProject ?? latestProject(domain)
-  const table = domain.table('papers')
-  const existing = table.get(entry.id)
-  const incomingNotes = options.notes?.trim() ?? ''
-  const notes = incomingNotes === '' || incomingNotes === existing?.notes
-    ? (existing?.notes ?? '')
-    : existing?.notes === '' || existing?.notes === undefined
-      ? incomingNotes
-      : `${existing.notes}\n\n${incomingNotes}`
-  const record: PaperRecord = {
-    arxivId: entry.id,
-    title: entry.title,
-    authors: [...entry.authors],
-    summary: entry.summary,
-    url: entry.url === '' ? `https://arxiv.org/abs/${entry.id}` : entry.url,
-    notes,
-    tags: [...new Set([...(existing?.tags ?? []), ...(options.tags ?? []).map(tag => tag.trim()).filter(Boolean)])],
-    projectIds: [...new Set([...(existing?.projectIds ?? []), ...(project === undefined ? [] : [project.id])])],
-    ...(existing?.pdfPath === undefined ? {} : { pdfPath: existing.pdfPath }),
-    addedAt: existing?.addedAt ?? new Date().toISOString(),
-    // Source publication metadata: refreshed when the entry carries it,
-    // preserved otherwise.
-    ...(entry.published !== ''
-      ? { published: entry.published }
-      : existing?.published === undefined ? {} : { published: existing.published }),
-    ...(existing?.doi === undefined ? {} : { doi: existing.doi }),
-  }
-  await table.put(entry.id, record)
-  return record
+  return withPaperMutationLock(entry.id, async () => {
+    const table = domain.table('papers')
+    const existing = table.get(entry.id)
+    // The tool's notes contract is append-only ("appended without erasing
+    // existing notes"), so the first-import note rides the fresh record and a
+    // re-import folds the incoming note into the stored one BEFORE the merge,
+    // handing the folded value over as an explicit replacement.
+    const incomingNotes = options.notes?.trim() ?? ''
+    const notes = existing === undefined || incomingNotes === '' || incomingNotes === existing.notes
+      ? undefined
+      : existing.notes === ''
+        ? incomingNotes
+        : `${existing.notes}\n\n${incomingNotes}`
+    const merged = mergePaperRecord({
+      arxivId: entry.id,
+      title: entry.title,
+      authors: [...entry.authors],
+      summary: entry.summary,
+      url: entry.url === '' ? `https://arxiv.org/abs/${entry.id}` : entry.url,
+      notes: incomingNotes,
+      tags: [],
+      projectIds: [],
+      addedAt: new Date().toISOString(),
+      ...(entry.published !== '' ? { published: entry.published } : {}),
+    }, existing, {
+      ...(project === undefined ? {} : { linkProjectId: project.id }),
+      ...(notes === undefined ? {} : { notes }),
+    })
+    // The merge keeps the STORED tags on a re-import; the tool's tags are
+    // cumulative, so union them in after the merge.
+    const record: PaperRecord = {
+      ...merged,
+      tags: [...new Set([...merged.tags, ...(options.tags ?? []).map(tag => tag.trim()).filter(tag => tag !== '')])],
+    }
+    await table.put(entry.id, record)
+    await emitEvent(domain, {
+      actor: WIKI_AGENT_ACTOR,
+      action: 'literature.paper.imported',
+      refs: { paperId: entry.id },
+      payload: { title: record.title, imported: existing === undefined },
+    })
+    return record
+  })
 }
 
 /**

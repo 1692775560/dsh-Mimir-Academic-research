@@ -19,6 +19,7 @@ function fakeReq(method = 'GET'): IncomingMessage {
   req.method = method
   // The route is loopback-panel-only (#210): fake the panel's own request.
   req.headers = { host: 'localhost:3080' }
+  req.socket = { remoteAddress: '127.0.0.1' } as unknown as IncomingMessage['socket']
   return req
 }
 

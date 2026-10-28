@@ -228,6 +228,23 @@ describe('importProject', () => {
     expect((await lstat(copied)).isSymbolicLink()).toBe(false)
     expect(await readFile(copied, 'utf8')).toBe('\\newcommand{\\x}{1}\n')
   })
+
+  it.skipIf(!canCreateSymlink())('materializes a symlinked source ROOT as a real directory (#213)', async () => {
+    const { domain, workspaceDir } = await harness()
+    const real = await fakeLatexProject('real-root', MAIN_TEX)
+    const link = join(await mkdtemp(join(tmpdir(), 'mimir-import-rootlink-')), 'linked-root')
+    await symlink(real, link, 'dir')
+
+    const value = imported(await importProject({ workspaceDir, domain }, { path: link }))
+
+    // The slug comes from the typed (link) name, but the copy is a REAL
+    // directory — cp from the realpath never leaves an escaping symlink.
+    expect(value.paperDir).toBe('imported/linked-root')
+    const copied = join(workspaceDir, value.paperDir)
+    expect((await lstat(copied)).isSymbolicLink()).toBe(false)
+    expect((await lstat(copied)).isDirectory()).toBe(true)
+    await stat(join(copied, 'main.tex'))
+  })
 })
 
 describe('importProject helpers', () => {

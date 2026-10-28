@@ -573,7 +573,13 @@ export async function submitJob(
   // Register ownership before yielding so deletion can cancel the queued race.
   const abort = new AbortController()
   state.jobAborts.set(job.id, abort)
-  void runJob(deps, state, job.id, abort.signal)
+  // runJob is documented never to reject; a rejection means an infrastructure
+  // failure (domain write, askpass setup) slipped past its guard rails —
+  // settle the record failed best-effort instead of crashing the host on an
+  // unhandled rejection.
+  void runJob(deps, state, job.id, abort.signal).catch((error: unknown) => {
+    void settleCrashedJob(deps, state, job.id, error)
+  })
   return success({ job })
 }
 
@@ -797,37 +803,73 @@ async function settleStoppedJob(
 
 /**
  * Persist one terminal job, emit its settle event, write back the linked
- * experiment, and release the local SSH ownership for the job id.
+ * experiment, and release the local SSH ownership for the job id. The
+ * ownership maps are released in `finally`: a store write failure must never
+ * strand the abort handle or the stop-status marker (the runJob rejection
+ * fallback then settles the record).
  */
 async function finishJob(deps: ServerDeps, state: ServiceState, settled: JobRecord): Promise<void> {
-  state.jobAborts.delete(settled.id)
-  state.jobStopStatus.delete(settled.id)
-  const table = deps.domain.table('jobs')
-  // A delete during the run already dropped the record: the remote command
-  // still finished, but nothing is written back.
-  if (table.get(settled.id) === undefined) return
-  await table.put(settled.id, settled)
-  const startedMs = settled.startedAt === undefined ? null : Date.parse(settled.startedAt)
-  const finishedMs = settled.finishedAt === undefined ? null : Date.parse(settled.finishedAt)
-  await emitEvent(deps.domain, {
-    actor: SERVICE_ACTOR,
-    action: 'compute.job.settled',
-    refs: {
-      jobId: settled.id,
-      serverId: settled.serverId,
-      ...(settled.experimentId === undefined ? {} : { experimentId: settled.experimentId }),
-    },
-    payload: {
-      status: settled.status,
-      exitCode: settled.exitCode,
-      durationMs: startedMs !== null && finishedMs !== null
-        && Number.isFinite(startedMs) && Number.isFinite(finishedMs)
-        ? Math.max(0, finishedMs - startedMs)
-        : null,
-      summary: jobSummaryOf(settled),
-    },
-  })
-  await writeBackExperiment(deps, settled)
+  try {
+    const table = deps.domain.table('jobs')
+    // A delete during the run already dropped the record: the remote command
+    // still finished, but nothing is written back.
+    if (table.get(settled.id) === undefined) return
+    await table.put(settled.id, settled)
+    const startedMs = settled.startedAt === undefined ? null : Date.parse(settled.startedAt)
+    const finishedMs = settled.finishedAt === undefined ? null : Date.parse(settled.finishedAt)
+    await emitEvent(deps.domain, {
+      actor: SERVICE_ACTOR,
+      action: 'compute.job.settled',
+      refs: {
+        jobId: settled.id,
+        serverId: settled.serverId,
+        ...(settled.experimentId === undefined ? {} : { experimentId: settled.experimentId }),
+      },
+      payload: {
+        status: settled.status,
+        exitCode: settled.exitCode,
+        durationMs: startedMs !== null && finishedMs !== null
+          && Number.isFinite(startedMs) && Number.isFinite(finishedMs)
+          ? Math.max(0, finishedMs - startedMs)
+          : null,
+        summary: jobSummaryOf(settled),
+      },
+    })
+    await writeBackExperiment(deps, settled)
+  } finally {
+    state.jobAborts.delete(settled.id)
+    state.jobStopStatus.delete(settled.id)
+  }
+}
+
+/**
+ * Last-resort settle of a job whose driver rejected between its guard rails
+ * (an infrastructure failure, not a remote outcome): release the ownership
+ * maps unconditionally, warn, and flip the record to `failed` best-effort.
+ * This runs on the host's unhandled-rejection path, so it never throws.
+ * @param deps - open wiki domain.
+ * @param state - owning service state and SSH abort handles.
+ * @param id - the job record id.
+ * @param error - the driver's rejection.
+ */
+async function settleCrashedJob(deps: ServerDeps, state: ServiceState, id: string, error: unknown): Promise<void> {
+  try {
+    state.jobAborts.delete(id)
+    state.jobStopStatus.delete(id)
+    console.warn('[mimir] the job driver rejected; settling the job as failed:', error)
+    const table = deps.domain.table('jobs')
+    const current = table.get(id)
+    if (current === undefined || !isActiveJobStatus(current.status)) return
+    await table.put(id, {
+      ...current,
+      status: 'failed',
+      exitCode: null,
+      stderrTail: tailOf(`the job driver failed internally: ${error instanceof Error ? error.message : String(error)}`),
+      finishedAt: new Date().toISOString(),
+    })
+  } catch {
+    // The last-resort settle itself failing must not crash the host either.
+  }
 }
 
 /**

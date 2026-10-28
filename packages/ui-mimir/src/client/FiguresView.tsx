@@ -23,6 +23,7 @@ import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from 'r
 import type { ExperimentRecord, FigureEntry } from 'dsh-mimir/types'
 import type { ResearchFailureView, ResearchProjectSlice } from './controller.ts'
 import { buildFigureOrganizePrompt } from './figure-ai.ts'
+import { ORGANIZE_POLL_MS, organizeMarkerRetired, type OrganizeMarker } from './figure-organize.ts'
 import { groupFigures, type FigureGroup } from './figure-groups.ts'
 import {
   failureCopy, FIGURE_ACCEPT_EXTENSIONS, figureUrl, filterDropFiles, formatSize, type ResearchT,
@@ -39,10 +40,6 @@ function latexOf(entry: FigureEntry, caption: string | undefined): string {
 
 /** How long the copied confirmation replaces the copy button's label. */
 const COPIED_FEEDBACK_MS = 1500
-/** Poll interval while an AI organize request is in flight. */
-const ORGANIZE_POLL_MS = 5000
-/** How long an AI-organize poll runs before its pending marker gives up. */
-const ORGANIZE_TIMEOUT_MS = 120_000
 
 /** Change-detection signature of one figure list (the AI-organize poll's anchor). */
 function figuresSignature(list: readonly FigureEntry[]): string {
@@ -143,7 +140,7 @@ export function FiguresView({
   const [savingEdit, setSavingEdit] = useState(false)
   // The in-flight AI organize request: the list signature it started from and
   // its start time. A changed signature means the agent's writes landed.
-  const [organizing, setOrganizing] = useState<{ anchor: string; startedAt: number } | null>(null)
+  const [organizing, setOrganizing] = useState<OrganizeMarker | null>(null)
   // True while a file drag hovers the view (drives the dashed drop overlay).
   const [dragActive, setDragActive] = useState(false)
   // Enter/leave fire per child element; the depth counter keeps the overlay
@@ -151,23 +148,33 @@ export function FiguresView({
   const dragDepth = useRef(0)
   const fileInput = useRef<HTMLInputElement | null>(null)
 
-  // Poll the figure list while an AI organize request is in flight.
   // Cancel a pending copied-path reset on unmount.
   useEffect(() => () => {
     if (copiedTimerRef.current !== null) clearTimeout(copiedTimerRef.current)
   }, [])
 
-  useEffect(() => {
-    if (organizing === null || projectId === null) return
-    const timer = setInterval(() => { loadFigures(projectId, true, true) }, ORGANIZE_POLL_MS)
-    return () => { clearInterval(timer) }
-  }, [organizing === null, projectId, loadFigures])
-
-  // Retire the organize marker once the list changed or the request timed out.
+  // Poll the figure list while an AI organize request is in flight. The
+  // timeout check rides the poll tick: the retire effect below only
+  // re-evaluates when the list signature changes, so an organize that never
+  // changes the list would otherwise spin "organizing" forever.
   const listSignature = figures === null || figures.status !== 'ready' ? '' : figuresSignature(figures.list)
   useEffect(() => {
-    if (organizing === null || listSignature === '') return
-    if (listSignature !== organizing.anchor || Date.now() - organizing.startedAt > ORGANIZE_TIMEOUT_MS) {
+    if (organizing === null || projectId === null) return
+    const timer = setInterval(() => {
+      if (organizeMarkerRetired(organizing, listSignature, Date.now())) {
+        setOrganizing(null)
+        return
+      }
+      loadFigures(projectId, true, true)
+    }, ORGANIZE_POLL_MS)
+    return () => { clearInterval(timer) }
+  }, [organizing, listSignature, projectId, loadFigures])
+
+  // Retire the organize marker as soon as the list changed (the agent's
+  // writes landed); the timeout leg of the same decision rides the poll.
+  useEffect(() => {
+    if (organizing === null) return
+    if (organizeMarkerRetired(organizing, listSignature, Date.now())) {
       setOrganizing(null)
     }
   }, [listSignature, organizing])

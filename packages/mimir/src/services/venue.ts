@@ -11,7 +11,7 @@
 import { readdir, mkdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
-import { resolvePaperDir } from '../paper-source.ts'
+import { resolvePaperDirReal } from '../paper-source.ts'
 import type {
   ResearchApplyVenueResult,
   ResearchClearVenueResult,
@@ -79,7 +79,7 @@ export async function applyVenueTemplate(
 ): Promise<ResearchApplyVenueResult> {
   const record = deps.domain.table('projects').get(request.projectId)
   if (record === undefined) return rejected({ code: 'project-not-found', projectId: request.projectId })
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
 
   const templateDir = join(dir, TEMPLATE_DIR_NAME)

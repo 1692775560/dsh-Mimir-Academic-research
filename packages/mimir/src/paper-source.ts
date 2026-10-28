@@ -43,6 +43,31 @@ export function resolvePaperDir(
 }
 
 /**
+ * Whether `candidate`'s real location stays inside the realpath'd
+ * `ancestorReal`: the nearest existing ancestor (or the file itself when it
+ * exists) must realpath to the ancestor or a descendant of it. A missing
+ * candidate with a clean chain passes (the caller's mkdir/write then creates
+ * a real entry); a symlink anywhere along the chain that escapes the
+ * ancestor fails.
+ * @param ancestorReal - the realpath'd confinement root.
+ * @param candidate - the path to confine (need not exist).
+ * @returns whether every existing link of the chain resolves inside.
+ */
+export async function realpathConfined(ancestorReal: string, candidate: string): Promise<boolean> {
+  // realpath rejects on ENOENT; walk up to the nearest existing ancestor.
+  let probe = candidate
+  for (;;) {
+    const probeReal = await realpath(probe).catch(() => undefined)
+    if (probeReal !== undefined) {
+      return probeReal === ancestorReal || probeReal.startsWith(ancestorReal + sep)
+    }
+    const parent = dirname(probe)
+    if (parent === probe) return false
+    probe = parent
+  }
+}
+
+/**
  * Realpath-backed variant of {@link resolvePaperDir} (#213): the lexical
  * check first, then the nearest existing ancestor of the resolved directory
  * must realpath INSIDE the workspace's realpath — a symlinked paper
@@ -64,17 +89,7 @@ export async function resolvePaperDirReal(
   if (resolved === undefined) return undefined
   const rootReal = await realpath(resolve(workspaceDir)).catch(() => undefined)
   if (rootReal === undefined) return undefined
-  // realpath rejects on ENOENT; walk up to the nearest existing ancestor.
-  let probe = resolved
-  for (;;) {
-    const probeReal = await realpath(probe).catch(() => undefined)
-    if (probeReal !== undefined) {
-      return probeReal === rootReal || probeReal.startsWith(rootReal + sep) ? resolved : undefined
-    }
-    const parent = dirname(probe)
-    if (parent === probe) return undefined
-    probe = parent
-  }
+  return await realpathConfined(rootReal, resolved) ? resolved : undefined
 }
 
 /** Content of `main.tex` plus the mtime it was read from. */

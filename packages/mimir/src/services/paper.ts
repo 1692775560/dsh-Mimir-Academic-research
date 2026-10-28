@@ -14,7 +14,7 @@ import {
   isNotFound,
   readPaperSource,
   readPaperSourceUnlocked,
-  resolvePaperDir,
+  resolvePaperDirReal,
   savePaperSourceFile,
   saveTextFileOptimistic,
 } from '../paper-source.ts'
@@ -90,7 +90,7 @@ export async function getPaperOutline(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   let tex: string
   try {
@@ -121,7 +121,7 @@ export async function getPaperSource(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const snapshot = await readPaperSource(join(dir, 'main.tex'))
   if (snapshot === undefined) return rejected({ code: 'paper-not-found' })
@@ -154,7 +154,7 @@ export async function savePaperSource(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const outcome = await savePaperSourceFile(join(dir, 'main.tex'), request.content, request.baseMtimeMs)
   if (outcome.kind === 'missing') return rejected({ code: 'paper-not-found' })
@@ -194,7 +194,7 @@ export async function reorderPaperSections(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const texPath = join(dir, 'main.tex')
   const snapshot = await readPaperSource(texPath)
@@ -258,7 +258,7 @@ export async function reorderPaperSubsections(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const texPath = join(dir, 'main.tex')
   const snapshot = await readPaperSource(texPath)
@@ -319,7 +319,7 @@ export async function getBibliography(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const snapshot = await readPaperSource(join(dir, 'references.bib'))
   if (snapshot === undefined) return success({ entries: Object.freeze([]), mtimeMs: null })
@@ -354,7 +354,7 @@ export async function saveBibliography(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   try {
     const stats = await stat(dir)
@@ -404,7 +404,7 @@ export async function appendBibEntries(
   if (record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   try {
     const stats = await stat(dir)
@@ -507,7 +507,7 @@ export async function compile(
   if (request.projectId !== undefined && record === undefined) {
     return rejected({ code: 'project-not-found', projectId: request.projectId })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record?.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record?.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record?.paperDir ?? '' })
   const previous = state.compileStatus.get(key) ?? IDLE_STATUS
   if (previous.state === 'running') {
@@ -587,7 +587,7 @@ export async function getCompileStatus(
   }
   const known = state.compileStatus.get(key)
   if (known !== undefined) return success(known)
-  const dir = resolvePaperDir(deps.workspaceDir, undefined, record?.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, undefined, record?.paperDir)
   const mtime = dir === undefined ? null : await pdfMtime(join(dir, 'main.pdf'))
   if (mtime === null) return success(IDLE_STATUS)
   // A PDF on disk proves a previous session compiled successfully; the engine
