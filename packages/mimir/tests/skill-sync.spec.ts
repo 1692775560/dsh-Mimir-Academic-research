@@ -17,14 +17,14 @@ async function harness(): Promise<{ home: string; cache: string }> {
   const root = await mkdtemp(join(tmpdir(), 'mimir-skill-sync-'))
   const home = join(root, 'home')
   const cache = join(root, 'cache')
-  await mkdir(join(cache, 'skills', 'sxng'), { recursive: true })
-  await writeFile(join(cache, 'skills', 'sxng', 'SKILL.md'), SKILL_BODY)
+  await mkdir(join(cache, 'skills', 'digdig'), { recursive: true })
+  await writeFile(join(cache, 'skills', 'digdig', 'SKILL.md'), SKILL_BODY)
   vi.stubEnv('DSH_HOME', home)
-  vi.stubEnv('MIMIR_SXNG_SKILL_CACHE_DIR', cache)
+  vi.stubEnv('MIMIR_DIGDIG_SKILL_CACHE_DIR', cache)
   return { home, cache }
 }
 
-const SKILL_BODY = '---\nname: sxng\ndescription: Web search CLI skill.\n---\n\n# sxng\n'
+const SKILL_BODY = '---\nname: digdig\ndescription: Web search CLI skill.\n---\n\n# digdig\n'
 
 describe('dshSkillsRoot / realTargetDir', () => {
   it.skipIf(!canCreateSymlink())('resolves the root to <dshHome>/skills and follows a symlinked root to its real target', async () => {
@@ -42,10 +42,10 @@ describe('insideGitWorkTree', () => {
     const { home } = await harness()
     const repo = join(home, 'dotfiles')
     await mkdir(join(repo, '.git'), { recursive: true })
-    expect(insideGitWorkTree(join(repo, 'skills', 'sxng', 'SKILL.md'))).toBe(true)
+    expect(insideGitWorkTree(join(repo, 'skills', 'digdig', 'SKILL.md'))).toBe(true)
     const plain = join(home, 'plain')
     await mkdir(plain, { recursive: true })
-    expect(insideGitWorkTree(join(plain, 'sxng', 'SKILL.md'))).toBe(false)
+    expect(insideGitWorkTree(join(plain, 'digdig', 'SKILL.md'))).toBe(false)
   })
 })
 
@@ -54,8 +54,8 @@ describe('syncFile', () => {
     const { home } = await harness()
     const root = join(home, 'plain')
     await mkdir(root, { recursive: true })
-    const target = join(root, 'sxng', 'SKILL.md')
-    const outcome = await syncFile(join(process.env.MIMIR_SXNG_SKILL_CACHE_DIR!, 'skills', 'sxng', 'SKILL.md'), target)
+    const target = join(root, 'digdig', 'SKILL.md')
+    const outcome = await syncFile(join(process.env.MIMIR_DIGDIG_SKILL_CACHE_DIR!, 'skills', 'digdig', 'SKILL.md'), target)
     expect(outcome).toBe('written')
     expect(await import('node:fs/promises').then(m => m.readFile(target, 'utf8'))).toBe(SKILL_BODY)
   })
@@ -63,20 +63,20 @@ describe('syncFile', () => {
   it('no-ops when the destination already matches', async () => {
     const { home } = await harness()
     const root = join(home, 'plain')
-    await mkdir(join(root, 'sxng'), { recursive: true })
-    const target = join(root, 'sxng', 'SKILL.md')
+    await mkdir(join(root, 'digdig'), { recursive: true })
+    const target = join(root, 'digdig', 'SKILL.md')
     await writeFile(target, SKILL_BODY)
-    const outcome = await syncFile(join(process.env.MIMIR_SXNG_SKILL_CACHE_DIR!, 'skills', 'sxng', 'SKILL.md'), target)
+    const outcome = await syncFile(join(process.env.MIMIR_DIGDIG_SKILL_CACHE_DIR!, 'skills', 'digdig', 'SKILL.md'), target)
     expect(outcome).toBe('noop')
   })
 
   it('refuses to overwrite a git-tracked destination', async () => {
     const { home } = await harness()
     const repo = join(home, 'dotfiles')
-    await mkdir(join(repo, 'skills', 'sxng', '.git'), { recursive: true })
-    const target = join(repo, 'skills', 'sxng', 'SKILL.md')
+    await mkdir(join(repo, 'skills', 'digdig', '.git'), { recursive: true })
+    const target = join(repo, 'skills', 'digdig', 'SKILL.md')
     await writeFile(target, 'older content that a user keeps')
-    const outcome = await syncFile(join(process.env.MIMIR_SXNG_SKILL_CACHE_DIR!, 'skills', 'sxng', 'SKILL.md'), target)
+    const outcome = await syncFile(join(process.env.MIMIR_DIGDIG_SKILL_CACHE_DIR!, 'skills', 'digdig', 'SKILL.md'), target)
     expect(outcome).toBe('git-kept')
     expect(await import('node:fs/promises').then(m => m.readFile(target, 'utf8'))).toBe('older content that a user keeps')
   })

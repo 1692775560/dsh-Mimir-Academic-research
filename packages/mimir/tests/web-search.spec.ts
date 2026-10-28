@@ -1,7 +1,7 @@
 /**
- * Behavior tests for the sxng-backed web search: argument assembly, the
+ * Behavior tests for the digdig-backed web search: argument assembly, the
  * SearXNG JSON envelope parse, and failure mapping. The CLI runner is
- * injected — no test touches the real `sxng` executable or PATH.
+ * injected — no test touches the real `digdig` executable or PATH.
  */
 
 import { describe, expect, it } from 'vitest'
@@ -16,7 +16,7 @@ function runCapturing(stdout: string): { run: (command: string, args: readonly s
   }
 }
 
-const SXNG_OK = JSON.stringify({
+const DIGDIG_OK = JSON.stringify({
   status: 'ok',
   data: {
     query: 'attention',
@@ -48,9 +48,9 @@ const SXNG_OK = JSON.stringify({
 
 describe('fetchWebSearch', () => {
   it('passes the query and flags through to the CLI', async () => {
-    const fake = runCapturing(SXNG_OK)
+    const fake = runCapturing(DIGDIG_OK)
     await fetchWebSearch('attention mechanism', {
-      command: 'sxng',
+      command: 'dg',
       timeoutMs: 30_000,
       maxResults: 5,
       categories: 'science',
@@ -64,16 +64,16 @@ describe('fetchWebSearch', () => {
   })
 
   it('keeps a dash-leading query intact behind the -- separator', async () => {
-    const fake = runCapturing(SXNG_OK)
+    const fake = runCapturing(DIGDIG_OK)
     await fetchWebSearch('-l 5 free textbooks', {
-      command: 'sxng', timeoutMs: 30_000, maxResults: 5, run: fake.run,
+      command: 'dg', timeoutMs: 30_000, maxResults: 5, run: fake.run,
     })
     expect(fake.argv().slice(-3)).toEqual(['5', '--', '-l 5 free textbooks'])
   })
 
   it('parses the ok envelope into entries', async () => {
     const results = await fetchWebSearch('attention', {
-      command: 'sxng', timeoutMs: 1000, maxResults: 10, run: runCapturing(SXNG_OK).run,
+      command: 'dg', timeoutMs: 1000, maxResults: 10, run: runCapturing(DIGDIG_OK).run,
     })
     expect(results).toHaveLength(2)
     expect(results[0]).toEqual({
@@ -92,36 +92,36 @@ describe('fetchWebSearch', () => {
       error: { code: 'SEARCH_FAILED', message: 'connect ECONNREFUSED 127.0.0.1:3668' },
     })
     await expect(fetchWebSearch('q', {
-      command: 'sxng', timeoutMs: 1000, maxResults: 10, run: runCapturing(stderr).run,
+      command: 'dg', timeoutMs: 1000, maxResults: 10, run: runCapturing(stderr).run,
     })).rejects.toThrow(/connect ECONNREFUSED/)
   })
 
   it('rejects a non-JSON stdout with a readable message', async () => {
     await expect(fetchWebSearch('q', {
-      command: 'sxng', timeoutMs: 1000, maxResults: 10, run: () => Promise.resolve('not json'),
-    })).rejects.toThrow(/sxng output was not valid JSON/)
+      command: 'dg', timeoutMs: 1000, maxResults: 10, run: () => Promise.resolve('not json'),
+    })).rejects.toThrow(/digdig output was not valid JSON/)
   })
 
   it('forwards the abort signal to the runner', async () => {
     let seenSignal: AbortSignal | undefined
     const controller = new AbortController()
     await fetchWebSearch('q', {
-      command: 'sxng', timeoutMs: 1000, maxResults: 10,
-      run: (_command, _args, _timeoutMs, signal) => { seenSignal = signal; return Promise.resolve(SXNG_OK) },
+      command: 'dg', timeoutMs: 1000, maxResults: 10,
+      run: (_command, _args, _timeoutMs, signal) => { seenSignal = signal; return Promise.resolve(DIGDIG_OK) },
     }, controller.signal)
     expect(seenSignal).toBe(controller.signal)
   })
 
   it('rejects an unknown envelope shape', async () => {
     await expect(fetchWebSearch('q', {
-      command: 'sxng', timeoutMs: 1000, maxResults: 10, run: () => Promise.resolve('{}'),
-    })).rejects.toThrow(/unexpected sxng output shape/)
+      command: 'dg', timeoutMs: 1000, maxResults: 10, run: () => Promise.resolve('{}'),
+    })).rejects.toThrow(/unexpected digdig output shape/)
   })
 })
 
 describe('createWebSearchTool', () => {
   it('executes through the injected runner and renders entries as text', async () => {
-    const tool = createWebSearchTool({ command: 'sxng', timeoutMs: 1000, maxResults: 10, run: runCapturing(SXNG_OK).run })
+    const tool = createWebSearchTool({ command: 'dg', timeoutMs: 1000, maxResults: 10, run: runCapturing(DIGDIG_OK).run })
     const value = await tool.execute({ query: 'attention', limit: 2 }, { signal: new AbortController().signal } as never) as Record<string, unknown>
     expect(value).toMatchObject({ results: [{ engine: 'arxiv' }, { engine: 'brave' }] })
     const rendered = tool.output?.render?.({}, value)
@@ -129,7 +129,7 @@ describe('createWebSearchTool', () => {
   })
 
   it('rejects a non-positive limit', async () => {
-    const tool = createWebSearchTool({ command: 'sxng', timeoutMs: 1000, maxResults: 10, run: runCapturing(SXNG_OK).run })
+    const tool = createWebSearchTool({ command: 'dg', timeoutMs: 1000, maxResults: 10, run: runCapturing(DIGDIG_OK).run })
     await expect(tool.execute({ query: 'q', limit: 0 }, { signal: new AbortController().signal } as never)).rejects.toThrow('limit must be a positive integer')
   })
 })

@@ -25,7 +25,7 @@ import { createPortal } from 'react-dom'
 import type { ArxivEntry, PaperRecord, ResearchProjectView, WebSearchEntry } from 'dsh-mimir/types'
 import type {
   ResearchArxivSearchView, ResearchFailureView, ResearchImportCounts, ResearchPapersView, ResearchWebSearchView,
-  ResearchSxngConfigView,  ResearchSubscriptionsView, ResearchZoteroSearchView, ResearchZoteroView,
+  ResearchDigdigConfigView,  ResearchSubscriptionsView, ResearchZoteroSearchView, ResearchZoteroView,
 } from './controller.ts'
 import { arxivIdFromUrl, collectTags, failureCopy, filterPapers, paperPdfUrl, type ResearchT } from './view-common.ts'
 import { appendReadingNote, parseReadingNotes } from './paper-notes.ts'
@@ -333,16 +333,16 @@ function RelevanceChip({ paper, projectId, projects, t }: {
 }
 
 /**
- * The web search panel (SearXNG results through the sxng CLI): one card per
+ * The web search panel (SearXNG results through the digdig CLI): one card per
  * result with the title link, engine/category/date meta, and the snippet.
  * A result whose URL points at an arXiv abstract or PDF gains an import
  * button — the bridge from a generic web hit into the wiki library.
  * @param props - the web search slice, the imported-id set, the in-flight
  * import id, the import verb, the retry verb, and copy.
  */
-/** Collapsible editor for sxng-cli's global configuration. */
-function SxngConfigPanel({ config, getConfig, saveConfig, t }: {
-  readonly config: ResearchSxngConfigView
+/** Collapsible editor for digdig's global configuration. */
+function DigdigConfigPanel({ config, getConfig, saveConfig, t }: {
+  readonly config: ResearchDigdigConfigView
   readonly getConfig: () => void
   readonly saveConfig: (input: {
     baseUrl?: string; defaultEngine?: string; allowedEngines?: readonly string[]; defaultLimit?: number
@@ -381,7 +381,7 @@ function SxngConfigPanel({ config, getConfig, saveConfig, t }: {
     }).then(result => { if (result !== null) setFailure(result); else setOpen(false) }).finally(() => { setSaving(false) })
   }
   return <section className={css.imageGenPanel}>
-    <button type="button" className={css.imageGenToggle} aria-expanded={open} onClick={toggle}><span aria-hidden>{open ? '▾' : '▸'}</span>{t('papers.sxngConfig')}{config.configured && <span className={css.imageGenBadge}>{t('papers.sxngConfigured')}</span>}</button>
+    <button type="button" className={css.imageGenToggle} aria-expanded={open} onClick={toggle}><span aria-hidden>{open ? '▾' : '▸'}</span>{t('papers.digdigConfig')}{config.configured && <span className={css.imageGenBadge}>{t('papers.digdigConfigured')}</span>}</button>
     {open && <div className={css.meetingFormRow}>
       <input className={css.input} value={draft.baseUrl ?? ''} placeholder="baseUrl" aria-label="baseUrl" onChange={e => setDraft({ ...draft, baseUrl: e.target.value })} />
       <input className={css.input} value={draft.defaultEngine ?? ''} placeholder="defaultEngine" aria-label="defaultEngine" onChange={e => setDraft({ ...draft, defaultEngine: e.target.value })} />
@@ -394,7 +394,7 @@ function SxngConfigPanel({ config, getConfig, saveConfig, t }: {
       <input className={css.input} type="password" value={draft.ollamaApiKey ?? ''} placeholder={config.ollamaApiKeyPreview || 'ollamaApiKey'} aria-label="ollamaApiKey" onChange={e => setDraft({ ...draft, ollamaApiKey: e.target.value })} />
       <input className={css.input} type="number" step="0.01" value={draft.redundancyThreshold ?? ''} placeholder="redundancyThreshold" aria-label="redundancyThreshold" onChange={e => setDraft({ ...draft, redundancyThreshold: e.target.value })} />
       <input className={css.input} type="number" step="0.01" value={draft.redundancyBigramThreshold ?? ''} placeholder="redundancyBigramThreshold" aria-label="redundancyBigramThreshold" onChange={e => setDraft({ ...draft, redundancyBigramThreshold: e.target.value })} />
-      <button type="button" className={css.btnPrimary} disabled={saving} onClick={save}>{saving ? t('papers.sxngSaving') : t('papers.sxngSave')}</button>
+      <button type="button" className={css.btnPrimary} disabled={saving} onClick={save}>{saving ? t('papers.digdigSaving') : t('papers.digdigSave')}</button>
       {failure !== null && <p className={css.failure} role="alert">{failure.message}</p>}
     </div>}
   </section>
@@ -508,8 +508,8 @@ function WebResultCard({ entry, imported, importing, importEntry, t }: {
  * @returns the search bar and results over the filterable library grid.
  */
 export function PapersView({
-  papers, arxivSearch, webSearch, sxngConfig, arxivSubscriptions, projects, selectedProjectId, ensurePapers, searchArxiv, searchWeb,
-  getSxngConfig, saveSxngConfig,
+  papers, arxivSearch, webSearch, digdigConfig, arxivSubscriptions, projects, selectedProjectId, ensurePapers, searchArxiv, searchWeb,
+  getDigdigConfig, saveDigdigConfig,
   saveArxivSubscription, deleteArxivSubscription, checkArxivSubscriptions,
   importPaper, updatePaper, removePaper, importPapersToBib, fetchPaperPdf,
   zotero, zoteroSearch, recheckZotero, searchZotero, importZoteroItem, exportZoteroCollectionToBib,
@@ -518,7 +518,7 @@ export function PapersView({
   readonly papers: ResearchPapersView
   readonly arxivSearch: ResearchArxivSearchView | null
   readonly webSearch: ResearchWebSearchView | null
-  readonly sxngConfig: ResearchSxngConfigView
+  readonly digdigConfig: ResearchDigdigConfigView
   readonly arxivSubscriptions: ResearchSubscriptionsView
   readonly projects: readonly ResearchProjectView[]
   readonly selectedProjectId: string | null
@@ -528,8 +528,8 @@ export function PapersView({
   readonly checkArxivSubscriptions: () => Promise<ResearchFailureView | null>
   readonly searchArxiv: (query: string) => void
   readonly searchWeb: (query: string) => void
-  readonly getSxngConfig: () => void
-  readonly saveSxngConfig: (input: {
+  readonly getDigdigConfig: () => void
+  readonly saveDigdigConfig: (input: {
     baseUrl?: string; defaultEngine?: string; allowedEngines?: readonly string[]; defaultLimit?: number
     defaultFormat?: 'md' | 'json'; useProxy?: boolean; proxyUrl?: string; timeout?: number
     ollamaApiKey?: string; redundancyThreshold?: number; redundancyBigramThreshold?: number
@@ -767,7 +767,7 @@ export function PapersView({
           {(source === 'arxiv' ? arxivSearch?.status : webSearch?.status) === 'loading' ? t('papers.searching') : t('papers.search')}
         </button>
       </form>
-      {source === 'web' && <SxngConfigPanel config={sxngConfig} getConfig={getSxngConfig} saveConfig={saveSxngConfig} t={t} />}
+      {source === 'web' && <DigdigConfigPanel config={digdigConfig} getConfig={getDigdigConfig} saveConfig={saveDigdigConfig} t={t} />}
       {actionError !== null && (
         <p className={css.failure} role="alert">{actionError}</p>
       )}

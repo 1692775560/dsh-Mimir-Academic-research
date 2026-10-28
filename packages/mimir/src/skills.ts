@@ -11,7 +11,7 @@
  * EXPERIMENT_PLAN.md, EXPERIMENT_LOG.md, NARRATIVE_REPORT.md), and the web
  * workbench tabs. Web search (the 文献 tab's Web source) is treated as
  * arXiv's peer: every skill that searches the literature runs arXiv for
- * papers and loads the `sxng` skill for non-arXiv sources (official docs,
+ * papers and loads the `digdig` skill for non-arXiv sources (official docs,
  * blog posts, code repositories, venue pages, 组会 material) — and only
  * persists findings through the wiki, never the raw search.
  *
@@ -57,17 +57,17 @@ const SHARED_RULES = String.raw`
   paths, and experiment ids as evidence pointers, never from memory alone.
 - Search with both hands: \`arxiv_search\` for papers, and for non-arXiv
   sources (official docs, blog posts, code repositories, venue pages) load
-  the \`sxng\` skill — the agent's web search is driven by that skill, not by
+  the \`digdig\` skill — the agent's web search is driven by that skill, not by
   a tool. Run both when a stage says "search" — arXiv-only misses the
   engineering landscape; web-only misses the paper record. Never persist raw
   search output to the wiki; only curated \`wiki_note\` findings land there.
-- When you load the \`sxng\` skill, let it decide the depth: a simple
-  \`sxng\` query for a one-shot factual lookup, its L2/L3 \`--session\`
+- When you load the \`digdig\` skill, let it decide the depth: a simple
+  \`dg\` query for a one-shot factual lookup, its L2/L3 \`--session\`
   deep-search flow (extract → quality → approve → iterate) when the question
   is multi-dimensional or the first round comes back incomplete. Run its
-  commands through the bash tool with the \`sxng\` CLI; the shared
-  \`~/sxng-cli/sxng.config.json\` (editable in the Library view's Web tab)
-  configures both sxng and the panel.
+  commands through the bash tool with the \`dg\` CLI; the shared
+  \`~/digdig/digdig.config.json\` (editable in the Library view's Web tab)
+  configures both digdig and the panel.
 `
 
 export const RESEARCH_PIPELINE = String.raw`
@@ -128,7 +128,7 @@ wiki's \`papers\` table (rendered in the workbench's 文献 / Literature tab).
    - \`arxiv_search\`: start broad (the problem statement), then narrow (the
      specific method family, the benchmark, the strongest baseline). Rewrite
      the query at least twice — first-pass queries miss half the field.
-   - Load the \`sxng\` skill: same angles, for non-arXiv sources — official
+   - Load the \`digdig\` skill: same angles, for non-arXiv sources — official
      documentation, engineering blogs, code repositories, workshop/venue
      pages. Academic claims still anchor on arXiv ids.
 2. **Triage** each result by title + abstract: defining works, must-beat
@@ -172,11 +172,11 @@ proposed contribution. Run it BEFORE writing code or spending compute.
    (X), the application (Y), and the claimed result (Z). Use the search
    syntax the tool supports (field prefixes, \`AND\`/\`OR\`), and read
    abstracts of every plausible hit — title-level dismissal is how novelty
-   checks fail. For each direction, also load the \`sxng\` skill — work that
+   checks fail. For each direction, also load the \`digdig\` skill — work that
    never reached arXiv (a thesis, a company blog, a workshop report) is
    exactly where an unpublished competitor hides.
 3. **Widen once**: if arXiv is thin, check the adjacent venues by name in
-   the query (the field knows its conferences), and use \`sxng\` on the
+   the query (the field knows its conferences), and use \`digdig\` on the
    venue's program pages and the lab sites of the active groups in X/Y/Z.
 4. **Judge** honestly:
    - **Known** — a prior work does X for Y. Name it with its arXiv id (or its
@@ -211,7 +211,7 @@ to move one claim out of \`pending\`; a run that maps to no claim is cut.
    it and the single result that would kill it.
 2. **Benchmark reality-check** — one pass before sequencing: \`arxiv_search\`
    the strongest baselines the paper will be judged against (name them with
-   their result), and use \`sxng\` (loaded as a skill) on the current state
+   their result), and use \`digdig\` (loaded as a skill) on the current state
    of the field (leaderboards, official repos, released checkpoints) so the
    plan does not promise a run that already exists. Findings persist as wiki
    notes, not raw search.
@@ -252,7 +252,7 @@ Verdict-bearing gate between experiments and writing. The question is never
 2. For each claim, lay the evidence beside it: which runs, which metrics,
    which baselines beaten (or not). Read EXPERIMENT_LOG.md, not summaries of
    summaries. If a claim hinges on the state of an external baseline or a
-   released artifact, use \`sxng\` (loaded as a skill) on it (leaderboard
+   released artifact, use \`digdig\` (loaded as a skill) on it (leaderboard
    row, official numbers, repository) before judging — the comparison must be
    against what is actually out there, not a remembered number.
 3. Judge each claim:
@@ -300,7 +300,7 @@ For each section, in paper order (abstract LAST, but keep a stub):
    entries from the wiki's papers — the 文献 tab can also export the wiki to
    .bib). When a paragraph cites a non-arXiv fact (a released checkpoint, a
    benchmark's official numbers, an engineering claim), the source was found
-   with \`sxng\` (the skill, loaded during the lit-review stage) and lives in
+   with \`digdig\` (the skill, loaded during the lit-review stage) and lives in
    the wiki — do not re-google mid-draft and cite from a fresh tab.
 2. Compile with \`latex_compile\` immediately. Fix errors before writing the
    next section — LaTeX errors compound and the log parser pinpoints them
@@ -549,7 +549,7 @@ exist as described, and does the citing sentence actually need it?
    sentence.
 2. **Existence**: for each entry, verify against a live source —
    \`arxiv_search\` by title (and author surname when the title is common),
-   and \`sxng\` (via the skill) for anything that never reached arXiv (a
+   and \`digdig\` (via the skill) for anything that never reached arXiv (a
    report, a thesis, a company publication, a venue's proceedings page) so a
    title fabricated from memory cannot pass on a missing arXiv id.
    Flag: hallucinated titles, wrong authors, wrong years, wrong venues,
@@ -559,7 +559,7 @@ exist as described, and does the citing sentence actually need it?
    Flag: citing a paper for something it explicitly does not do, citing a
    survey as if it were the original, citing a baseline's reimplementation
    instead of the source. When the cited fact is non-arXiv (a checkpoint's
-   license, an official benchmark number), use \`sxng\` (via the skill) on
+   license, an official benchmark number), use \`digdig\` (via the skill) on
    the current source rather than trusting the .bib entry.
 4. **Coverage**: uncited entries in the .bib are either dead weight (remove)
    or a sign a related-work paragraph went missing (flag).
@@ -591,7 +591,7 @@ Draft a grounded, venue-limited response to external reviews.
      experiment-id pointers. Quote numbers exactly as logged.
    - *Needs new evidence* — scope the smallest experiment that answers it,
      check feasibility against the rebuttal window and the registered
-     servers, and only promise what can actually be run. Use \`sxng\` (the
+     servers, and only promise what can actually be run. Use \`digdig\` (the
      skill) on the cited works and the current field state before claiming a
      gap — the reviewer may be pointing at something real that never hit
      arXiv.
@@ -628,7 +628,7 @@ Design and produce the paper's figures so each one earns its column width.
 2. Write a one-line spec per figure: what varies on each axis, which
    baselines appear, what the reader should conclude. A figure without that
    sentence is decoration — cut it. When the figure compares against an
-   external result, use \`sxng\` (the skill) on the authoritative number
+   external result, use \`digdig\` (the skill) on the authoritative number
    (leaderboard row, official report) and spec it as the reference, not a
    remembered value.
 
@@ -716,7 +716,7 @@ Meetings tab lists and downloads them.
    \`presenter\`, \`date\`, \`paper_ids\`, \`include_*\` switches). The tool
    returns the deck path; the user downloads from the 组会 tab.
 4. **Framing research** — for a 组会 that discusses the surrounding field,
-   load the \`sxng\` skill for the current news, released checkpoints, and
+   load the \`digdig\` skill for the current news, released checkpoints, and
    competing results so the report's "state of the field" slide is current,
    then fold those citations back into the wiki (as notes) rather than
    pasting raw search output into the deck.

@@ -351,8 +351,8 @@ function panelApply(ctx: ClientContext): void {
       deleteMeetingDeck: (projectId, file) => controller.deleteMeetingDeck(projectId, file),
       getImageGenConfig: () => { controller.getImageGenConfig() },
       saveImageGenConfig: input => controller.saveImageGenConfig(input),
-      getSxngConfig: () => { controller.getSxngConfig() },
-      saveSxngConfig: input => controller.saveSxngConfig(input),
+      getDigdigConfig: () => { controller.getDigdigConfig() },
+      saveDigdigConfig: input => controller.saveDigdigConfig(input),
       renameFigure: (projectId, relPath, newName) => controller.renameFigure(projectId, relPath, newName),
       updateFigure: (projectId, relPath, caption) => controller.updateFigure(projectId, relPath, caption),
       // A successful insert (or the duplicate's jump) lands in the paper view.
