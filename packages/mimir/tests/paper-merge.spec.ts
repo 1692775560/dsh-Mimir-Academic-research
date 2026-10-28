@@ -217,4 +217,59 @@ describe('shared re-import merge (R29 / #230)', () => {
     expect(record?.pdfPath).toBeUndefined()
     expect(record?.addedAt).toBeDefined()
   })
+
+  it('serializes concurrent agent re-adds and panel imports on the per-paper lock', async () => {
+    const { domain, service } = await harness()
+    await domain.table('papers').put(ENTRY.id, curatedPaper(ENTRY.id))
+    const tool = createWikiNoteTool(domain)
+    const agentReadd = (): Promise<unknown> => tool.execute({
+      action: 'add_paper',
+      arxiv_id: ENTRY.id,
+      title: 'EgoSync, refreshed title',
+      summary: 'Refreshed abstract.',
+      notes: 'agent re-read: still relevant',
+    }, {} as ToolRunContext)
+    const panelImport = (): unknown => service.importPaper({ entry: ENTRY, projectId: 'p2' })
+
+    // Five racing rounds of the same paper's get→merge→put through both
+    // channels: the lock serializes them, so no commit can overwrite a
+    // concurrent winner — the p2 link and the agent's note BOTH land,
+    // whichever order the rounds settle in.
+    for (let round = 0; round < 5; round += 1) {
+      await Promise.all([agentReadd(), panelImport()])
+    }
+
+    const record = domain.table('papers').get(ENTRY.id)
+    expect(record?.projectIds).toEqual(['p1', 'p2'])
+    expect(record?.notes).toBe('agent re-read: still relevant')
+    expect(record?.tags).toEqual(['mesh'])
+    expect(record?.relevance).toEqual({ p1: { score: 9, reason: 'core reference', at: '2026-02-01T00:00:00.000Z' } })
+    expect(record?.pdfPath).toBe(`papers/${ENTRY.id}.pdf`)
+  })
+
+  it('serializes concurrent set_paper relevance writes against different projects', async () => {
+    const { domain } = await harness()
+    await domain.table('papers').put(ENTRY.id, curatedPaper(ENTRY.id))
+    const tool = createWikiNoteTool(domain)
+    const score = (projectId: string, value: number): Promise<unknown> => tool.execute({
+      action: 'set_paper',
+      arxiv_id: ENTRY.id,
+      project_id: projectId,
+      relevance_score: value,
+      relevance_reason: `reason ${projectId}`,
+    }, {} as ToolRunContext)
+
+    // Each relevance write reads the stored map and adds one key; without the
+    // lock the two writers read the same base and the later put drops the
+    // other's key.
+    for (let round = 0; round < 5; round += 1) {
+      await Promise.all([score('p1', 8), score('p2', 7)])
+    }
+
+    const record = domain.table('papers').get(ENTRY.id)
+    expect(record?.relevance?.['p1']?.score).toBe(8)
+    expect(record?.relevance?.['p2']?.score).toBe(7)
+    // Scoring against p2 implies the project link.
+    expect(record?.projectIds).toEqual(['p1', 'p2'])
+  })
 })

@@ -18,7 +18,7 @@ import { addEvidenceEdge, retractEvidenceEdge } from '../services/evidence.ts'
 import type { AddEvidenceEdgeRequest } from '../types.ts'
 import { evidenceScopeOf, queryKeyOf } from '../evidence-identity.ts'
 import { mergePaperRecord } from '../services/library.ts'
-import { withProjectMutationLock } from '../services/mutation-locks.ts'
+import { withPaperMutationLock, withProjectMutationLock } from '../services/mutation-locks.ts'
 
 const ACTIONS = [
   'add_paper', 'set_paper', 'add_idea', 'fail_idea', 'add_claim', 'set_claim', 'set_project',
@@ -120,65 +120,76 @@ async function runAction(domain: ResearchWikiDomain, args: WikiArgs): Promise<Js
       if (!isValidArxivId(arxivId)) {
         throw new Error(`wiki_note action 'add_paper' got an unsafe arxiv_id '${arxivId}'`)
       }
-      const existing = domain.table('papers').get(arxivId)
-      // The same shared merge as the panel/Zotero imports (R29 / #230): an
-      // agent-driven re-add refreshes the metadata but never wipes
-      // workbench-curated fields (notes/tags/projects/relevance/PDF
-      // pointer), and the first-import timestamp no longer resets.
-      const record = mergePaperRecord({
-        arxivId,
-        title: requireField(args.title, 'title', args.action),
-        authors: args.authors ?? [],
-        summary: requireField(args.summary, 'summary', args.action),
-        url: args.url ?? `https://arxiv.org/abs/${arxivId}`,
-        notes: args.notes ?? '',
-        tags: [],
-        projectIds: [],
-        addedAt: new Date().toISOString(),
-      }, existing, { ...(args.notes === undefined ? {} : { notes: args.notes }) })
-      await domain.table('papers').put(arxivId, record)
-      await emit(domain, 'literature.paper.imported', { paperId: arxivId }, { title: record.title, imported: existing === undefined })
-      return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
+      // The papers-table read-modify-write serializes on the per-paper lock
+      // against every other mutation channel (panel import, paper_fetch,
+      // Zotero import, delete) — an unlocked get→merge→put could overwrite a
+      // concurrent winner's curated fields.
+      return withPaperMutationLock(arxivId, async () => {
+        const existing = domain.table('papers').get(arxivId)
+        // The same shared merge as the panel/Zotero imports (R29 / #230): an
+        // agent-driven re-add refreshes the metadata but never wipes
+        // workbench-curated fields (notes/tags/projects/relevance/PDF
+        // pointer), and the first-import timestamp no longer resets.
+        const record = mergePaperRecord({
+          arxivId,
+          title: requireField(args.title, 'title', args.action),
+          authors: args.authors ?? [],
+          summary: requireField(args.summary, 'summary', args.action),
+          url: args.url ?? `https://arxiv.org/abs/${arxivId}`,
+          notes: args.notes ?? '',
+          tags: [],
+          projectIds: [],
+          addedAt: new Date().toISOString(),
+        }, existing, { ...(args.notes === undefined ? {} : { notes: args.notes }) })
+        await domain.table('papers').put(arxivId, record)
+        await emit(domain, 'literature.paper.imported', { paperId: arxivId }, { title: record.title, imported: existing === undefined })
+        return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
+      })
     }
     case 'set_paper': {
       const arxivId = requireField(args.arxiv_id, 'arxiv_id', args.action)
       const table = domain.table('papers')
-      const existing = table.get(arxivId)
-      if (existing === undefined) throw new Error(`wiki_note: no paper with id '${arxivId}'`)
-      let projectIds = [...(args.project_ids ?? existing.projectIds)]
-      let relevance = existing.relevance
-      if (args.relevance_score !== undefined) {
-        const projectId = requireField(args.project_id, 'project_id', args.action)
-        if (domain.table('projects').get(projectId) === undefined) {
-          throw new Error(`wiki_note: no project with id '${projectId}'`)
+      // Same per-paper lock as add_paper: the relevance merge below reads the
+      // stored map and adds one key, so two concurrent scores of the same
+      // paper against different projects must serialize or one key is lost.
+      return withPaperMutationLock(arxivId, async () => {
+        const existing = table.get(arxivId)
+        if (existing === undefined) throw new Error(`wiki_note: no paper with id '${arxivId}'`)
+        let projectIds = [...(args.project_ids ?? existing.projectIds)]
+        let relevance = existing.relevance
+        if (args.relevance_score !== undefined) {
+          const projectId = requireField(args.project_id, 'project_id', args.action)
+          if (domain.table('projects').get(projectId) === undefined) {
+            throw new Error(`wiki_note: no project with id '${projectId}'`)
+          }
+          if (!Number.isFinite(args.relevance_score) || args.relevance_score < 0 || args.relevance_score > 10) {
+            throw new Error(`wiki_note action 'set_paper' requires relevance_score between 0 and 10, got '${args.relevance_score}'`)
+          }
+          const reason = requireField(args.relevance_reason, 'relevance_reason', args.action)
+          relevance = {
+            ...relevance,
+            [projectId]: { score: args.relevance_score, reason, at: new Date().toISOString() },
+          }
+          // Scoring a paper against a project implies the link.
+          if (!projectIds.includes(projectId)) projectIds = [...projectIds, projectId]
         }
-        if (!Number.isFinite(args.relevance_score) || args.relevance_score < 0 || args.relevance_score > 10) {
-          throw new Error(`wiki_note action 'set_paper' requires relevance_score between 0 and 10, got '${args.relevance_score}'`)
+        for (const projectId of projectIds) {
+          if (domain.table('projects').get(projectId) === undefined) {
+            throw new Error(`wiki_note: no project with id '${projectId}'`)
+          }
         }
-        const reason = requireField(args.relevance_reason, 'relevance_reason', args.action)
-        relevance = {
-          ...relevance,
-          [projectId]: { score: args.relevance_score, reason, at: new Date().toISOString() },
+        const record = {
+          ...existing,
+          notes: args.notes ?? existing.notes,
+          tags: args.tags === undefined
+            ? existing.tags
+            : [...new Set(args.tags.map(tag => tag.trim()).filter(tag => tag !== ''))],
+          projectIds,
+          ...(relevance === undefined ? {} : { relevance }),
         }
-        // Scoring a paper against a project implies the link.
-        if (!projectIds.includes(projectId)) projectIds = [...projectIds, projectId]
-      }
-      for (const projectId of projectIds) {
-        if (domain.table('projects').get(projectId) === undefined) {
-          throw new Error(`wiki_note: no project with id '${projectId}'`)
-        }
-      }
-      const record = {
-        ...existing,
-        notes: args.notes ?? existing.notes,
-        tags: args.tags === undefined
-          ? existing.tags
-          : [...new Set(args.tags.map(tag => tag.trim()).filter(tag => tag !== ''))],
-        projectIds,
-        ...(relevance === undefined ? {} : { relevance }),
-      }
-      await table.put(arxivId, record)
-      return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
+        await table.put(arxivId, record)
+        return { ok: true, table: 'papers', id: arxivId, record: record as unknown as JsonValue }
+      })
     }
     case 'add_idea': {
       const id = randomUUID()
