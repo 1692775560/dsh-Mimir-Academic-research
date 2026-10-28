@@ -9,9 +9,11 @@
  * PDF, paper PDF, figure, meeting deck, SSE events) are LOOPBACK-PANEL-ONLY:
  * the `Host` header must name the loopback listener, and an `Origin` header,
  * when present (a cross-origin fetch always carries one), must match that
- * Host exactly ({@link isTrustedRead}). This holds under DNS rebinding (the
- * rebound request carries the attacker's host name, not a loopback one) and
- * refuses cross-site reads. Plain same-origin navigations and embeds — the
+ * Host exactly ({@link isTrustedRead}), and the socket peer itself must be a
+ * loopback address ({@link isLoopbackPeer}), so a LAN-bound listener serves
+ * these routes to nobody but the local machine. This holds under DNS
+ * rebinding (the rebound request carries the attacker's host name, not a
+ * loopback one) and refuses cross-site reads. Plain same-origin navigations and embeds — the
  * panel's `<img>`/`<iframe>`/`<a>` GETs — carry no `Origin` and pass on the
  * Host check. Deployment boundary: when dsh is exposed through a reverse
  * proxy or LAN bind, these routes stay loopback-only by design; expose them
@@ -66,13 +68,35 @@ export function isSameOriginWrite(headers: IncomingHttpHeaders): boolean {
 }
 
 /**
+ * Whether one socket peer address names a loopback interface: the whole
+ * 127.0.0.0/8 IPv4 block or `::1`, with the IPv4-mapped IPv6 spelling
+ * (`::ffff:127.x.x.x` — what a dual-stack listener reports for an IPv4
+ * loopback peer) normalized first. Anything else, or an absent address, is
+ * not trusted.
+ */
+export function isLoopbackPeer(remoteAddress: string | undefined): boolean {
+  if (typeof remoteAddress !== 'string') return false
+  const normalized = remoteAddress.toLowerCase().startsWith('::ffff:')
+    ? remoteAddress.slice('::ffff:'.length)
+    : remoteAddress
+  if (normalized === '::1') return true
+  const parts = normalized.split('.')
+  return parts.length === 4 && Number(parts[0]) === 127
+    && parts.every(part => /^\d{1,3}$/.test(part) && Number(part) <= 255)
+}
+
+/**
  * Whether a read (GET/HEAD) of a workspace download route is authorized
- * (#210): the `Host` names the loopback listener, and an `Origin`, when
- * present, matches it exactly (same rule as {@link isSameOriginWrite}).
+ * (#210): the socket peer is loopback, the `Host` names the loopback
+ * listener, and an `Origin`, when present, matches it exactly (same rule as
+ * {@link isSameOriginWrite}). The peer check fails closed when the socket
+ * reports no address — headers alone never authorize a read.
  * @param headers - the incoming request headers.
+ * @param remoteAddress - the socket's peer address (`req.socket.remoteAddress`).
  * @returns whether the read may proceed.
  */
-export function isTrustedRead(headers: IncomingHttpHeaders): boolean {
+export function isTrustedRead(headers: IncomingHttpHeaders, remoteAddress: string | undefined): boolean {
+  if (!isLoopbackPeer(remoteAddress)) return false
   if (!isLoopbackHost(headers)) return false
   if (headers.origin === undefined) return true
   return isSameOriginWrite(headers)

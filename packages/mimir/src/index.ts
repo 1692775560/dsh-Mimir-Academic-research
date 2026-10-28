@@ -723,7 +723,7 @@ function createPdfHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
@@ -803,7 +803,7 @@ function createPaperPdfHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
@@ -923,7 +923,7 @@ function createFigureHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }
@@ -1149,7 +1149,7 @@ function createMeetingDeckHandler(
       return
     }
     // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers)) {
+    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
       res.writeHead(403).end('workspace downloads are served to the loopback panel only')
       return
     }

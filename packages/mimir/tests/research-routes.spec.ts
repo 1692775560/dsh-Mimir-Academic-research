@@ -109,8 +109,9 @@ function request(
   url: string,
   headers: Record<string, string> = { host: 'localhost:3080' },
   method = 'HEAD',
+  remoteAddress = '127.0.0.1',
 ): IncomingMessage {
-  return { method, url, headers } as IncomingMessage
+  return { method, url, headers, socket: { remoteAddress } } as unknown as IncomingMessage
 }
 
 describe('research PDF and figure routes', () => {
@@ -237,6 +238,18 @@ describe('loopback-panel-only download routes (#210)', () => {
       response as unknown as ServerResponse,
     )
     expect(response.statusCode).toBe(403)
+  })
+
+  it('rejects reads from a non-loopback socket peer even with a loopback Host', async () => {
+    const { routes } = await bootRoutes()
+    for (const route of [...READ_ROUTES, '/research/events'] as const) {
+      const response = new ResponseRecorder()
+      await routes.get(route)!(
+        request(`${route}/p1`, { host: 'localhost:3080' }, 'GET', '192.168.1.10'),
+        response as unknown as ServerResponse,
+      )
+      expect(response.statusCode, `${route} from a LAN peer`).toBe(403)
+    }
   })
 
   it('rejects writes whose matching Origin and Host both name the attacker (DNS rebinding)', async () => {

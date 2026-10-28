@@ -1,6 +1,6 @@
 import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { isSameOriginWrite, isTrustedRead, projectPaperDir } from '../src/http-write-boundary.ts'
+import { isLoopbackPeer, isSameOriginWrite, isTrustedRead, projectPaperDir } from '../src/http-write-boundary.ts'
 
 describe('isSameOriginWrite', () => {
   it('accepts an exact origin-host match on the loopback listener', () => {
@@ -26,26 +26,51 @@ describe('isSameOriginWrite', () => {
   })
 })
 
+describe('isLoopbackPeer', () => {
+  it('admits the IPv4 loopback block, ::1, and the IPv4-mapped spelling', () => {
+    expect(isLoopbackPeer('127.0.0.1')).toBe(true)
+    expect(isLoopbackPeer('127.0.1.53')).toBe(true)
+    expect(isLoopbackPeer('::1')).toBe(true)
+    expect(isLoopbackPeer('::ffff:127.0.0.1')).toBe(true)
+    expect(isLoopbackPeer('::FFFF:127.0.0.1')).toBe(true)
+  })
+
+  it('rejects public, private-LAN, IPv6 non-loopback, and absent addresses', () => {
+    expect(isLoopbackPeer('10.0.0.5')).toBe(false)
+    expect(isLoopbackPeer('192.168.1.10')).toBe(false)
+    expect(isLoopbackPeer('::ffff:10.0.0.5')).toBe(false)
+    expect(isLoopbackPeer('fe80::1')).toBe(false)
+    expect(isLoopbackPeer('128.0.0.1')).toBe(false)
+    expect(isLoopbackPeer(undefined)).toBe(false)
+  })
+})
+
 describe('isTrustedRead (#210)', () => {
-  it('admits loopback hosts on any port when no Origin is present', () => {
-    expect(isTrustedRead({ host: 'localhost:3080' })).toBe(true)
-    expect(isTrustedRead({ host: '127.0.0.1:9999' })).toBe(true)
-    expect(isTrustedRead({ host: '[::1]:3080' })).toBe(true)
-    expect(isTrustedRead({ host: 'LOCALHOST:3080' })).toBe(true)
+  it('admits loopback hosts on any port from a loopback peer when no Origin is present', () => {
+    expect(isTrustedRead({ host: 'localhost:3080' }, '127.0.0.1')).toBe(true)
+    expect(isTrustedRead({ host: '127.0.0.1:9999' }, '::ffff:127.0.0.1')).toBe(true)
+    expect(isTrustedRead({ host: '[::1]:3080' }, '::1')).toBe(true)
+    expect(isTrustedRead({ host: 'LOCALHOST:3080' }, '127.0.0.1')).toBe(true)
+  })
+
+  it('rejects a well-formed loopback request from a non-loopback or unknown peer', () => {
+    expect(isTrustedRead({ host: 'localhost:3080' }, '10.0.0.5')).toBe(false)
+    expect(isTrustedRead({ host: 'localhost:3080' }, undefined)).toBe(false)
+    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://localhost:3080' }, '192.168.1.10')).toBe(false)
   })
 
   it('rejects absent, non-loopback, and loopback-suffix host names', () => {
-    expect(isTrustedRead({})).toBe(false)
-    expect(isTrustedRead({ host: 'evil.com' })).toBe(false)
+    expect(isTrustedRead({}, '127.0.0.1')).toBe(false)
+    expect(isTrustedRead({ host: 'evil.com' }, '127.0.0.1')).toBe(false)
     // DNS rebinding: an attacker-controlled name must never pass.
-    expect(isTrustedRead({ host: 'localhost.evil.com' })).toBe(false)
-    expect(isTrustedRead({ host: '127.0.0.1.evil.com' })).toBe(false)
+    expect(isTrustedRead({ host: 'localhost.evil.com' }, '127.0.0.1')).toBe(false)
+    expect(isTrustedRead({ host: '127.0.0.1.evil.com' }, '127.0.0.1')).toBe(false)
   })
 
   it('applies the same-origin rule when an Origin header is present', () => {
-    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://localhost:3080' })).toBe(true)
-    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://evil.com' })).toBe(false)
-    expect(isTrustedRead({ host: 'localhost:3080', origin: 'not a URL' })).toBe(false)
+    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://localhost:3080' }, '127.0.0.1')).toBe(true)
+    expect(isTrustedRead({ host: 'localhost:3080', origin: 'http://evil.com' }, '127.0.0.1')).toBe(false)
+    expect(isTrustedRead({ host: 'localhost:3080', origin: 'not a URL' }, '127.0.0.1')).toBe(false)
   })
 })
 
