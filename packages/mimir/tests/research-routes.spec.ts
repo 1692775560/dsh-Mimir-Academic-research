@@ -238,4 +238,18 @@ describe('loopback-panel-only download routes (#210)', () => {
     )
     expect(response.statusCode).toBe(403)
   })
+
+  it('rejects writes whose matching Origin and Host both name the attacker (DNS rebinding)', async () => {
+    const { routes } = await bootRoutes()
+    for (const route of ['/research/figure-upload', '/research/template-upload'] as const) {
+      const response = new ResponseRecorder()
+      // A rebound POST carries matching attacker names in both headers; the
+      // loopback Host whitelist, not the Origin==Host comparison, stops it.
+      await routes.get(route)!(
+        request(`${route}?project=p1&name=x.png`, { host: 'evil.com', origin: 'http://evil.com' }, 'POST'),
+        response as unknown as ServerResponse,
+      )
+      expect(response.statusCode, route).toBe(403)
+    }
+  })
 })

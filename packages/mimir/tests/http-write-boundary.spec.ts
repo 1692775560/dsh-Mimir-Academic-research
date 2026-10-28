@@ -3,9 +3,19 @@ import { describe, expect, it } from 'vitest'
 import { isSameOriginWrite, isTrustedRead, projectPaperDir } from '../src/http-write-boundary.ts'
 
 describe('isSameOriginWrite', () => {
-  it('accepts an exact HTTP or HTTPS origin-host match', () => {
+  it('accepts an exact origin-host match on the loopback listener', () => {
     expect(isSameOriginWrite({ origin: 'http://127.0.0.1:3080', host: '127.0.0.1:3080' })).toBe(true)
-    expect(isSameOriginWrite({ origin: 'https://research.example.test', host: 'research.example.test' })).toBe(true)
+    expect(isSameOriginWrite({ origin: 'https://localhost:3080', host: 'localhost:3080' })).toBe(true)
+    expect(isSameOriginWrite({ origin: 'http://[::1]:3080', host: '[::1]:3080' })).toBe(true)
+  })
+
+  it('rejects a matching Origin and Host that do not name the loopback listener (DNS rebinding)', () => {
+    // The rebound request carries the attacker's host name in BOTH headers,
+    // so the Origin==Host comparison alone passes trivially — the loopback
+    // Host whitelist is the actual defense.
+    expect(isSameOriginWrite({ origin: 'http://evil.com', host: 'evil.com' })).toBe(false)
+    expect(isSameOriginWrite({ origin: 'https://research.example.test', host: 'research.example.test' })).toBe(false)
+    expect(isSameOriginWrite({ origin: 'http://127.0.0.1.evil.com', host: '127.0.0.1.evil.com' })).toBe(false)
   })
 
   it('rejects absent, malformed, cross-origin, and non-web origins', () => {
