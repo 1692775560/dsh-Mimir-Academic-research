@@ -23,7 +23,7 @@
  */
 
 import type { IncomingHttpHeaders } from 'node:http'
-import { resolvePaperDir } from './paper-source.ts'
+import { resolvePaperDirReal } from './paper-source.ts'
 
 /** Host names the loopback listener may present as (any port). */
 const LOOPBACK_HOST_NAMES = new Set(['localhost', '127.0.0.1', '[::1]'])
@@ -102,7 +102,11 @@ export function isTrustedRead(headers: IncomingHttpHeaders, remoteAddress: strin
   return isSameOriginWrite(headers)
 }
 
-/** Resolve a write destination only from the target project's configured paper directory. */
-export function projectPaperDir(workspaceDir: string, paperDir: string | undefined): string | undefined {
-  return resolvePaperDir(workspaceDir, undefined, paperDir)
+/**
+ * Resolve a write destination only from the target project's configured
+ * paper directory, realpath-backed (#213): a symlinked paper directory
+ * cannot smuggle the upload outside the workspace.
+ */
+export async function projectPaperDir(workspaceDir: string, paperDir: string | undefined): Promise<string | undefined> {
+  return resolvePaperDirReal(workspaceDir, undefined, paperDir)
 }

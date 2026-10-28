@@ -1,6 +1,10 @@
-import { resolve } from 'node:path'
+import { mkdir, mkdtemp, realpath, symlink, writeFile } from 'node:fs/promises'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { isLoopbackPeer, isSameOriginWrite, isTrustedRead, projectPaperDir } from '../src/http-write-boundary.ts'
+import { realpathConfined } from '../src/paper-source.ts'
+import { canCreateSymlink } from './helpers/symlink-capability.ts'
 
 describe('isSameOriginWrite', () => {
   it('accepts an exact origin-host match on the loopback listener', () => {
@@ -75,15 +79,45 @@ describe('isTrustedRead (#210)', () => {
 })
 
 describe('projectPaperDir', () => {
-  it('uses the project directory and never accepts a request-selected override', () => {
+  it('uses the project directory and never accepts a request-selected override', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'mimir-boundary-'))
     // Expected values go through resolve() so the assertion holds on both
     // POSIX and Windows (where resolve('/research', …) gains the drive).
-    expect(projectPaperDir('/research', 'projects/p1')).toBe(resolve('/research', 'projects/p1'))
-    expect(projectPaperDir('/research', undefined)).toBe(resolve('/research', 'paper'))
+    await expect(projectPaperDir(workspace, 'projects/p1')).resolves.toBe(resolve(workspace, 'projects/p1'))
+    await expect(projectPaperDir(workspace, undefined)).resolves.toBe(resolve(workspace, 'paper'))
   })
 
-  it('rejects invalid project paper directories', () => {
-    expect(projectPaperDir('/research', '../other-project')).toBeUndefined()
-    expect(projectPaperDir('/research', '/tmp/paper')).toBeUndefined()
+  it('rejects invalid project paper directories', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'mimir-boundary-'))
+    await expect(projectPaperDir(workspace, '../other-project')).resolves.toBeUndefined()
+    await expect(projectPaperDir(workspace, '/tmp/paper')).resolves.toBeUndefined()
+  })
+
+  it.skipIf(!canCreateSymlink())('rejects a symlinked project paper directory escaping the workspace (#213)', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'mimir-boundary-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mimir-outside-'))
+    await symlink(outside, join(workspace, 'linked'), 'dir')
+    await expect(projectPaperDir(workspace, 'linked')).resolves.toBeUndefined()
+  })
+})
+
+describe('realpathConfined', () => {
+  it.skipIf(!canCreateSymlink())('confines existing files, clean missing chains, and rejects escaping symlinks', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'mimir-confined-'))
+    const outside = await mkdtemp(join(tmpdir(), 'mimir-outside-'))
+    await mkdir(join(workspace, 'paper', 'figures'), { recursive: true })
+    await writeFile(join(workspace, 'paper', 'figures', 'ok.png'), 'png')
+    await writeFile(join(outside, 'secret.png'), 'secret')
+    await symlink(join(outside, 'secret.png'), join(workspace, 'paper', 'figures', 'link.png'))
+    const workspaceReal = await realpath(workspace)
+
+    await expect(realpathConfined(workspaceReal, join(workspace, 'paper', 'figures', 'ok.png'))).resolves.toBe(true)
+    // A missing file with a clean ancestor chain passes (the write creates a real file).
+    await expect(realpathConfined(workspaceReal, join(workspace, 'paper', 'figures', 'new.png'))).resolves.toBe(true)
+    // The workspace root itself passes.
+    await expect(realpathConfined(workspaceReal, workspaceReal)).resolves.toBe(true)
+    // A symlinked file pointing outside fails.
+    await expect(realpathConfined(workspaceReal, join(workspace, 'paper', 'figures', 'link.png'))).resolves.toBe(false)
+    await expect(realpathConfined(workspaceReal, join(outside, 'secret.png'))).resolves.toBe(false)
   })
 })

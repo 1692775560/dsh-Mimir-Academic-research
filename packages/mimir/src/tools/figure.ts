@@ -14,7 +14,7 @@ import { defineTool } from '@deepseek-ai/dsh-tools'
 import type { ToolDefinition } from '@deepseek-ai/dsh-tools'
 import type { JsonValue } from '@deepseek-ai/dsh-util-values'
 import { isFigureFile } from '../artifacts.ts'
-import { isNotFound, resolvePaperDir } from '../paper-source.ts'
+import { isNotFound, resolvePaperDirReal } from '../paper-source.ts'
 import { renameFigure, updateFigure } from '../services/experiment.ts'
 import { convertSvgFigure, svgConverterNames } from '../svg-convert.ts'
 import type { SvgConversionDeps } from '../svg-convert.ts'
@@ -84,7 +84,7 @@ export function createFigureSaveTool(workspaceDir: string, domain: ResearchWikiD
           throw new Error(`figure_save: experiment '${args.experiment_id}' does not belong to project '${projectId}'`)
         }
       }
-      const paperDir = resolvePaperDir(workspaceDir, undefined, project.paperDir)
+      const paperDir = await resolvePaperDirReal(workspaceDir, undefined, project.paperDir)
       if (paperDir === undefined) {
         throw new Error(`figure_save: project '${projectId}' has an invalid paper directory`)
       }

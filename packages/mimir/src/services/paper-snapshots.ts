@@ -10,7 +10,7 @@
 import { mkdir, stat } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
-import { isNotFound, resolvePaperDir, saveTextFileOptimistic } from '../paper-source.ts'
+import { isNotFound, resolvePaperDirReal, saveTextFileOptimistic } from '../paper-source.ts'
 import {
   capturePaperSnapshot,
   isValidSnapshotId,
@@ -158,7 +158,7 @@ export async function revertPaperSnapshot(
   if (!isValidSnapshotId(request.id)) {
     return rejected({ code: 'invalid-input', message: `malformed snapshot id '${request.id}'` })
   }
-  const dir = resolvePaperDir(deps.workspaceDir, request.dir, record.paperDir)
+  const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const snapshot = await readPaperSnapshot(root, request.id)
   if (snapshot === undefined) return rejected({ code: 'snapshot-not-found', id: request.id })

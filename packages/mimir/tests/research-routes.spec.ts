@@ -1,6 +1,6 @@
 /** Integration tests for the PDF and figure HTTP routes registered by apply(). */
 
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, symlink, writeFile } from 'node:fs/promises'
 import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -13,6 +13,7 @@ import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { apply, type Config } from '../src/index.ts'
+import { canCreateSymlink } from './helpers/symlink-capability.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import type { PaperRecord, ProjectRecord } from '../src/types.ts'
 
@@ -250,6 +251,44 @@ describe('loopback-panel-only download routes (#210)', () => {
       )
       expect(response.statusCode, `${route} from a LAN peer`).toBe(403)
     }
+  })
+
+  it.skipIf(!canCreateSymlink())('refuses to read or overwrite a file whose realpath escapes the workspace (#213)', async () => {
+    const { routes, domain, workspaceDir } = await bootRoutes()
+    await domain.table('projects').put(PROJECT.id, PROJECT)
+    const outside = await mkdtemp(join(tmpdir(), 'mimir-outside-'))
+    await writeFile(join(outside, 'secret.png'), 'secret')
+    const figuresDir = join(workspaceDir, 'paper', 'figures')
+    await mkdir(figuresDir, { recursive: true })
+    await symlink(join(outside, 'secret.png'), join(figuresDir, 'evil.png'))
+
+    // The read route: the directory chain is clean but the served file is a
+    // symlink out — the file-level realpath re-check turns it into a 400.
+    const readResponse = new ResponseRecorder()
+    await routes.get('/research/figure')!(
+      request('/research/figure/p1?path=figures/evil.png', { host: 'localhost:3080' }, 'GET'),
+      readResponse as unknown as ServerResponse,
+    )
+    expect(readResponse.statusCode).toBe(400)
+
+    // The upload route: writing onto the same symlinked name must not write
+    // through it, and the outside file must survive untouched.
+    const uploadRequest = Object.assign(
+      request(
+        '/research/figure-upload?project=p1&name=evil.png',
+        { host: 'localhost:3080', origin: 'http://localhost:3080' },
+        'POST',
+      ),
+      // eslint-disable-next-line @typescript-eslint/require-await
+      { async *[Symbol.asyncIterator]() { yield Buffer.from('payload') } },
+    )
+    const uploadResponse = new ResponseRecorder()
+    await routes.get('/research/figure-upload')!(
+      uploadRequest,
+      uploadResponse as unknown as ServerResponse,
+    )
+    expect(uploadResponse.statusCode).toBe(400)
+    await expect(readFile(join(outside, 'secret.png'), 'utf8')).resolves.toBe('secret')
   })
 
   it('rejects writes whose matching Origin and Host both name the attacker (DNS rebinding)', async () => {
