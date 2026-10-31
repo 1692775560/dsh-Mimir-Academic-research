@@ -138,6 +138,13 @@ describe('EvidenceGraphCanvas claim-head conflict roll-up', () => {
     expect(html.match(/class="[^"]*evidenceNodeHit[^"]*"/g)?.length ?? 0).toBeGreaterThan(0)
     expect(html).toMatch(/evidenceNodeHit[^>]*r="14"/)
   })
+
+  it('roves a single tab stop across the nodes (roving tabindex §51/§102)', () => {
+    const html = renderCanvas()
+    // Exactly one node is in the Tab order; every other node is skipped.
+    expect(html.match(/tabindex="0"/g)?.length ?? 0).toBe(1)
+    expect(html.match(/tabindex="-1"/g)?.length ?? 0).toBeGreaterThan(0)
+  })
 })
 
 describe('EvidenceGraphCanvas link interaction layer (§99)', () => {

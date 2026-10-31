@@ -8,6 +8,7 @@
  * @module dsh-client-ui-mimir/client/EvidenceGraphCanvas
  */
 
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   EvidenceGraphLayout,
   EvidenceLinkLayout,
@@ -29,10 +30,13 @@ function RelationGlyph({ relClass }: { readonly relClass: string | null }) {
 }
 
 /** One circular node + its semantic treatment (§7.2/§21/§22/§79). */
-function EvidenceNode({ node, selected, onSelect, t, conflictDetail }: {
+function EvidenceNode({ node, selected, tabIndex, onSelect, onNavigate, registerRef, t, conflictDetail }: {
   readonly node: EvidenceNodeLayout
   readonly selected: boolean
+  readonly tabIndex: number
   readonly onSelect: (id: string) => void
+  readonly onNavigate: (delta: number) => void
+  readonly registerRef: (el: SVGGElement | null) => void
   readonly t: ResearchT
   readonly conflictDetail: readonly string[] | undefined
 }) {
@@ -48,14 +52,19 @@ function EvidenceNode({ node, selected, onSelect, t, conflictDetail }: {
   const select = (): void => { onSelect(node.id) }
   return (
     <g
+      ref={registerRef}
       className={css.evidenceNode}
       data-kind={node.kind}
       data-lane={node.hue}
       role="button"
-      tabIndex={0}
+      tabIndex={tabIndex}
       aria-label={accessibleLabel}
       onClick={select}
-      onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select() } }}
+      onKeyDown={event => {
+        if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); select(); return }
+        if (event.key === 'ArrowRight' || event.key === 'ArrowDown') { event.preventDefault(); onNavigate(1); return }
+        if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') { event.preventDefault(); onNavigate(-1) }
+      }}
     >
       <title>{title}</title>
       <circle className={css.evidenceNodeHit} cx={node.x} cy={node.y} r={14} />
@@ -143,6 +152,33 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
   readonly conflictLinesByClaim?: ReadonlyMap<string, readonly string[]> | undefined
 }) {
   const tickHeight = layout.height - 8
+
+  // Roving tabindex (§51/§102): exactly one node enters the Tab order; the
+  // arrow keys move the roving stop through the nodes in reading order
+  // (top-to-bottom, then left-to-right). Reading order is geometric — the
+  // same input yields the same order.
+  const nodeOrder = useMemo(
+    () => [...layout.nodes].sort((a, b) => a.y - b.y || a.x - b.x || a.id.localeCompare(b.id)),
+    [layout],
+  )
+  const [tabbableId, setTabbableId] = useState<string | null>(() => nodeOrder[0]?.id ?? null)
+  const nodeRefs = useRef(new Map<string, SVGGElement>())
+
+  // Keep the roving stop valid when the fold re-derives and nodes change.
+  useEffect(() => {
+    if (tabbableId !== null && nodeOrder.some(node => node.id === tabbableId)) return
+    setTabbableId(nodeOrder[0]?.id ?? null)
+  }, [nodeOrder, tabbableId])
+
+  const navigate = (fromId: string, delta: number): void => {
+    const index = nodeOrder.findIndex(node => node.id === fromId)
+    if (index < 0 || nodeOrder.length === 0) return
+    const next = nodeOrder[(index + delta + nodeOrder.length) % nodeOrder.length]
+    if (next === undefined) return
+    setTabbableId(next.id)
+    nodeRefs.current.get(next.id)?.focus()
+  }
+
   return (
     <svg
       className={css.graphSvg}
@@ -207,7 +243,10 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
           key={node.id}
           node={node}
           selected={node.id === selectedId}
+          tabIndex={node.id === tabbableId ? 0 : -1}
           onSelect={onSelect}
+          onNavigate={delta => { navigate(node.id, delta) }}
+          registerRef={el => { if (el === null) nodeRefs.current.delete(node.id); else nodeRefs.current.set(node.id, el) }}
           t={t}
           conflictDetail={node.kind === 'claim' && node.conflict
             ? conflictLinesByClaim?.get(node.claimKey ?? '')
