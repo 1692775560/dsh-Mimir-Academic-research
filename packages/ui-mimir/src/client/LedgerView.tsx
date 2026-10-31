@@ -313,6 +313,7 @@ export function LedgerView({
       <EvidenceGraphView
         evidence={evidence}
         eureka={eureka}
+        worktree={worktree}
         refreshEvidenceGraph={refreshEvidenceGraph}
         retractEvidence={retractEvidence}
         jumpToProvenance={ts => { loadLedger(provenanceFilter(ts)) }}

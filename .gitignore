@@ -26,4 +26,5 @@ ci_log.txt
 
 # Vitest/CI console captures (never commit local run logs)
 /test-*.log
+/vitest-*.log
 

@@ -160,14 +160,25 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
         </g>
       ))}
 
-      {/* Band labels + rails (lane guides). */}
-      {layout.bands.map(band => (
-        <g key={band.key}>
-          <text className={css.evidenceBandLabel} data-lane={band.hue} x={12} y={band.y + 22}>
-            {clipLabel(band.label ?? (band.key === EUREKA_FALLBACK_BAND ? t('evidence.graph.unattributed') : band.key), 20)}
-          </text>
-        </g>
-      ))}
+      {/* Band labels + terminal state glyphs + rails (lane guides). */}
+      {layout.bands.map(band => {
+        const label = band.label ?? (band.key === EUREKA_FALLBACK_BAND ? t('evidence.graph.unattributed') : band.key)
+        const terminal = band.status === 'failed' || band.status === 'adopted'
+        const tip = band.idleDays !== null ? `${label} · ${t('evidence.graph.idle', { days: String(band.idleDays) })}` : label
+        return (
+          <g key={band.key}>
+            {terminal && (
+              <text className={css.evidenceBandStatus} data-status={band.status} x={14} y={band.y + 22}>
+                {band.status === 'failed' ? '✗' : '✓'}
+              </text>
+            )}
+            <text className={css.evidenceBandLabel} data-lane={band.hue} x={terminal ? 32 : 12} y={band.y + 22}>
+              {clipLabel(label, 20)}
+            </text>
+            <title>{tip}</title>
+          </g>
+        )
+      })}
       {layout.rails.map(rail => <RailLine key={rail.claimKey} rail={rail} />)}
 
       {/* Links: subdued (retract/conflict) before normal (inflow/external). */}

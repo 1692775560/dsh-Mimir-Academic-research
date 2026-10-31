@@ -49,6 +49,15 @@
   pointer-events: none;
 }
 
+.evidenceBandStatus {
+  font-size: 13px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+.evidenceBandStatus[data-status='failed'] { fill: var(--mimir-evidence-status-invalidated, #d64545); }
+.evidenceBandStatus[data-status='adopted'] { fill: var(--mimir-evidence-status-supported, #2f9e63); }
+
 .evidenceRailLabel {
   fill: var(--dsw-alias-label-secondary, #57503f);
   font-size: 11px;

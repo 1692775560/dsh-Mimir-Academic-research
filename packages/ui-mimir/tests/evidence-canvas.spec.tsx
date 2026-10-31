@@ -174,3 +174,21 @@ describe('EvidenceGraphCanvas unattributed Eureka band', () => {
     expect(html).not.toContain('eureka:unattributed')
   })
 })
+
+describe('EvidenceGraphCanvas declared line-state glyphs', () => {
+  it('renders ✗ for a failed line and ✓ for an adopted one, none for open', () => {
+    const failed = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'failed', idleDays: null }]]) })
+    const failedHtml = renderToString(<EvidenceGraphCanvas layout={failed} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    expect(failedHtml).toContain('evidenceBandStatus')
+    expect(failedHtml).toContain('✗')
+
+    const adopted = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'adopted', idleDays: null }]]) })
+    const adoptedHtml = renderToString(<EvidenceGraphCanvas layout={adopted} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    expect(adoptedHtml).toContain('✓')
+
+    const open = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'open', idleDays: 5 }]]) })
+    const openHtml = renderToString(<EvidenceGraphCanvas layout={open} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    expect(openHtml).not.toContain('evidenceBandStatus')
+    expect(openHtml).toContain(t('evidence.graph.idle', { days: '5' }))
+  })
+})

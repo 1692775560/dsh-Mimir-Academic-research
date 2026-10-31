@@ -273,6 +273,28 @@ describe('deriveEvidenceGraphLayout', () => {
     expect(again.ticks).toEqual(layout.ticks)
   })
 
+  it('carries declared line state and idle days onto the band', () => {
+    const timeline = [group({ key: 'idea:1', claims: [
+      claim({ claimKey: 'claim:c1', history: [entry({ sourceEventId: 'e1', ts: '2026-09-01T10:00:00.000Z' })] }),
+    ] })]
+    const layout = deriveEvidenceGraphLayout(graph({ timeline }), {
+      lineStates: new Map([['idea:1', { status: 'failed', idleDays: null }]]),
+    })
+    expect(layout.bands[0]?.status).toBe('failed')
+    expect(layout.bands[0]?.idleDays).toBeNull()
+
+    const open = deriveEvidenceGraphLayout(graph({ timeline }), {
+      lineStates: new Map([['idea:1', { status: 'open', idleDays: 6 }]]),
+    })
+    expect(open.bands[0]?.status).toBe('open')
+    expect(open.bands[0]?.idleDays).toBe(6)
+
+    // No line state → unattributed (null), not a guessed 'open'.
+    const bare = deriveEvidenceGraphLayout(graph({ timeline }))
+    expect(bare.bands[0]?.status).toBeNull()
+    expect(bare.bands[0]?.idleDays).toBeNull()
+  })
+
   it('truncates labels CJK-safely', () => {
     expect(clipLabel('short label', 20)).toBe('short label')
     expect(clipLabel('A very long label that exceeds the budget', 20)).toMatch(/…$/)

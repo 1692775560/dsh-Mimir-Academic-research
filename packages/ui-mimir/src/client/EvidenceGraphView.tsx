@@ -18,7 +18,7 @@ import type {
   EvidenceTimelineEntry,
   EvidenceTimelineGroup,
 } from 'dsh-mimir/types'
-import type { ResearchEvidenceGraphSlice, ResearchEurekaSlice } from './controller.ts'
+import type { ResearchEvidenceGraphSlice, ResearchEurekaSlice, ResearchWorktreeSlice } from './controller.ts'
 import type { ResearchT } from './view-common.ts'
 import {
   conflictLinesByClaim,
@@ -27,7 +27,7 @@ import {
   retractConfirmOf,
   type EvidenceRetractConfirm,
 } from './evidence-graph-view.ts'
-import { deriveEvidenceGraphLayout, type EvidenceNodeLayout } from './evidence-graph-layout.ts'
+import { bandKeyOfLine, deriveEvidenceGraphLayout, type EvidenceNodeLayout } from './evidence-graph-layout.ts'
 import { EvidenceGraphCanvas } from './EvidenceGraphCanvas.tsx'
 import css from './EvidenceGraph.module.css'
 import panelCss from './ResearchPanel.module.css'
@@ -197,10 +197,11 @@ function DetailPanel({ node, edge, onJump, onConfirm, onClose, t }: {
  * below as a collapsible disclosure.
  */
 export function EvidenceGraphView({
-  evidence, eureka, refreshEvidenceGraph, retractEvidence, jumpToProvenance, t,
+  evidence, eureka, worktree, refreshEvidenceGraph, retractEvidence, jumpToProvenance, t,
 }: {
   readonly evidence: ResearchEvidenceGraphSlice
   readonly eureka: ResearchEurekaSlice
+  readonly worktree: ResearchWorktreeSlice
   readonly refreshEvidenceGraph: () => void
   readonly retractEvidence: (dedupKey: string, reason?: string | undefined) => Promise<unknown>
   readonly jumpToProvenance: (ts: string) => void
@@ -214,11 +215,21 @@ export function EvidenceGraphView({
   const [auditOpen, setAuditOpen] = useState(false)
   const view = evidence.view
 
+  const lineStates = useMemo(() => {
+    const lanes = worktree.view?.lanes ?? []
+    const map = new Map<string, { readonly status: 'open' | 'failed' | 'adopted'; readonly idleDays: number | null }>()
+    for (const lane of lanes) map.set(bandKeyOfLine(lane.lineId), { status: lane.status, idleDays: lane.idleDays })
+    return map
+  }, [worktree.view])
+
   const layout = useMemo(
     () => (view === null
       ? null
-      : deriveEvidenceGraphLayout(view.graph, { eurekaDeclarations: eureka.view?.declarations ?? [] })),
-    [view, eureka.view],
+      : deriveEvidenceGraphLayout(view.graph, {
+        eurekaDeclarations: eureka.view?.declarations ?? [],
+        lineStates,
+      })),
+    [view, eureka.view, lineStates],
   )
   const conflictLines = useMemo(
     () => (view === null ? undefined : conflictLinesByClaim(view.graph.conflicts, t)),

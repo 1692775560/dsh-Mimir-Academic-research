@@ -141,6 +141,9 @@ export interface EvidenceRailLayout {
   readonly status: string | null
 }
 
+/** The declared life of one research line (mirrors the worktree's status). */
+export type EvidenceLineStatus = 'open' | 'failed' | 'adopted'
+
 /** One research-line band: the y-axis swimlane grouping claim rails. */
 export interface EvidenceBandLayout {
   readonly key: string
@@ -150,6 +153,10 @@ export interface EvidenceBandLayout {
   readonly y: number
   readonly height: number
   readonly claimKeys: readonly string[]
+  /** The declared line status (from the worktree); null when un-attributed. */
+  readonly status: EvidenceLineStatus | null
+  /** Open lanes: days since the lane's last touch (from the worktree). */
+  readonly idleDays: number | null
 }
 
 /** One date tick on the time axis. */
@@ -177,9 +184,17 @@ export interface EvidenceEurekaPoint {
   readonly lineId: string | null
 }
 
-/** Layout options: researcher-declared Eureka markers (worktree alignment is P2). */
+/** One declared research-line state, keyed by band key (see {@link bandKeyOfLine}). */
+export interface EvidenceLineState {
+  readonly status: EvidenceLineStatus
+  readonly idleDays: number | null
+}
+
+/** Layout options: researcher-declared Eureka markers + declared line states. */
 export interface EvidenceGraphLayoutOptions {
   readonly eurekaDeclarations?: readonly EvidenceEurekaPoint[] | undefined
+  /** Worktree-declared line states, keyed by band key; absent ⇒ unattributed. */
+  readonly lineStates?: ReadonlyMap<string, EvidenceLineState> | undefined
 }
 
 /** An Eureka declaration attributed to no band renders on this trailing band. */
@@ -191,7 +206,8 @@ interface Point {
 }
 
 /** Map one Eureka lineId onto the timeline-group key spelling. */
-function bandKeyOfLine(lineId: string | null): string {
+/** Map a worktree/eureka lineId onto the timeline-group key spelling. */
+export function bandKeyOfLine(lineId: string | null): string {
   if (lineId === null) return EUREKA_FALLBACK_BAND
   if (lineId.startsWith('project:')) return `project:${lineId.slice('project:'.length)}`
   return `idea:${lineId}`
@@ -318,6 +334,7 @@ export function deriveEvidenceGraphLayout(
   ordered.forEach(({ group }) => {
     const claims = claimsOf(group)
     const bandTop = bandY
+    const lineState = options.lineStates?.get(group.key)
     const band: EvidenceBandLayout = {
       key: group.key,
       kind: group.kind,
@@ -326,6 +343,8 @@ export function deriveEvidenceGraphLayout(
       y: bandTop,
       height: bandHeader + claims.length * lane,
       claimKeys: Object.freeze(claims.map(claim => claim.claimKey)),
+      status: lineState?.status ?? null,
+      idleDays: lineState?.idleDays ?? null,
     }
     bands.push(band)
     claims.forEach((claim, laneIndex) => {
@@ -371,6 +390,8 @@ export function deriveEvidenceGraphLayout(
       y: bandY,
       height: bandHeader,
       claimKeys: Object.freeze([]),
+      status: null,
+      idleDays: null,
     })
     bandY += bandHeader
   }
