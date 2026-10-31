@@ -154,9 +154,13 @@ function EdgeRow({ edge, onConfirm, onJump, t }: {
 }
 
 /** The selection detail panel (progressive disclosure, PRD §53). */
-function DetailPanel({ node, edge, onJump, onConfirm, onClose, t }: {
+function DetailPanel({ node, edge, claimCounts, parentLabel, onJump, onConfirm, onClose, t }: {
   readonly node: EvidenceNodeLayout
   readonly edge: EvidenceGraphEdge | null
+  /** The claim's evidence mass (claim-head nodes only). */
+  readonly claimCounts: { readonly supports: number; readonly contradicts: number } | null
+  /** The claim's worktree parent label (claim-head nodes only). */
+  readonly parentLabel: string | null
   readonly onJump: (ts: string) => void
   readonly onConfirm: (confirm: EvidenceRetractConfirm) => void
   readonly onClose: () => void
@@ -178,6 +182,22 @@ function DetailPanel({ node, edge, onJump, onConfirm, onClose, t }: {
       </div>
       {edge !== null && (
         <p className={panelCss.ledgerDetail}><code className={panelCss.ledgerAction}>{edge.src} → {edge.dst}</code></p>
+      )}
+      {node.kind === 'claim' && (
+        <p className={panelCss.ledgerDetail}>
+          {node.status !== null && (
+            <span className={panelCss.actorBadge}>{t(`evidence.tag.${node.status}` as Parameters<ResearchT>[0])}</span>
+          )}
+          {claimCounts !== null && (
+            <span className={panelCss.actorBadge}>{t('evidence.claim.counts', { supports: claimCounts.supports, contradicts: claimCounts.contradicts })}</span>
+          )}
+          {node.ts !== '' && (
+            <span className={panelCss.actorBadge}>{t('evidence.graph.lastActivity', { at: node.ts.slice(0, 16) })}</span>
+          )}
+          {parentLabel !== null && (
+            <span className={panelCss.actorBadge}>{t('evidence.graph.parent', { label: parentLabel })}</span>
+          )}
+        </p>
       )}
       {edge?.retracted && (
         <p className={panelCss.ledgerDetail}>{t('evidence.retractedAt', { at: edge.retractedAt ?? '', reason: edge.retractReason ?? '' })}</p>
@@ -245,6 +265,17 @@ export function EvidenceGraphView({
   const selectedEdge = selectedNode === null || selectedNode.eventId === null || view === null
     ? null
     : view.graph.edges.find(edge => edge.sourceEventId === selectedNode.eventId) ?? null
+  // Claim-head enrichment: the fold's evidence mass + the worktree parent.
+  const selectedClaim = selectedNode?.kind === 'claim' && selectedNode.claimKey !== null && view !== null
+    ? view.graph.timeline.flatMap(group => group.claims).find(claim => claim.claimKey === selectedNode.claimKey)
+    : undefined
+  const selectedBandKey = selectedNode?.bandKey ?? null
+  const selectedLane = selectedBandKey !== null
+    ? worktree.view?.lanes.find(lane => lane.lineId === lineIdOfBandKey(selectedBandKey))
+    : undefined
+  const parentLane = selectedLane !== null && selectedLane !== undefined && selectedLane.parentLineId !== null
+    ? worktree.view?.lanes.find(lane => lane.lineId === selectedLane.parentLineId)
+    : undefined
 
   // Scroll-to-selection (§101): keep the selected node in view.
   useEffect(() => {
@@ -339,6 +370,8 @@ export function EvidenceGraphView({
             <DetailPanel
               node={selectedNode}
               edge={selectedEdge}
+              claimCounts={selectedClaim === undefined ? null : { supports: selectedClaim.supportsCount, contradicts: selectedClaim.contradictsCount }}
+              parentLabel={parentLane?.label ?? null}
               onJump={jumpToProvenance}
               onConfirm={confirm => { setConfirming(confirm); setSelectedId(null) }}
               onClose={() => { setSelectedId(null) }}
