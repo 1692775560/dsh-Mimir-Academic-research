@@ -209,6 +209,9 @@ export function EvidenceGraphView({
   const [confirming, setConfirming] = useState<EvidenceRetractConfirm | null>(null)
   const [reason, setReason] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // The audit list (conflicts + full claim/edge history) mounts on first
+  // open — it can be hundreds of rows, and no longer renders eagerly.
+  const [auditOpen, setAuditOpen] = useState(false)
   const view = evidence.view
 
   const layout = useMemo(
@@ -307,11 +310,16 @@ export function EvidenceGraphView({
             />
           )}
 
-          {/* Evidence audit: conflicts + the full claim/edge history. */}
-          <details className={css.graphAudit}>
+          {/* Evidence audit: conflicts + the full claim/edge history, mounted
+              only on first open (long ledgers stay cheap until asked). */}
+          <details
+            className={css.graphAudit}
+            open={auditOpen}
+            onToggle={event => { setAuditOpen(event.currentTarget.open) }}
+          >
             <summary className={panelCss.reportCardTitle}>{t('evidence.graph.auditTitle')}</summary>
 
-            {view.graph.conflicts.length > 0 && (
+            {auditOpen && view.graph.conflicts.length > 0 && (
               <>
                 <h4 className={panelCss.reportCardTitle}>{t('evidence.conflicts.title')}</h4>
                 <ul className={panelCss.ledgerList}>
@@ -336,12 +344,16 @@ export function EvidenceGraphView({
               </>
             )}
 
-            {view.graph.timeline.map(group => <TimelineGroupBlock key={group.key} group={group} onJump={jumpToProvenance} t={t} />)}
+            {auditOpen && view.graph.timeline.map(group => <TimelineGroupBlock key={group.key} group={group} onJump={jumpToProvenance} t={t} />)}
 
-            <h4 className={panelCss.reportCardTitle}>{t('evidence.edges.title')}</h4>
-            <ul className={panelCss.ledgerList}>
-              {view.graph.edges.map(edge => <EdgeRow key={edge.id} edge={edge} onConfirm={setConfirming} onJump={jumpToProvenance} t={t} />)}
-            </ul>
+            {auditOpen && (
+              <>
+                <h4 className={panelCss.reportCardTitle}>{t('evidence.edges.title')}</h4>
+                <ul className={panelCss.ledgerList}>
+                  {view.graph.edges.map(edge => <EdgeRow key={edge.id} edge={edge} onConfirm={setConfirming} onJump={jumpToProvenance} t={t} />)}
+                </ul>
+              </>
+            )}
           </details>
 
           {confirming !== null && (

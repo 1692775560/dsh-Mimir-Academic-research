@@ -24,6 +24,7 @@ import type {
   EvidenceTimelineEntry,
   EvidenceTimelineGroup,
 } from 'dsh-mimir/types'
+import { lineHueOf } from './line-hue.ts'
 
 /**
  * The minimal fold-product shape the layout consumes. `dsh-mimir/types` does
@@ -83,7 +84,7 @@ export const EVIDENCE_GRAPH_LAYOUT_DEFAULTS = Object.freeze({
 })
 
 /** The line palette size (bands cycle it; color continuity per line). */
-export const LINE_HUES = 6
+export { LINE_HUES } from './line-hue.ts'
 
 /** The canvas kinds of one positioned node. */
 export type EvidenceNodeKind = 'event' | 'retract' | 'claim' | 'eureka' | 'source'
@@ -314,14 +315,14 @@ export function deriveEvidenceGraphLayout(
   const claimByKey = new Map<string, EvidenceClaimHistory>()
   const beadDrafts: BeadDraft[] = []
   let bandY = topPad
-  ordered.forEach(({ group }, bandIndex) => {
+  ordered.forEach(({ group }) => {
     const claims = claimsOf(group)
     const bandTop = bandY
     const band: EvidenceBandLayout = {
       key: group.key,
       kind: group.kind,
       label: group.label,
-      hue: bandIndex % LINE_HUES,
+      hue: lineHueOf(group.key),
       y: bandTop,
       height: bandHeader + claims.length * lane,
       claimKeys: Object.freeze(claims.map(claim => claim.claimKey)),
@@ -366,7 +367,7 @@ export function deriveEvidenceGraphLayout(
       key: EUREKA_FALLBACK_BAND,
       kind: 'project',
       label: null,
-      hue: ordered.length % LINE_HUES,
+      hue: lineHueOf(EUREKA_FALLBACK_BAND),
       y: bandY,
       height: bandHeader,
       claimKeys: Object.freeze([]),
