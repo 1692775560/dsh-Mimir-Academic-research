@@ -4102,8 +4102,16 @@ li.dropIndicator {
   border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
   border-radius: 999px;
   background: var(--dsw-specific-menu, #ffffff);
+  font-family: inherit;
   font-size: 12px;
   color: var(--dsw-alias-label-secondary, #3c4557);
+  cursor: pointer;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.briefLineChip[data-focused] {
+  border-color: var(--mimir-evidence-lane-0, #4176e6);
+  box-shadow: 0 0 0 2px var(--dsw-alias-state-business-tertiary, rgb(65 118 230 / 15%));
 }
 
 .briefLineLabel {

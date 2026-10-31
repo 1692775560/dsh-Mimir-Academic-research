@@ -27,7 +27,7 @@ import {
   retractConfirmOf,
   type EvidenceRetractConfirm,
 } from './evidence-graph-view.ts'
-import { bandKeyOfLine, deriveEvidenceGraphLayout, type EvidenceNodeLayout } from './evidence-graph-layout.ts'
+import { bandKeyOfLine, deriveEvidenceGraphLayout, lineIdOfBandKey, type EvidenceNodeLayout } from './evidence-graph-layout.ts'
 import { EvidenceGraphCanvas } from './EvidenceGraphCanvas.tsx'
 import css from './EvidenceGraph.module.css'
 import panelCss from './ResearchPanel.module.css'
@@ -197,11 +197,14 @@ function DetailPanel({ node, edge, onJump, onConfirm, onClose, t }: {
  * below as a collapsible disclosure.
  */
 export function EvidenceGraphView({
-  evidence, eureka, worktree, refreshEvidenceGraph, retractEvidence, jumpToProvenance, t,
+  evidence, eureka, worktree, focusedLine, onFocusLine, refreshEvidenceGraph, retractEvidence, jumpToProvenance, t,
 }: {
   readonly evidence: ResearchEvidenceGraphSlice
   readonly eureka: ResearchEurekaSlice
   readonly worktree: ResearchWorktreeSlice
+  /** The cross-card focused research line (raw id or project:<id>), or null. */
+  readonly focusedLine: string | null
+  readonly onFocusLine: (lineId: string | null) => void
   readonly refreshEvidenceGraph: () => void
   readonly retractEvidence: (dedupKey: string, reason?: string | undefined) => Promise<unknown>
   readonly jumpToProvenance: (ts: string) => void
@@ -213,8 +216,8 @@ export function EvidenceGraphView({
   // The audit list (conflicts + full claim/edge history) mounts on first
   // open — it can be hundreds of rows, and no longer renders eagerly.
   const [auditOpen, setAuditOpen] = useState(false)
-  // Focus mode (§47): one research line stays bright, the rest dims.
-  const [focusedBandKey, setFocusedBandKey] = useState<string | null>(null)
+  // Focus mode (§47): the shared focused line maps onto its band key.
+  const focusedBandKey = focusedLine === null ? null : bandKeyOfLine(focusedLine)
   const viewportRef = useRef<HTMLDivElement>(null)
   const view = evidence.view
 
@@ -313,7 +316,7 @@ export function EvidenceGraphView({
               <div className={css.graphHeaderRow}>
                 <p className={css.graphLegend}>{t('evidence.graph.legend')}</p>
                 {focusedBandKey !== null && (
-                  <button type="button" className={panelCss.retry} onClick={() => { setFocusedBandKey(null) }}>
+                  <button type="button" className={panelCss.retry} onClick={() => { onFocusLine(null) }}>
                     {t('evidence.graph.showAll')}
                   </button>
                 )}
@@ -324,7 +327,7 @@ export function EvidenceGraphView({
                   selectedId={selectedId}
                   focusedBandKey={focusedBandKey}
                   onSelect={setSelectedId}
-                  onFocusBand={key => { setFocusedBandKey(prev => (prev === key ? null : key)) }}
+                  onFocusBand={key => { const line = lineIdOfBandKey(key); onFocusLine(focusedLine === line ? null : line) }}
                   t={t}
                   conflictLinesByClaim={conflictLines}
                 />

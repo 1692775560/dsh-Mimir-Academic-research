@@ -215,6 +215,12 @@ export function bandKeyOfLine(lineId: string | null): string {
   return `idea:${lineId}`
 }
 
+/** The inverse of {@link bandKeyOfLine}: band key → the worktree's raw line id. */
+export function lineIdOfBandKey(bandKey: string): string {
+  if (bandKey.startsWith('idea:')) return bandKey.slice('idea:'.length)
+  return bandKey
+}
+
 /** The relation color class of one timeline entry. */
 function relClassOf(entry: EvidenceTimelineEntry): EvidenceRelClass {
   if (entry.rel === RETRACT_REL) return 'retract'

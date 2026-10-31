@@ -152,6 +152,9 @@ export function LedgerView({
   // must stay reachable inside this component.
   const [ledgerWindow, setWindow] = useState<LedgerWindow>('7d')
   const [scope, setScope] = useState<LedgerScope>('all')
+  // The cross-card focused research line (raw idea id or project:<id>): the
+  // cognitive brief's state strip and the evidence graph's bands share it.
+  const [focusedLine, setFocusedLine] = useState<string | null>(null)
   const [copyState, setCopyState] = useState<'idle' | 'copied' | 'failed'>('idle')
   const copyTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -314,6 +317,8 @@ export function LedgerView({
         evidence={evidence}
         eureka={eureka}
         worktree={worktree}
+        focusedLine={focusedLine}
+        onFocusLine={setFocusedLine}
         refreshEvidenceGraph={refreshEvidenceGraph}
         retractEvidence={retractEvidence}
         jumpToProvenance={ts => { loadLedger(provenanceFilter(ts)) }}
@@ -387,6 +392,8 @@ export function LedgerView({
         brief={brief}
         briefWindow={ledgerWindow}
         scopedProjectId={scopedProjectId}
+        focusedLine={focusedLine}
+        onFocusLine={setFocusedLine}
         generateBrief={generateBrief}
         addJournal={addJournal}
         refreshLedger={refresh}

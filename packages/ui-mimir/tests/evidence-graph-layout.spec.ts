@@ -16,9 +16,11 @@ import type {
   EvidenceTimelineGroup,
 } from 'dsh-mimir/types'
 import {
+  bandKeyOfLine,
   clipLabel,
   deriveEvidenceGraphLayout,
   EUREKA_FALLBACK_BAND,
+  lineIdOfBandKey,
   type EvidenceGraphLayoutInput,
 } from '../src/client/evidence-graph-layout.ts'
 
@@ -283,6 +285,12 @@ describe('deriveEvidenceGraphLayout', () => {
     expect(byId.get('e2')).toBe('idea:2')
     expect(byId.get('head:claim:c1')).toBe('idea:1')
     expect(byId.get('head:claim:c2')).toBe('idea:2')
+  })
+
+  it('bandKeyOfLine and lineIdOfBandKey round-trip the cross-card line id', () => {
+    expect(bandKeyOfLine('abc')).toBe('idea:abc')
+    expect(lineIdOfBandKey(bandKeyOfLine('abc'))).toBe('abc')
+    expect(lineIdOfBandKey(bandKeyOfLine('project:9'))).toBe('project:9')
   })
 
   it('carries declared line state and idle days onto the band', () => {
