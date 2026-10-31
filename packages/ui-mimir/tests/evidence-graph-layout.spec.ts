@@ -273,6 +273,18 @@ describe('deriveEvidenceGraphLayout', () => {
     expect(again.ticks).toEqual(layout.ticks)
   })
 
+  it('tags every node with its band key (focus membership)', () => {
+    const layout = deriveEvidenceGraphLayout(graph({ timeline: [
+      group({ key: 'idea:1', claims: [claim({ claimKey: 'claim:c1', history: [entry({ sourceEventId: 'e1', ts: '2026-09-01T10:00:00.000Z' })] })] }),
+      group({ key: 'idea:2', claims: [claim({ claimKey: 'claim:c2', history: [entry({ sourceEventId: 'e2', ts: '2026-09-02T10:00:00.000Z' })] })] }),
+    ] }))
+    const byId = new Map(layout.nodes.map(node => [node.id, node.bandKey]))
+    expect(byId.get('e1')).toBe('idea:1')
+    expect(byId.get('e2')).toBe('idea:2')
+    expect(byId.get('head:claim:c1')).toBe('idea:1')
+    expect(byId.get('head:claim:c2')).toBe('idea:2')
+  })
+
   it('carries declared line state and idle days onto the band', () => {
     const timeline = [group({ key: 'idea:1', claims: [
       claim({ claimKey: 'claim:c1', history: [entry({ sourceEventId: 'e1', ts: '2026-09-01T10:00:00.000Z' })] }),

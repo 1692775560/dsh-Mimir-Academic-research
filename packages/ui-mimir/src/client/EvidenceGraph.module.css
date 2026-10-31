@@ -55,6 +55,36 @@
   pointer-events: none;
 }
 
+/* Focus mode (§47): the focused research line stays bright, the rest dims. */
+.evidenceBandHead {
+  cursor: pointer;
+}
+
+.evidenceBandHeadHit {
+  fill: transparent;
+}
+
+.evidenceNode[data-dimmed] {
+  opacity: 0.22;
+  transition: opacity 0.15s ease;
+}
+
+.evidenceBandHead[data-dimmed] {
+  opacity: 0.35;
+}
+
+.evidenceRailGroup[data-dimmed] .evidenceRail {
+  opacity: 0.12;
+}
+
+.evidenceRailGroup[data-dimmed] .evidenceRailLabel {
+  opacity: 0.3;
+}
+
+.evidenceLinkGroup[data-dimmed] {
+  opacity: 0.15;
+}
+
 .evidenceBandStatus[data-status='failed'] { fill: var(--mimir-evidence-status-invalidated, #d64545); }
 .evidenceBandStatus[data-status='adopted'] { fill: var(--mimir-evidence-status-supported, #2f9e63); }
 

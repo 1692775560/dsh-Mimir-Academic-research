@@ -182,6 +182,36 @@ describe('EvidenceGraphCanvas unattributed Eureka band', () => {
   })
 })
 
+describe('EvidenceGraphCanvas focus mode (§47)', () => {
+  const TWO_BANDS = graph({
+    timeline: [
+      group({ key: 'idea:1', claims: [claim({ claimKey: 'claim:c1', history: [entry({ sourceEventId: 'e1', ts: '2026-09-01T10:00:00.000Z' })] })] }),
+      group({ key: 'idea:2', claims: [claim({ claimKey: 'claim:c2', history: [entry({ sourceEventId: 'e2', ts: '2026-09-02T10:00:00.000Z' })] })] }),
+    ],
+  })
+
+  it('dims everything outside the focused band and never dims without focus', () => {
+    const layout = deriveEvidenceGraphLayout(TWO_BANDS)
+    const focused = renderToString(
+      <EvidenceGraphCanvas layout={layout} selectedId={null} focusedBandKey="idea:1" onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />,
+    )
+    expect(focused).toContain('data-dimmed="true"')
+
+    const plain = renderToString(
+      <EvidenceGraphCanvas layout={layout} selectedId={null} focusedBandKey={null} onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />,
+    )
+    expect(plain).not.toContain('data-dimmed="true"')
+  })
+
+  it('renders a clickable band header hit target', () => {
+    const layout = deriveEvidenceGraphLayout(TWO_BANDS)
+    const html = renderToString(
+      <EvidenceGraphCanvas layout={layout} selectedId={null} focusedBandKey={null} onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />,
+    )
+    expect(html).toContain('evidenceBandHeadHit')
+  })
+})
+
 describe('EvidenceGraphCanvas declared line-state glyphs', () => {
   it('renders ✗ for a failed line and ✓ for an adopted one, none for open', () => {
     const failed = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'failed', idleDays: null }]]) })

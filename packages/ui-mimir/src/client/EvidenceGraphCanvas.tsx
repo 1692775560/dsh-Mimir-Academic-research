@@ -15,7 +15,7 @@ import type {
   EvidenceNodeLayout,
   EvidenceRailLayout,
 } from './evidence-graph-layout.ts'
-import { clipLabel, EUREKA_FALLBACK_BAND } from './evidence-graph-layout.ts'
+import { clipLabel, EVIDENCE_GRAPH_LAYOUT_DEFAULTS, EUREKA_FALLBACK_BAND } from './evidence-graph-layout.ts'
 import type { ResearchKey } from './locales.ts'
 import type { ResearchT } from './view-common.ts'
 import css from './EvidenceGraph.module.css'
@@ -30,9 +30,10 @@ function RelationGlyph({ relClass }: { readonly relClass: string | null }) {
 }
 
 /** One circular node + its semantic treatment (§7.2/§21/§22/§79). */
-function EvidenceNode({ node, selected, tabIndex, onSelect, onNavigate, registerRef, t, conflictDetail }: {
+function EvidenceNode({ node, selected, dimmed, tabIndex, onSelect, onNavigate, registerRef, t, conflictDetail }: {
   readonly node: EvidenceNodeLayout
   readonly selected: boolean
+  readonly dimmed: boolean
   readonly tabIndex: number
   readonly onSelect: (id: string) => void
   readonly onNavigate: (delta: number) => void
@@ -56,6 +57,7 @@ function EvidenceNode({ node, selected, tabIndex, onSelect, onNavigate, register
       className={css.evidenceNode}
       data-kind={node.kind}
       data-lane={node.hue}
+      data-dimmed={dimmed || undefined}
       role="button"
       tabIndex={tabIndex}
       aria-label={accessibleLabel}
@@ -118,9 +120,10 @@ function EvidenceNode({ node, selected, tabIndex, onSelect, onNavigate, register
  *  visible stroke never takes pointer events; a transparent fat sibling
  *  carries them (§99), and a click selects the link's target event node —
  *  the detail card then tells the whole edge story. */
-function EvidenceLink({ link, selected, onSelect, t }: {
+function EvidenceLink({ link, selected, dimmed, onSelect, t }: {
   readonly link: EvidenceLinkLayout
   readonly selected: boolean
+  readonly dimmed: boolean
   readonly onSelect: (id: string) => void
   readonly t: ResearchT
 }) {
@@ -129,6 +132,7 @@ function EvidenceLink({ link, selected, onSelect, t }: {
     <g
       className={css.evidenceLinkGroup}
       data-selected={selected || undefined}
+      data-dimmed={dimmed || undefined}
       onClick={() => { onSelect(link.toId) }}
     >
       <title>{label}</title>
@@ -143,15 +147,28 @@ function EvidenceLink({ link, selected, onSelect, t }: {
  * deterministic layout. The component is presentational — selection and
  * copy are the only interaction surface.
  */
-export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictLinesByClaim }: {
+export function EvidenceGraphCanvas({ layout, selectedId, focusedBandKey, onSelect, onFocusBand, t, conflictLinesByClaim }: {
   readonly layout: EvidenceGraphLayout
   readonly selectedId: string | null
+  /** The focused research-line band (focus mode): everything else dims. */
+  readonly focusedBandKey: string | null
   readonly onSelect: (id: string) => void
+  /** Clicking a band header focuses/unfocuses that line. */
+  readonly onFocusBand: (bandKey: string) => void
   readonly t: ResearchT
   /** Per-claim conflict-pair detail lines for conflicted heads' hover titles. */
   readonly conflictLinesByClaim?: ReadonlyMap<string, readonly string[]> | undefined
 }) {
   const tickHeight = layout.height - 8
+
+  // Focus membership: claim → band, node id → band. Used to dim everything
+  // outside the focused line (Focus mode, §47).
+  const bandByClaim = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const band of layout.bands) for (const claimKey of band.claimKeys) map.set(claimKey, band.key)
+    return map
+  }, [layout])
+  const bandByNode = useMemo(() => new Map(layout.nodes.map(node => [node.id, node.bandKey] as const)), [layout])
 
   // Roving tabindex (§51/§102): exactly one node enters the Tab order; the
   // arrow keys move the roving stop through the nodes in reading order
@@ -196,13 +213,23 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
         </g>
       ))}
 
-      {/* Band labels + terminal state glyphs + rails (lane guides). */}
+      {/* Band headers: label + terminal state glyph — clickable to focus that
+          research line (Focus mode, §47). */}
       {layout.bands.map(band => {
         const label = band.label ?? (band.key === EUREKA_FALLBACK_BAND ? t('evidence.graph.unattributed') : band.key)
         const terminal = band.status === 'failed' || band.status === 'adopted'
         const tip = band.idleDays !== null ? `${label} · ${t('evidence.graph.idle', { days: String(band.idleDays) })}` : label
+        const focused = band.key === focusedBandKey
         return (
-          <g key={band.key}>
+          <g
+            key={band.key}
+            className={css.evidenceBandHead}
+            data-dimmed={focusedBandKey !== null && !focused || undefined}
+            role="button"
+            tabIndex={-1}
+            onClick={() => { onFocusBand(band.key) }}
+          >
+            <rect className={css.evidenceBandHeadHit} x={0} y={band.y} width={EVIDENCE_GRAPH_LAYOUT_DEFAULTS.plotLeft} height={EVIDENCE_GRAPH_LAYOUT_DEFAULTS.bandHeader} />
             {terminal && (
               <text className={css.evidenceBandStatus} data-status={band.status} x={14} y={band.y + 22}>
                 {band.status === 'failed' ? '✗' : '✓'}
@@ -215,7 +242,13 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
           </g>
         )
       })}
-      {layout.rails.map(rail => <RailLine key={rail.claimKey} rail={rail} />)}
+      {layout.rails.map(rail => (
+        <RailLine
+          key={rail.claimKey}
+          rail={rail}
+          dimmed={focusedBandKey !== null && bandByClaim.get(rail.claimKey) !== focusedBandKey}
+        />
+      ))}
 
       {/* Links: subdued (retract/conflict) before normal (inflow/external). */}
       {layout.links.filter(link => link.kind === 'retract' || link.kind === 'conflict').map(link => (
@@ -223,6 +256,7 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
           key={`${link.kind}-${link.fromId}-${link.toId}`}
           link={link}
           selected={selectedId === link.toId || selectedId === link.fromId}
+          dimmed={focusedBandKey !== null && bandByNode.get(link.fromId) !== focusedBandKey && bandByNode.get(link.toId) !== focusedBandKey}
           onSelect={onSelect}
           t={t}
         />
@@ -232,6 +266,7 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
           key={`${link.kind}-${link.fromId}-${link.toId}`}
           link={link}
           selected={selectedId === link.toId || selectedId === link.fromId}
+          dimmed={focusedBandKey !== null && bandByNode.get(link.fromId) !== focusedBandKey && bandByNode.get(link.toId) !== focusedBandKey}
           onSelect={onSelect}
           t={t}
         />
@@ -243,6 +278,7 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
           key={node.id}
           node={node}
           selected={node.id === selectedId}
+          dimmed={focusedBandKey !== null && node.bandKey !== focusedBandKey}
           tabIndex={node.id === tabbableId ? 0 : -1}
           onSelect={onSelect}
           onNavigate={delta => { navigate(node.id, delta) }}
@@ -258,9 +294,9 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
 }
 
 /** One claim rail: the horizontal branch guide + its label. */
-function RailLine({ rail }: { readonly rail: EvidenceRailLayout }) {
+function RailLine({ rail, dimmed }: { readonly rail: EvidenceRailLayout; readonly dimmed: boolean }) {
   return (
-    <g>
+    <g className={css.evidenceRailGroup} data-dimmed={dimmed || undefined}>
       <text className={css.evidenceRailLabel} x={34} y={rail.y + 4}>
         {clipLabel(rail.label, 26)}
       </text>

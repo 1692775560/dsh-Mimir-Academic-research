@@ -105,6 +105,8 @@ export interface EvidenceNodeLayout {
   readonly r: number
   /** The research-line hue index (structure color). */
   readonly hue: number
+  /** The research-line band key this node renders in (null only if un-attributed). */
+  readonly bandKey: string | null
   /** The claim key whose rail carries the node (null on eureka/source nodes). */
   readonly claimKey: string | null
   readonly ts: string
@@ -465,6 +467,7 @@ export function deriveEvidenceGraphLayout(
       y: bead.y,
       r,
       hue: band?.hue ?? 0,
+      bandKey: band?.key ?? null,
       claimKey: bead.claimKey,
       ts: bead.entry.ts,
       label: `${bead.entry.ts.slice(0, 16)} · ${bead.entry.rel} · ${ACTOR_OF(bead.entry.actor)}${bead.entry.note !== null ? ` · ${bead.entry.note}` : ''}`,
@@ -493,6 +496,7 @@ export function deriveEvidenceGraphLayout(
       y: rail.y,
       r: EVIDENCE_GRAPH_LAYOUT_DEFAULTS.nodeMilestoneRadius,
       hue: rail.hue,
+      bandKey: bandByClaim.get(claimKey)?.key ?? null,
       claimKey,
       ts: lastTsByClaim.get(claimKey) ?? '',
       label: rail.label,
@@ -521,6 +525,7 @@ export function deriveEvidenceGraphLayout(
       y: headerYOf(bandKey),
       r: EVIDENCE_GRAPH_LAYOUT_DEFAULTS.nodeEurekaRadius,
       hue: band?.hue ?? 0,
+      bandKey,
       claimKey: null,
       ts: point.at,
       label: point.title,
@@ -569,6 +574,7 @@ export function deriveEvidenceGraphLayout(
         y: origin.y,
         r: 4,
         hue: node.hue,
+        bandKey: node.bandKey,
         claimKey: null,
         ts: edge.ts,
         label: edge.src,

@@ -10,7 +10,7 @@
  * @module dsh-client-ui-mimir/client/EvidenceGraphView
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   EvidenceClaimHistory,
   EvidenceGraphEdge,
@@ -213,6 +213,9 @@ export function EvidenceGraphView({
   // The audit list (conflicts + full claim/edge history) mounts on first
   // open — it can be hundreds of rows, and no longer renders eagerly.
   const [auditOpen, setAuditOpen] = useState(false)
+  // Focus mode (§47): one research line stays bright, the rest dims.
+  const [focusedBandKey, setFocusedBandKey] = useState<string | null>(null)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const view = evidence.view
 
   const lineStates = useMemo(() => {
@@ -239,6 +242,16 @@ export function EvidenceGraphView({
   const selectedEdge = selectedNode === null || selectedNode.eventId === null || view === null
     ? null
     : view.graph.edges.find(edge => edge.sourceEventId === selectedNode.eventId) ?? null
+
+  // Scroll-to-selection (§101): keep the selected node in view.
+  useEffect(() => {
+    if (selectedId === null || layout === null || viewportRef.current === null) return
+    const node = layout.nodes.find(item => item.id === selectedId)
+    if (node === undefined) return
+    const viewport = viewportRef.current
+    viewport.scrollTop = Math.max(0, node.y - viewport.clientHeight / 2)
+    viewport.scrollLeft = Math.max(0, node.x - viewport.clientWidth / 2)
+  }, [selectedId, layout])
 
   const onConfirmRetract = async (): Promise<void> => {
     if (confirming === null) return
@@ -297,12 +310,21 @@ export function EvidenceGraphView({
             <p className={panelCss.hint}>{t('evidence.empty')}</p>
           ) : (
             <>
-              <p className={css.graphLegend}>{t('evidence.graph.legend')}</p>
-              <div className={css.graphViewport}>
+              <div className={css.graphHeaderRow}>
+                <p className={css.graphLegend}>{t('evidence.graph.legend')}</p>
+                {focusedBandKey !== null && (
+                  <button type="button" className={panelCss.retry} onClick={() => { setFocusedBandKey(null) }}>
+                    {t('evidence.graph.showAll')}
+                  </button>
+                )}
+              </div>
+              <div className={css.graphViewport} ref={viewportRef}>
                 <EvidenceGraphCanvas
                   layout={layout}
                   selectedId={selectedId}
+                  focusedBandKey={focusedBandKey}
                   onSelect={setSelectedId}
+                  onFocusBand={key => { setFocusedBandKey(prev => (prev === key ? null : key)) }}
                   t={t}
                   conflictLinesByClaim={conflictLines}
                 />
