@@ -10,7 +10,7 @@
  * @module dsh-client-ui-mimir/client/EvidenceGraphView
  */
 
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type {
   EvidenceClaimHistory,
   EvidenceGraphEdge,
@@ -18,7 +18,7 @@ import type {
   EvidenceTimelineEntry,
   EvidenceTimelineGroup,
 } from 'dsh-mimir/types'
-import type { ResearchEvidenceGraphSlice, ResearchEurekaSlice } from './controller.ts'
+import type { ResearchEvidenceGraphSlice, ResearchEurekaSlice, ResearchWorktreeSlice } from './controller.ts'
 import type { ResearchT } from './view-common.ts'
 import {
   conflictLinesByClaim,
@@ -27,7 +27,7 @@ import {
   retractConfirmOf,
   type EvidenceRetractConfirm,
 } from './evidence-graph-view.ts'
-import { deriveEvidenceGraphLayout, type EvidenceNodeLayout } from './evidence-graph-layout.ts'
+import { bandKeyOfLine, deriveEvidenceGraphLayout, lineIdOfBandKey, type EvidenceNodeLayout } from './evidence-graph-layout.ts'
 import { EvidenceGraphCanvas } from './EvidenceGraphCanvas.tsx'
 import css from './EvidenceGraph.module.css'
 import panelCss from './ResearchPanel.module.css'
@@ -154,9 +154,13 @@ function EdgeRow({ edge, onConfirm, onJump, t }: {
 }
 
 /** The selection detail panel (progressive disclosure, PRD §53). */
-function DetailPanel({ node, edge, onJump, onConfirm, onClose, t }: {
+function DetailPanel({ node, edge, claimCounts, parentLabel, onJump, onConfirm, onClose, t }: {
   readonly node: EvidenceNodeLayout
   readonly edge: EvidenceGraphEdge | null
+  /** The claim's evidence mass (claim-head nodes only). */
+  readonly claimCounts: { readonly supports: number; readonly contradicts: number } | null
+  /** The claim's worktree parent label (claim-head nodes only). */
+  readonly parentLabel: string | null
   readonly onJump: (ts: string) => void
   readonly onConfirm: (confirm: EvidenceRetractConfirm) => void
   readonly onClose: () => void
@@ -179,6 +183,22 @@ function DetailPanel({ node, edge, onJump, onConfirm, onClose, t }: {
       {edge !== null && (
         <p className={panelCss.ledgerDetail}><code className={panelCss.ledgerAction}>{edge.src} → {edge.dst}</code></p>
       )}
+      {node.kind === 'claim' && (
+        <p className={panelCss.ledgerDetail}>
+          {node.status !== null && (
+            <span className={panelCss.actorBadge}>{t(`evidence.tag.${node.status}` as Parameters<ResearchT>[0])}</span>
+          )}
+          {claimCounts !== null && (
+            <span className={panelCss.actorBadge}>{t('evidence.claim.counts', { supports: claimCounts.supports, contradicts: claimCounts.contradicts })}</span>
+          )}
+          {node.ts !== '' && (
+            <span className={panelCss.actorBadge}>{t('evidence.graph.lastActivity', { at: node.ts.slice(0, 16) })}</span>
+          )}
+          {parentLabel !== null && (
+            <span className={panelCss.actorBadge}>{t('evidence.graph.parent', { label: parentLabel })}</span>
+          )}
+        </p>
+      )}
       {edge?.retracted && (
         <p className={panelCss.ledgerDetail}>{t('evidence.retractedAt', { at: edge.retractedAt ?? '', reason: edge.retractReason ?? '' })}</p>
       )}
@@ -197,10 +217,14 @@ function DetailPanel({ node, edge, onJump, onConfirm, onClose, t }: {
  * below as a collapsible disclosure.
  */
 export function EvidenceGraphView({
-  evidence, eureka, refreshEvidenceGraph, retractEvidence, jumpToProvenance, t,
+  evidence, eureka, worktree, focusedLine, onFocusLine, refreshEvidenceGraph, retractEvidence, jumpToProvenance, t,
 }: {
   readonly evidence: ResearchEvidenceGraphSlice
   readonly eureka: ResearchEurekaSlice
+  readonly worktree: ResearchWorktreeSlice
+  /** The cross-card focused research line (raw id or project:<id>), or null. */
+  readonly focusedLine: string | null
+  readonly onFocusLine: (lineId: string | null) => void
   readonly refreshEvidenceGraph: () => void
   readonly retractEvidence: (dedupKey: string, reason?: string | undefined) => Promise<unknown>
   readonly jumpToProvenance: (ts: string) => void
@@ -209,13 +233,29 @@ export function EvidenceGraphView({
   const [confirming, setConfirming] = useState<EvidenceRetractConfirm | null>(null)
   const [reason, setReason] = useState('')
   const [selectedId, setSelectedId] = useState<string | null>(null)
+  // The audit list (conflicts + full claim/edge history) mounts on first
+  // open — it can be hundreds of rows, and no longer renders eagerly.
+  const [auditOpen, setAuditOpen] = useState(false)
+  // Focus mode (§47): the shared focused line maps onto its band key.
+  const focusedBandKey = focusedLine === null ? null : bandKeyOfLine(focusedLine)
+  const viewportRef = useRef<HTMLDivElement>(null)
   const view = evidence.view
+
+  const lineStates = useMemo(() => {
+    const lanes = worktree.view?.lanes ?? []
+    const map = new Map<string, { readonly status: 'open' | 'failed' | 'adopted'; readonly idleDays: number | null }>()
+    for (const lane of lanes) map.set(bandKeyOfLine(lane.lineId), { status: lane.status, idleDays: lane.idleDays })
+    return map
+  }, [worktree.view])
 
   const layout = useMemo(
     () => (view === null
       ? null
-      : deriveEvidenceGraphLayout(view.graph, { eurekaDeclarations: eureka.view?.declarations ?? [] })),
-    [view, eureka.view],
+      : deriveEvidenceGraphLayout(view.graph, {
+        eurekaDeclarations: eureka.view?.declarations ?? [],
+        lineStates,
+      })),
+    [view, eureka.view, lineStates],
   )
   const conflictLines = useMemo(
     () => (view === null ? undefined : conflictLinesByClaim(view.graph.conflicts, t)),
@@ -225,6 +265,27 @@ export function EvidenceGraphView({
   const selectedEdge = selectedNode === null || selectedNode.eventId === null || view === null
     ? null
     : view.graph.edges.find(edge => edge.sourceEventId === selectedNode.eventId) ?? null
+  // Claim-head enrichment: the fold's evidence mass + the worktree parent.
+  const selectedClaim = selectedNode?.kind === 'claim' && selectedNode.claimKey !== null && view !== null
+    ? view.graph.timeline.flatMap(group => group.claims).find(claim => claim.claimKey === selectedNode.claimKey)
+    : undefined
+  const selectedBandKey = selectedNode?.bandKey ?? null
+  const selectedLane = selectedBandKey !== null
+    ? worktree.view?.lanes.find(lane => lane.lineId === lineIdOfBandKey(selectedBandKey))
+    : undefined
+  const parentLane = selectedLane !== null && selectedLane !== undefined && selectedLane.parentLineId !== null
+    ? worktree.view?.lanes.find(lane => lane.lineId === selectedLane.parentLineId)
+    : undefined
+
+  // Scroll-to-selection (§101): keep the selected node in view.
+  useEffect(() => {
+    if (selectedId === null || layout === null || viewportRef.current === null) return
+    const node = layout.nodes.find(item => item.id === selectedId)
+    if (node === undefined) return
+    const viewport = viewportRef.current
+    viewport.scrollTop = Math.max(0, node.y - viewport.clientHeight / 2)
+    viewport.scrollLeft = Math.max(0, node.x - viewport.clientWidth / 2)
+  }, [selectedId, layout])
 
   const onConfirmRetract = async (): Promise<void> => {
     if (confirming === null) return
@@ -282,21 +343,35 @@ export function EvidenceGraphView({
           {view.graph.timeline.length === 0 ? (
             <p className={panelCss.hint}>{t('evidence.empty')}</p>
           ) : (
-            <div className={css.graphViewport}>
-              <EvidenceGraphCanvas
-                layout={layout}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                t={t}
-                conflictLinesByClaim={conflictLines}
-              />
-            </div>
+            <>
+              <div className={css.graphHeaderRow}>
+                <p className={css.graphLegend}>{t('evidence.graph.legend')}</p>
+                {focusedBandKey !== null && (
+                  <button type="button" className={panelCss.retry} onClick={() => { onFocusLine(null) }}>
+                    {t('evidence.graph.showAll')}
+                  </button>
+                )}
+              </div>
+              <div className={css.graphViewport} ref={viewportRef}>
+                <EvidenceGraphCanvas
+                  layout={layout}
+                  selectedId={selectedId}
+                  focusedBandKey={focusedBandKey}
+                  onSelect={setSelectedId}
+                  onFocusBand={key => { const line = lineIdOfBandKey(key); onFocusLine(focusedLine === line ? null : line) }}
+                  t={t}
+                  conflictLinesByClaim={conflictLines}
+                />
+              </div>
+            </>
           )}
 
           {selectedNode !== null && (
             <DetailPanel
               node={selectedNode}
               edge={selectedEdge}
+              claimCounts={selectedClaim === undefined ? null : { supports: selectedClaim.supportsCount, contradicts: selectedClaim.contradictsCount }}
+              parentLabel={parentLane?.label ?? null}
               onJump={jumpToProvenance}
               onConfirm={confirm => { setConfirming(confirm); setSelectedId(null) }}
               onClose={() => { setSelectedId(null) }}
@@ -304,11 +379,16 @@ export function EvidenceGraphView({
             />
           )}
 
-          {/* Evidence audit: conflicts + the full claim/edge history. */}
-          <details className={css.graphAudit}>
+          {/* Evidence audit: conflicts + the full claim/edge history, mounted
+              only on first open (long ledgers stay cheap until asked). */}
+          <details
+            className={css.graphAudit}
+            open={auditOpen}
+            onToggle={event => { setAuditOpen(event.currentTarget.open) }}
+          >
             <summary className={panelCss.reportCardTitle}>{t('evidence.graph.auditTitle')}</summary>
 
-            {view.graph.conflicts.length > 0 && (
+            {auditOpen && view.graph.conflicts.length > 0 && (
               <>
                 <h4 className={panelCss.reportCardTitle}>{t('evidence.conflicts.title')}</h4>
                 <ul className={panelCss.ledgerList}>
@@ -333,12 +413,16 @@ export function EvidenceGraphView({
               </>
             )}
 
-            {view.graph.timeline.map(group => <TimelineGroupBlock key={group.key} group={group} onJump={jumpToProvenance} t={t} />)}
+            {auditOpen && view.graph.timeline.map(group => <TimelineGroupBlock key={group.key} group={group} onJump={jumpToProvenance} t={t} />)}
 
-            <h4 className={panelCss.reportCardTitle}>{t('evidence.edges.title')}</h4>
-            <ul className={panelCss.ledgerList}>
-              {view.graph.edges.map(edge => <EdgeRow key={edge.id} edge={edge} onConfirm={setConfirming} onJump={jumpToProvenance} t={t} />)}
-            </ul>
+            {auditOpen && (
+              <>
+                <h4 className={panelCss.reportCardTitle}>{t('evidence.edges.title')}</h4>
+                <ul className={panelCss.ledgerList}>
+                  {view.graph.edges.map(edge => <EdgeRow key={edge.id} edge={edge} onConfirm={setConfirming} onJump={jumpToProvenance} t={t} />)}
+                </ul>
+              </>
+            )}
           </details>
 
           {confirming !== null && (
