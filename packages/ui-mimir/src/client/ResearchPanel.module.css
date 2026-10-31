@@ -4085,6 +4085,53 @@ li.dropIndicator {
   font-variant-numeric: tabular-nums;
 }
 
+/* The research-line state strip (brief): re-derivable momentum chips. */
+.briefLineStrip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 10px;
+}
+
+.briefLineChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 3px 10px;
+  border: 1px solid var(--dsw-alias-border-l2, rgb(0 0 0 / 10%));
+  border-radius: 999px;
+  background: var(--dsw-specific-menu, #ffffff);
+  font-size: 12px;
+  color: var(--dsw-alias-label-secondary, #3c4557);
+}
+
+.briefLineLabel {
+  overflow: hidden;
+  max-width: 280px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.briefLineState {
+  font-weight: 600;
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #5b6474);
+}
+
+.briefLineChip[data-state='dominant'] .briefLineState { color: var(--mimir-evidence-lane-0, #4176e6); }
+.briefLineChip[data-state='stalled'] .briefLineState { color: var(--mimir-evidence-status-pending, #c98a2d); }
+.briefLineChip[data-state='converging'] .briefLineState { color: var(--mimir-evidence-status-supported, #2f9e63); }
+.briefLineChip[data-state='returning-side'] .briefLineState { color: #8250df; }
+.briefLineChip[data-state='exploring'] .briefLineState { color: #0e7490; }
+
+.briefLineDrift {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--mimir-mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #857d6c);
+}
+
 .reportSheet h1 {
   margin: 10px 0 10px;
   color: var(--dsw-alias-label-primary, #211e19);

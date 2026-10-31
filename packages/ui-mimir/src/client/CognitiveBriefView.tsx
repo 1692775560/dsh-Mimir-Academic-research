@@ -182,6 +182,26 @@ export function CognitiveBriefView({
           {brief.recalibrated && (
             <p className={css.hint} role="status">{t('brief.recalibrated')}</p>
           )}
+          {/* The research-line state strip (I6): re-derivable momentum at a
+              glance — the markdown is the narrative, these chips are the data. */}
+          {brief.lines.length > 0 && (
+            <div className={css.briefLineStrip}>
+              {brief.lines.map(line => (
+                <span key={line.id} className={css.briefLineChip} data-state={line.state} title={line.id}>
+                  <span className={css.briefLineLabel}>{line.label}</span>
+                  <span className={css.briefLineState}>{t(`brief.lineState.${line.state}`)}</span>
+                  <span className={css.briefLineDrift}>{line.drift > 0 ? `+${String(line.drift)}` : String(line.drift)}</span>
+                </span>
+              ))}
+            </div>
+          )}
+          {brief.transitions.length + brief.openLoops.length + brief.moments.length > 0 && (
+            <p className={css.hint}>
+              {brief.transitions.length > 0 && <span>{t('brief.transitions', { n: String(brief.transitions.length) })}</span>}
+              {brief.openLoops.length > 0 && <span> · {t('brief.openLoops', { n: String(brief.openLoops.length) })}</span>}
+              {brief.moments.length > 0 && <span> · {t('brief.moments', { n: String(brief.moments.length) })}</span>}
+            </p>
+          )}
           {renderMarkdown(brief.markdown)}
         </div>
       )}

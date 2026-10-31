@@ -1214,7 +1214,46 @@ export interface ResearchJournalQuestionRef {
   readonly lineId: string
 }
 
-/** `generateBrief` result: the rendered brief plus its interactive questions. */
+/**
+ * One research line's state, as the cognitive brief surfaces it (I6): the
+ * re-derivable drift vocabulary, NOT a declared fact — the worktree owns the
+ * declared lifecycle; the brief only estimates momentum.
+ */
+export interface ResearchBriefLine {
+  readonly id: string
+  readonly label: string
+  readonly state: 'settled' | 'dominant' | 'stalled' | 'converging' | 'returning-side' | 'exploring'
+  readonly tier: 'silent' | 'e0' | 'e0+e1'
+  readonly drift: number
+  readonly eventCount: number
+  readonly decisionDays: number | null
+}
+
+/** One status transition read off the ledger (the Yes that emerged). */
+export interface ResearchBriefTransition {
+  readonly kind: 'idea' | 'claim'
+  readonly id: string
+  readonly to: string
+  readonly ts: string
+}
+
+/** A started-but-not-closed thread (the known-unknown quadrant). */
+export interface ResearchBriefOpenLoop {
+  readonly kind: 'job-unsettled' | 'compile-unresolved'
+  readonly refId: string
+  readonly openedAt: string
+}
+
+/** One eureka candidate: a behavior burst above its session baseline. */
+export interface ResearchBriefMoment {
+  readonly from: string
+  readonly to: string
+  readonly eventCount: number
+  readonly creationCount: number
+  readonly baseline: number
+}
+
+/** `generateBrief` result: the rendered brief plus its structured state. */
 export type ResearchGenerateBriefResult = ResearchResult<{
   readonly markdown: string
   readonly generatedAt: string
@@ -1222,6 +1261,11 @@ export type ResearchGenerateBriefResult = ResearchResult<{
   /** The derivation version the brief was rendered under (I5). */
   readonly derivationVersion: number
   readonly questions: readonly ResearchBriefQuestion[]
+  /** The research-line state strip (re-derivable, never a fact). */
+  readonly lines: readonly ResearchBriefLine[]
+  readonly transitions: readonly ResearchBriefTransition[]
+  readonly openLoops: readonly ResearchBriefOpenLoop[]
+  readonly moments: readonly ResearchBriefMoment[]
 }>
 
 /** `addJournalEntry` result: the stored journal event (the L2 write). */
