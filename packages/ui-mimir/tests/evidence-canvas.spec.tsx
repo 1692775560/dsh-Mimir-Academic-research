@@ -139,3 +139,38 @@ describe('EvidenceGraphCanvas claim-head conflict roll-up', () => {
     expect(html).toMatch(/evidenceNodeHit[^>]*r="14"/)
   })
 })
+
+describe('EvidenceGraphCanvas link interaction layer (§99)', () => {
+  it('gives every link a fat transparent hit path behind its visible stroke', () => {
+    const html = renderCanvas()
+    // The fixture yields three links: two external inflows (lit + exp
+    // sources) and one conflict arc — each one hit path, one visible path.
+    expect(html.match(/class="[^"]*evidenceLinkHit[^"]*"/g)?.length ?? 0).toBe(3)
+    expect(html.match(/data-kind="external"/g)?.length ?? 0).toBe(2)
+    expect(html.match(/data-kind="conflict"/g)?.length ?? 0).toBe(1)
+  })
+
+  it('titles each link with its localized kind', () => {
+    const html = renderCanvas()
+    expect(html).toContain(t('evidence.graph.link.external'))
+    expect(html).toContain(t('evidence.graph.link.conflict'))
+  })
+})
+
+describe('EvidenceGraphCanvas unattributed Eureka band', () => {
+  it('labels the fallback band through the locale, never the raw key', () => {
+    const layout = deriveEvidenceGraphLayout(FIXTURE, {
+      eurekaDeclarations: [{ id: 'eu1', at: '2026-09-04T10:00:00.000Z', title: 'A stray insight', lineId: null }],
+    })
+    const html = renderToString(
+      <EvidenceGraphCanvas
+        layout={layout}
+        selectedId={null}
+        onSelect={() => {}}
+        t={t as ResearchT}
+      />,
+    )
+    expect(html).toContain(t('evidence.graph.unattributed'))
+    expect(html).not.toContain('eureka:unattributed')
+  })
+})

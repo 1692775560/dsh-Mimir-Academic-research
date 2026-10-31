@@ -75,6 +75,9 @@ export const EVIDENCE_GRAPH_LAYOUT_DEFAULTS = Object.freeze({
   maxParallelEdgeOffset: 14,
   /** Edge hit target stroke width for pointer selection (§99). */
   edgeHitWidth: 18,
+  /** Maximum labeled date ticks on the time axis (first/last kept, evenly
+   *  sampled between — deterministic for a given input). */
+  maxTickLabels: 8,
   /** Bottom padding. */
   bottomPad: 18,
 })
@@ -597,6 +600,9 @@ export function deriveEvidenceGraphLayout(
     a.kind.localeCompare(b.kind) || a.fromId.localeCompare(b.fromId) || a.toId.localeCompare(b.toId))
 
   /* ── 7. Ticks at the first bead of every date. */
+  /* ── 7. Ticks at the first bead of every date, thinned to ≤ maxTickLabels
+     (a 90-day window would otherwise stack 90 labels; first and last stay,
+     the middle samples evenly — same input, same ticks). */
   const ticks: EvidenceTickLayout[] = []
   let previousDate = ''
   for (const bead of beadDrafts) {
@@ -605,6 +611,10 @@ export function deriveEvidenceGraphLayout(
     previousDate = date
     ticks.push(Object.freeze({ x: bead.x, label: date }))
   }
+  const maxTicks = EVIDENCE_GRAPH_LAYOUT_DEFAULTS.maxTickLabels
+  const thinned: EvidenceTickLayout[] = ticks.length <= maxTicks
+    ? ticks
+    : [...thinTicks(ticks, maxTicks)]
 
   /* ── 8. Extent. */
   let maxRailX: number = plotLeft
@@ -623,7 +633,7 @@ export function deriveEvidenceGraphLayout(
       .map(rail => Object.freeze(rail))),
     nodes: Object.freeze(nodes),
     links: Object.freeze(links),
-    ticks: Object.freeze(ticks),
+    ticks: Object.freeze(thinned),
   })
 }
 
@@ -635,6 +645,20 @@ function parallelSlot(registry: Map<string, number>, key: string, step: number):
   const depth = Math.min(Math.floor(index / 2), 2)
   const direction = index % 2 === 0 ? 1 : -1
   return direction * depth * step
+}
+
+/**
+ * Thin one-per-date ticks to at most `max` labels: the first and the last
+ * always stay, the middle picks evenly spaced indices (rounded, deduped,
+ * key order preserved) — the same input always thins identically.
+ */
+function thinTicks(ticks: readonly EvidenceTickLayout[], max: number): EvidenceTickLayout[] {
+  const last = ticks.length - 1
+  const picked = new Set<number>([0, last])
+  for (let slot = 1; slot < max - 1; slot += 1) {
+    picked.add(Math.round((slot * last) / (max - 1)))
+  }
+  return [...picked].sort((a, b) => a - b).map(index => ticks[index] as EvidenceTickLayout)
 }
 
 function firstEntryTs(claim: EvidenceClaimHistory): string {

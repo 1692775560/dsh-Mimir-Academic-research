@@ -63,12 +63,35 @@
   pointer-events: none;
 }
 
-/* ── Links (§43/§44) ── */
+/* ── Links (§43/§44/§99) ── */
+.evidenceLinkGroup {
+  cursor: pointer;
+}
+
+/* The fat transparent sibling carries pointer events; the visible stroke
+   never does — curves never steal clicks from the beads they end at. */
+.evidenceLinkHit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+}
+
 .evidenceLink {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
-  pointer-events: stroke;
+  pointer-events: none;
+  transition: opacity 0.15s ease, stroke-width 0.15s ease;
+}
+
+.evidenceLinkGroup:hover .evidenceLink {
+  opacity: 1;
+}
+
+.evidenceLinkGroup[data-selected] .evidenceLink {
+  opacity: 1;
+  stroke-width: 2.6;
 }
 
 .evidenceLink[data-kind='inflow'] {
@@ -241,6 +264,15 @@
 .graphTruncated {
   color: var(--mimir-evidence-status-pending, #c98a2d);
   font-size: 11px;
+}
+
+/* One compact semantics line above the canvas (§58: the map explains
+   itself — shapes and rings, not just colors). */
+.graphLegend {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary, #857d6c);
+  font-size: 11px;
+  letter-spacing: 0.01em;
 }
 
 .graphAudit {

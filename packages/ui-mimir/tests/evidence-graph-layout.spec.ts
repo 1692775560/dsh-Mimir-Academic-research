@@ -254,6 +254,25 @@ describe('deriveEvidenceGraphLayout', () => {
     }
   })
 
+  it('thins date ticks to at most maxTickLabels, keeping first and last', () => {
+    // 90 one-per-day events → 90 candidate ticks; thinning must cap them.
+    const history = Array.from({ length: 90 }, (_, day) =>
+      entry({ sourceEventId: `e${day}`, ts: new Date(Date.UTC(2026, 0, 1 + day, 10, 0, 0)).toISOString() }))
+    const layout = deriveEvidenceGraphLayout(graph({ timeline: [group({
+      key: 'idea:1',
+      claims: [claim({ claimKey: 'claim:c1', history })],
+    })] }))
+    expect(layout.ticks.length).toBeLessThanOrEqual(8)
+    expect(layout.ticks[0]?.label).toBe('2026-01-01')
+    expect(layout.ticks[layout.ticks.length - 1]?.label).toBe('2026-03-31')
+    // Deterministic: the same input thins identically.
+    const again = deriveEvidenceGraphLayout(graph({ timeline: [group({
+      key: 'idea:1',
+      claims: [claim({ claimKey: 'claim:c1', history })],
+    })] }))
+    expect(again.ticks).toEqual(layout.ticks)
+  })
+
   it('truncates labels CJK-safely', () => {
     expect(clipLabel('short label', 20)).toBe('short label')
     expect(clipLabel('A very long label that exceeds the budget', 20)).toMatch(/…$/)

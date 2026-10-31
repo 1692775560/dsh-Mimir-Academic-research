@@ -282,15 +282,18 @@ export function EvidenceGraphView({
           {view.graph.timeline.length === 0 ? (
             <p className={panelCss.hint}>{t('evidence.empty')}</p>
           ) : (
-            <div className={css.graphViewport}>
-              <EvidenceGraphCanvas
-                layout={layout}
-                selectedId={selectedId}
-                onSelect={setSelectedId}
-                t={t}
-                conflictLinesByClaim={conflictLines}
-              />
-            </div>
+            <>
+              <p className={css.graphLegend}>{t('evidence.graph.legend')}</p>
+              <div className={css.graphViewport}>
+                <EvidenceGraphCanvas
+                  layout={layout}
+                  selectedId={selectedId}
+                  onSelect={setSelectedId}
+                  t={t}
+                  conflictLinesByClaim={conflictLines}
+                />
+              </div>
+            </>
           )}
 
           {selectedNode !== null && (

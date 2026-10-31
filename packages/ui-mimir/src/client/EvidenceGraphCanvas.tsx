@@ -14,7 +14,7 @@ import type {
   EvidenceNodeLayout,
   EvidenceRailLayout,
 } from './evidence-graph-layout.ts'
-import { clipLabel } from './evidence-graph-layout.ts'
+import { clipLabel, EUREKA_FALLBACK_BAND } from './evidence-graph-layout.ts'
 import type { ResearchKey } from './locales.ts'
 import type { ResearchT } from './view-common.ts'
 import css from './EvidenceGraph.module.css'
@@ -105,16 +105,27 @@ function EvidenceNode({ node, selected, onSelect, t, conflictDetail }: {
   )
 }
 
-/** One routed link path (§40 perimeter-trimmed; §41 subdued-first order). */
-function EvidenceLink({ link }: { readonly link: EvidenceLinkLayout }) {
+/** One routed link (§40 perimeter-trimmed; §41 subdued-first order). The
+ *  visible stroke never takes pointer events; a transparent fat sibling
+ *  carries them (§99), and a click selects the link's target event node —
+ *  the detail card then tells the whole edge story. */
+function EvidenceLink({ link, selected, onSelect, t }: {
+  readonly link: EvidenceLinkLayout
+  readonly selected: boolean
+  readonly onSelect: (id: string) => void
+  readonly t: ResearchT
+}) {
+  const label = t(`evidence.graph.link.${link.kind}` as ResearchKey)
   return (
-    <path
-      className={css.evidenceLink}
-      data-kind={link.kind}
-      data-lane={link.hue ?? 0}
-      d={link.d}
-      aria-hidden
-    />
+    <g
+      className={css.evidenceLinkGroup}
+      data-selected={selected || undefined}
+      onClick={() => { onSelect(link.toId) }}
+    >
+      <title>{label}</title>
+      <path className={css.evidenceLinkHit} d={link.d} />
+      <path className={css.evidenceLink} data-kind={link.kind} data-lane={link.hue ?? 0} d={link.d} />
+    </g>
   )
 }
 
@@ -153,7 +164,7 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
       {layout.bands.map(band => (
         <g key={band.key}>
           <text className={css.evidenceBandLabel} data-lane={band.hue} x={12} y={band.y + 22}>
-            {clipLabel(band.label ?? band.key, 20)}
+            {clipLabel(band.label ?? (band.key === EUREKA_FALLBACK_BAND ? t('evidence.graph.unattributed') : band.key), 20)}
           </text>
         </g>
       ))}
@@ -161,10 +172,22 @@ export function EvidenceGraphCanvas({ layout, selectedId, onSelect, t, conflictL
 
       {/* Links: subdued (retract/conflict) before normal (inflow/external). */}
       {layout.links.filter(link => link.kind === 'retract' || link.kind === 'conflict').map(link => (
-        <EvidenceLink key={`${link.kind}-${link.fromId}-${link.toId}`} link={link} />
+        <EvidenceLink
+          key={`${link.kind}-${link.fromId}-${link.toId}`}
+          link={link}
+          selected={selectedId === link.toId || selectedId === link.fromId}
+          onSelect={onSelect}
+          t={t}
+        />
       ))}
       {layout.links.filter(link => link.kind === 'inflow' || link.kind === 'external').map(link => (
-        <EvidenceLink key={`${link.kind}-${link.fromId}-${link.toId}`} link={link} />
+        <EvidenceLink
+          key={`${link.kind}-${link.fromId}-${link.toId}`}
+          link={link}
+          selected={selectedId === link.toId || selectedId === link.fromId}
+          onSelect={onSelect}
+          t={t}
+        />
       ))}
 
       {/* Nodes (hit targets render last, visually transparent). */}
