@@ -367,7 +367,6 @@ export class ResearchService extends TypertRemoteService {
     tags?: string[] | undefined
     projectIds?: string[] | undefined
     notes?: string | undefined
-    relevance?: { projectId: string; score: number; reason: string } | undefined
   }): Promise<ResearchUpdatePaperResult> {
     return library.updatePaper(this.deps, request)
   }
@@ -424,8 +423,8 @@ export class ResearchService extends TypertRemoteService {
   }
 
   @Remote('checkArxivSubscriptions')
-  checkArxivSubscriptions(request: { id?: string }): Promise<ResearchCheckArxivSubscriptionsResult> {
-    return subscriptions.checkArxivSubscriptions(this.deps, request)
+  checkArxivSubscriptions(): Promise<ResearchCheckArxivSubscriptionsResult> {
+    return subscriptions.checkArxivSubscriptions(this.deps, {})
   }
 
   // experiment domain
@@ -832,6 +831,7 @@ export class ResearchService extends TypertRemoteService {
   }
 
   // library themes (S5): the shelf's own drift — no inference, no advice
+  /** @experimental Insight surface: no UI consumer yet (#245). Subject to change without notice. */
   @Remote('getLibraryThemes')
   getLibraryThemes(request: {
     since?: string | undefined
@@ -841,6 +841,7 @@ export class ResearchService extends TypertRemoteService {
   }
 
   // habits (S6): the researcher's own rhythm — description only
+  /** @experimental Insight surface: no UI consumer yet (#245). Subject to change without notice. */
   @Remote('getHabits')
   getHabits(request: {
     since?: string | undefined
@@ -850,6 +851,7 @@ export class ResearchService extends TypertRemoteService {
   }
 
   // journal draft (S7): the day already written out, not a blank page
+  /** @experimental Insight surface: no UI consumer yet (#245). Subject to change without notice. */
   @Remote('generateJournalDraft')
   generateJournalDraft(request: {
     kind?: string | undefined
@@ -947,6 +949,7 @@ export class ResearchService extends TypertRemoteService {
   }
 
   // evidence engine (S3): read-only E1 instrumentation, no UI until G1
+  /** @experimental Insight surface: no UI consumer yet (#245). Subject to change without notice. */
   @Remote('getEvidenceProfile')
   getEvidenceProfile(): Promise<ResearchGetEvidenceProfileResult> {
     return ledger.getEvidenceProfileRemote(this.deps)

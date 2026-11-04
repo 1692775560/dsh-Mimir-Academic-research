@@ -21,8 +21,6 @@ import { pruneExpiredToasts, pushToast, type ResearchToast, type ResearchToastKi
 import type { EvidenceGraphRequest } from './evidence-graph-view.ts'
 import type {
   ArxivEntry,
-  AddEvidenceEdgeRequest,
-  ResearchAddEvidenceEdgeResult,
   ResearchEvidenceGraphView,
   ResearchGetEvidenceGraphResult,
   ResearchGetProtocolVersionResult,
@@ -218,7 +216,6 @@ export interface ResearchRemote {
     tags?: string[] | undefined
     projectIds?: string[] | undefined
     notes?: string | undefined
-    relevance?: { projectId: string; score: number; reason: string } | undefined
   }) => Promise<RemoteResult<ResearchUpdatePaperResult>>
   fetchPaperPdf: (request: { arxivId: string }) => Promise<RemoteResult<ResearchFetchPaperPdfResult>>
   checkZotero: () => Promise<RemoteResult<ResearchCheckZoteroResult>>
@@ -233,7 +230,7 @@ export interface ResearchRemote {
   listArxivSubscriptions: () => Promise<RemoteResult<ResearchArxivSubscriptionsResult>>
   saveArxivSubscription: (request: { query: string }) => Promise<RemoteResult<ResearchSaveArxivSubscriptionResult>>
   deleteArxivSubscription: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteArxivSubscriptionResult>>
-  checkArxivSubscriptions: (request: { id?: string }) => Promise<RemoteResult<ResearchCheckArxivSubscriptionsResult>>
+  checkArxivSubscriptions: () => Promise<RemoteResult<ResearchCheckArxivSubscriptionsResult>>
   listExperiments: (request: { projectId?: string }) => Promise<RemoteResult<ResearchExperimentsResult>>
   deleteExperiment: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteExperimentResult>>
   updateExperiment: (request: {
@@ -436,8 +433,6 @@ export interface ResearchRemote {
     since?: string | undefined
     until?: string | undefined
   }) => Promise<RemoteResult<ResearchGetEvidenceGraphResult>>
-  /** Declare one evidence edge — the panel channel of the graph's writes. */
-  addEvidenceEdge: (request: AddEvidenceEdgeRequest) => Promise<RemoteResult<ResearchAddEvidenceEdgeResult>>
   /** Retract one evidence edge by dedupKey (panel: any edge — human final say). */
   retractEvidenceEdge: (request: RetractEvidenceEdgeRequest) => Promise<RemoteResult<ResearchRetractEvidenceEdgeResult>>
 }
@@ -2039,7 +2034,7 @@ export class ResearchController implements HostObservable<ResearchView> {
       arxivSubscriptions: Object.freeze({ ...current, checking: true, checkErrors: Object.freeze({}) }),
     })
     try {
-      const carried = await this.remote.checkArxivSubscriptions({})
+      const carried = await this.remote.checkArxivSubscriptions()
       if (this.disposed) return null
       const result = unwrapRemote(carried)
       if (!result.ok) {
