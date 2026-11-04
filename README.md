@@ -120,7 +120,7 @@ Contributors so far: [@EriXPsy](https://github.com/EriXPsy) (Ledger view, humani
 
 ## Community
 
-Questions, ideas, or show-and-tell — join the WeChat group. The group QR refreshes every 7 days (the current one is valid until Sep 29); if it has expired, add Nick and he'll pull you in:
+Questions, ideas, or show-and-tell — join the WeChat group. The group QR refreshes every 7 days (the current one is valid until Nov 11); if it has expired, add Nick and he'll pull you in:
 
 <p>
   <img src="docs/wechat-group.jpg" alt="Mimir WeChat group" width="180">
