@@ -24,11 +24,14 @@ import css from './ResearchPanel.module.css'
  * @returns the cognitive brief card (brief sheet + journal box).
  */
 export function CognitiveBriefView({
-  brief, briefWindow, scopedProjectId, generateBrief, addJournal, refreshLedger, t,
+  brief, briefWindow, scopedProjectId, focusedLine, onFocusLine, generateBrief, addJournal, refreshLedger, t,
 }: {
   readonly brief: ResearchBriefView
   readonly briefWindow: LedgerWindow
   readonly scopedProjectId: string | null
+  /** The cross-card focused research line (shared with the evidence graph). */
+  readonly focusedLine: string | null
+  readonly onFocusLine: (lineId: string | null) => void
   readonly generateBrief: (options: ResearchGenerateBriefOptions) => Promise<ResearchFailureView | null>
   readonly addJournal: (
     text: string,
@@ -181,6 +184,34 @@ export function CognitiveBriefView({
           </p>
           {brief.recalibrated && (
             <p className={css.hint} role="status">{t('brief.recalibrated')}</p>
+          )}
+          {/* The research-line state strip (I6): re-derivable momentum at a
+              glance — the markdown is the narrative, these chips are the data. */}
+          {brief.lines.length > 0 && (
+            <div className={css.briefLineStrip}>
+              {brief.lines.map(line => (
+                <button
+                  key={line.id}
+                  type="button"
+                  className={css.briefLineChip}
+                  data-state={line.state}
+                  data-focused={line.id === focusedLine || undefined}
+                  title={line.id}
+                  onClick={() => { onFocusLine(focusedLine === line.id ? null : line.id) }}
+                >
+                  <span className={css.briefLineLabel}>{line.label}</span>
+                  <span className={css.briefLineState}>{t(`brief.lineState.${line.state}`)}</span>
+                  <span className={css.briefLineDrift}>{line.drift > 0 ? `+${String(line.drift)}` : String(line.drift)}</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {brief.transitions.length + brief.openLoops.length + brief.moments.length > 0 && (
+            <p className={css.hint}>
+              {brief.transitions.length > 0 && <span>{t('brief.transitions', { n: String(brief.transitions.length) })}</span>}
+              {brief.openLoops.length > 0 && <span> · {t('brief.openLoops', { n: String(brief.openLoops.length) })}</span>}
+              {brief.moments.length > 0 && <span> · {t('brief.moments', { n: String(brief.moments.length) })}</span>}
+            </p>
           )}
           {renderMarkdown(brief.markdown)}
         </div>

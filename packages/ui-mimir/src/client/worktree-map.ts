@@ -21,6 +21,7 @@ import type {
   ResearchWorktreeTouchKind,
   ResearchWorktreeView,
 } from 'dsh-mimir/types'
+import { lineHueOf } from './line-hue.ts'
 
 /** Time-column budget (moments beyond it fold into shared columns). */
 export const WORKTREE_FLOW_MAX_COLS = 36
@@ -247,10 +248,11 @@ export function layoutWorktreeFlow(view: ResearchWorktreeView): WorktreeFlowLayo
         path += ` Q ${String(Math.max(xe, xEnd - bow))} ${String(yS)} ${String(xEnd)} ${String(yS)}`
       }
     }
-    const track = [...ordered].indexOf(lineId)
+    // Stable identity hue: a re-parented or newly added line keeps its color
+    // (and matches the Evidence Graph's band hue for the same research line).
     lanes.push({
       lane,
-      color: WORKTREE_FLOW_PALETTE[track % WORKTREE_FLOW_PALETTE.length] ?? '#9aa3b8',
+      color: WORKTREE_FLOW_PALETTE[lineHueOf(lineId, WORKTREE_FLOW_PALETTE.length)] ?? '#9aa3b8',
       isMain: lineId === mainlineId,
       path,
       y,

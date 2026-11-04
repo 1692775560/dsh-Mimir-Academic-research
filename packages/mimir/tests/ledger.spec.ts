@@ -543,6 +543,13 @@ describe('cognitive beidou remotes (CBE service wiring)', () => {
     expect(brief.value.markdown).toContain('## Your words (the L2 layer)')
     expect(brief.value.markdown).toContain('这条线起来了')
     expect(brief.value.eventCount).toBe(4)
+    // The structured state strip rides alongside the markdown (I6).
+    expect(brief.value.lines).toHaveLength(1)
+    expect(brief.value.lines[0]).toMatchObject({ id: 'i1', label: 'Retrieval-free decoding', state: 'dominant' })
+    expect(brief.value.lines[0]?.eventCount).toBeGreaterThan(0)
+    expect(brief.value.transitions).toEqual([])
+    expect(brief.value.openLoops).toEqual([])
+    expect(brief.value.moments).toEqual([])
   })
 
   it('generateBrief carries the derivation version and logs the I4 showed meta event', async () => {

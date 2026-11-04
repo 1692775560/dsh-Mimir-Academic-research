@@ -49,6 +49,45 @@
   pointer-events: none;
 }
 
+.evidenceBandStatus {
+  font-size: 13px;
+  font-weight: 700;
+  pointer-events: none;
+}
+
+/* Focus mode (§47): the focused research line stays bright, the rest dims. */
+.evidenceBandHead {
+  cursor: pointer;
+}
+
+.evidenceBandHeadHit {
+  fill: transparent;
+}
+
+.evidenceNode[data-dimmed] {
+  opacity: 0.22;
+  transition: opacity 0.15s ease;
+}
+
+.evidenceBandHead[data-dimmed] {
+  opacity: 0.35;
+}
+
+.evidenceRailGroup[data-dimmed] .evidenceRail {
+  opacity: 0.12;
+}
+
+.evidenceRailGroup[data-dimmed] .evidenceRailLabel {
+  opacity: 0.3;
+}
+
+.evidenceLinkGroup[data-dimmed] {
+  opacity: 0.15;
+}
+
+.evidenceBandStatus[data-status='failed'] { fill: var(--mimir-evidence-status-invalidated, #d64545); }
+.evidenceBandStatus[data-status='adopted'] { fill: var(--mimir-evidence-status-supported, #2f9e63); }
+
 .evidenceRailLabel {
   fill: var(--dsw-alias-label-secondary, #57503f);
   font-size: 11px;
@@ -63,12 +102,35 @@
   pointer-events: none;
 }
 
-/* ── Links (§43/§44) ── */
+/* ── Links (§43/§44/§99) ── */
+.evidenceLinkGroup {
+  cursor: pointer;
+}
+
+/* The fat transparent sibling carries pointer events; the visible stroke
+   never does — curves never steal clicks from the beads they end at. */
+.evidenceLinkHit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+}
+
 .evidenceLink {
   fill: none;
   stroke-linecap: round;
   stroke-linejoin: round;
-  pointer-events: stroke;
+  pointer-events: none;
+  transition: opacity 0.15s ease, stroke-width 0.15s ease;
+}
+
+.evidenceLinkGroup:hover .evidenceLink {
+  opacity: 1;
+}
+
+.evidenceLinkGroup[data-selected] .evidenceLink {
+  opacity: 1;
+  stroke-width: 2.6;
 }
 
 .evidenceLink[data-kind='inflow'] {
@@ -241,6 +303,15 @@
 .graphTruncated {
   color: var(--mimir-evidence-status-pending, #c98a2d);
   font-size: 11px;
+}
+
+/* One compact semantics line above the canvas (§58: the map explains
+   itself — shapes and rings, not just colors). */
+.graphLegend {
+  margin: 0;
+  color: var(--dsw-alias-label-tertiary, #857d6c);
+  font-size: 11px;
+  letter-spacing: 0.01em;
 }
 
 .graphAudit {

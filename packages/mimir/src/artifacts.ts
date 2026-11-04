@@ -1,8 +1,8 @@
 /**
  * Workspace artifact reads and paper-figure discovery for the research
  * workbench: a whitelisted markdown-artifact read (no path segments, so no
- * traversal is expressible) and a one-level image scan of a project's paper
- * directory plus its `figures/` subdirectory. Pure paths in, structured
+ * traversal is expressible) and an image scan of a project's paper directory
+ * top level plus its whole `figures/` subtree. Pure paths in, structured
  * outcomes out — no wire types.
  * @module dsh-mimir/src/artifacts
  */
@@ -69,27 +69,38 @@ export async function readWorkspaceArtifact(
 }
 
 /**
- * List the image files of one paper directory: its top level plus the first
- * level of its `figures/` subdirectory, filtered to the servable extensions.
- * A missing `figures/` subdirectory is ordinary (no scan entry); a missing
- * paper directory yields an empty list — the caller decides whether that is
- * `paper-not-found`.
+ * List the image files of one paper directory: its top level (files only,
+ * the `sections/` convention stays out of the figure list) plus the whole
+ * `figures/` subtree, filtered to the servable extensions. Directory entries
+ * come from `readdir`'s lstat view, so a symlinked directory is never
+ * followed and the scan stays inside the paper directory; an unreadable
+ * directory or file is skipped instead of failing the whole listing. A
+ * missing paper directory yields an empty list — the caller decides whether
+ * that is `paper-not-found`.
  * @param paperDir - absolute paper directory (already workspace-confined).
- * @returns figure entries, top-level files first, each group name-sorted.
+ * @returns figure entries, top-level files first, each directory's files
+ * name-sorted, nested directories walked in name order.
  */
 export async function listPaperFigures(paperDir: string): Promise<FigureFile[]> {
-  const scan = async (dir: string, relPrefix: string): Promise<FigureFile[]> => {
+  const scan = async (dir: string, relPrefix: string, deep: boolean): Promise<FigureFile[]> => {
     let entries
     try {
       entries = await readdir(dir, { withFileTypes: true })
-    } catch (error) {
-      if (isNotFound(error)) return []
-      throw error
+    } catch {
+      // Missing or unreadable directory: no scan entry, the listing survives.
+      return []
     }
     const figures: FigureFile[] = []
+    const subdirs: string[] = []
     for (const entry of entries) {
+      if (entry.isDirectory()) {
+        if (deep) subdirs.push(entry.name)
+        continue
+      }
       if (!entry.isFile() || !isFigureFile(entry.name)) continue
-      const stats = await stat(join(dir, entry.name))
+      // An unreadable file fails its stat; skip it rather than fail the list.
+      const stats = await stat(join(dir, entry.name)).catch(() => undefined)
+      if (stats === undefined) continue
       figures.push({
         name: entry.name,
         relPath: relPrefix + entry.name,
@@ -97,7 +108,12 @@ export async function listPaperFigures(paperDir: string): Promise<FigureFile[]> 
         mtimeMs: stats.mtimeMs,
       })
     }
-    return figures.sort((left, right) => left.name.localeCompare(right.name))
+    figures.sort((left, right) => left.name.localeCompare(right.name))
+    const nested: FigureFile[] = []
+    for (const sub of subdirs.sort((left, right) => left.localeCompare(right))) {
+      nested.push(...await scan(join(dir, sub), `${relPrefix}${sub}/`, deep))
+    }
+    return [...figures, ...nested]
   }
-  return [...await scan(paperDir, ''), ...await scan(join(paperDir, 'figures'), 'figures/')]
+  return [...await scan(paperDir, '', false), ...await scan(join(paperDir, 'figures'), 'figures/', true)]
 }

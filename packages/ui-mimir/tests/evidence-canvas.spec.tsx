@@ -138,4 +138,94 @@ describe('EvidenceGraphCanvas claim-head conflict roll-up', () => {
     expect(html.match(/class="[^"]*evidenceNodeHit[^"]*"/g)?.length ?? 0).toBeGreaterThan(0)
     expect(html).toMatch(/evidenceNodeHit[^>]*r="14"/)
   })
+
+  it('roves a single tab stop across the nodes (roving tabindex §51/§102)', () => {
+    const html = renderCanvas()
+    // Exactly one node is in the Tab order; every other node is skipped.
+    expect(html.match(/tabindex="0"/g)?.length ?? 0).toBe(1)
+    expect(html.match(/tabindex="-1"/g)?.length ?? 0).toBeGreaterThan(0)
+  })
+})
+
+describe('EvidenceGraphCanvas link interaction layer (§99)', () => {
+  it('gives every link a fat transparent hit path behind its visible stroke', () => {
+    const html = renderCanvas()
+    // The fixture yields three links: two external inflows (lit + exp
+    // sources) and one conflict arc — each one hit path, one visible path.
+    expect(html.match(/class="[^"]*evidenceLinkHit[^"]*"/g)?.length ?? 0).toBe(3)
+    expect(html.match(/data-kind="external"/g)?.length ?? 0).toBe(2)
+    expect(html.match(/data-kind="conflict"/g)?.length ?? 0).toBe(1)
+  })
+
+  it('titles each link with its localized kind', () => {
+    const html = renderCanvas()
+    expect(html).toContain(t('evidence.graph.link.external'))
+    expect(html).toContain(t('evidence.graph.link.conflict'))
+  })
+})
+
+describe('EvidenceGraphCanvas unattributed Eureka band', () => {
+  it('labels the fallback band through the locale, never the raw key', () => {
+    const layout = deriveEvidenceGraphLayout(FIXTURE, {
+      eurekaDeclarations: [{ id: 'eu1', at: '2026-09-04T10:00:00.000Z', title: 'A stray insight', lineId: null }],
+    })
+    const html = renderToString(
+      <EvidenceGraphCanvas
+        layout={layout}
+        selectedId={null}
+        onSelect={() => {}}
+        t={t as ResearchT}
+      />,
+    )
+    expect(html).toContain(t('evidence.graph.unattributed'))
+    expect(html).not.toContain('eureka:unattributed')
+  })
+})
+
+describe('EvidenceGraphCanvas focus mode (§47)', () => {
+  const TWO_BANDS = graph({
+    timeline: [
+      group({ key: 'idea:1', claims: [claim({ claimKey: 'claim:c1', history: [entry({ sourceEventId: 'e1', ts: '2026-09-01T10:00:00.000Z' })] })] }),
+      group({ key: 'idea:2', claims: [claim({ claimKey: 'claim:c2', history: [entry({ sourceEventId: 'e2', ts: '2026-09-02T10:00:00.000Z' })] })] }),
+    ],
+  })
+
+  it('dims everything outside the focused band and never dims without focus', () => {
+    const layout = deriveEvidenceGraphLayout(TWO_BANDS)
+    const focused = renderToString(
+      <EvidenceGraphCanvas layout={layout} selectedId={null} focusedBandKey="idea:1" onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />,
+    )
+    expect(focused).toContain('data-dimmed="true"')
+
+    const plain = renderToString(
+      <EvidenceGraphCanvas layout={layout} selectedId={null} focusedBandKey={null} onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />,
+    )
+    expect(plain).not.toContain('data-dimmed="true"')
+  })
+
+  it('renders a clickable band header hit target', () => {
+    const layout = deriveEvidenceGraphLayout(TWO_BANDS)
+    const html = renderToString(
+      <EvidenceGraphCanvas layout={layout} selectedId={null} focusedBandKey={null} onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />,
+    )
+    expect(html).toContain('evidenceBandHeadHit')
+  })
+})
+
+describe('EvidenceGraphCanvas declared line-state glyphs', () => {
+  it('renders ✗ for a failed line and ✓ for an adopted one, none for open', () => {
+    const failed = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'failed', idleDays: null }]]) })
+    const failedHtml = renderToString(<EvidenceGraphCanvas layout={failed} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    expect(failedHtml).toContain('evidenceBandStatus')
+    expect(failedHtml).toContain('✗')
+
+    const adopted = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'adopted', idleDays: null }]]) })
+    const adoptedHtml = renderToString(<EvidenceGraphCanvas layout={adopted} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    expect(adoptedHtml).toContain('✓')
+
+    const open = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'open', idleDays: 5 }]]) })
+    const openHtml = renderToString(<EvidenceGraphCanvas layout={open} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    expect(openHtml).not.toContain('evidenceBandStatus')
+    expect(openHtml).toContain(t('evidence.graph.idle', { days: '5' }))
+  })
 })
