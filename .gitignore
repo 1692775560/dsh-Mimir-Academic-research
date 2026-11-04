@@ -19,3 +19,7 @@ ci_log.txt
 
 # 每个任务一个 git worktree，本地隔离用，不入库
 .worktrees/
+
+# Vitest/CI console captures (never commit local run logs)
+/test-*.log
+
