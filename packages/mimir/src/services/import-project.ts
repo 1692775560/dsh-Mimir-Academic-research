@@ -167,7 +167,8 @@ export async function collectInTreeSymlinks(
  * gains a `-2`/`-3`… suffix. The title is the explicit request title, else
  * the entry file's `\title{...}`, else the source directory name. The
  * created record starts at the `writing` stage with `paperDir` pointing at
- * the copy, and the import lands in the ledger.
+ * the copy and `entryFile` holding the picked entry (#249), and the import
+ * lands in the ledger.
  * @param deps - workspace root plus the open wiki domain.
  * @param request - the source path and the optional explicit title.
  * @returns the imported project's summary, or the settled failure.
@@ -251,7 +252,9 @@ export async function importProject(
   const hasFiguresDir = (await stat(figuresDir).catch(() => undefined))?.isDirectory() === true
   const figureCount = hasFiguresDir ? await countFigures(figuresDir) : await countFigures(target)
   if (!hasFiguresDir) warnings.push('no figures/ directory; counted image files across the project instead')
-  if (entryTex !== 'main.tex') warnings.push(`entry file is ${entryTex}, not main.tex; the paper view reads main.tex by default`)
+  // The picked entry rides the record (#249): editing, compiling, and the
+  // snapshots all read it, so a thesis.tex-style tree needs no rename.
+  if (entryTex !== 'main.tex') warnings.push(`entry file is ${entryTex}; it is persisted on the project record and used for editing, compile, and snapshots`)
   const hasBib = (await readdir(target)).some(name => name.endsWith('.bib'))
   if (!hasBib) warnings.push('no .bib file found; the bibliography starts empty')
 
@@ -261,6 +264,7 @@ export async function importProject(
     title: resolvedTitle,
     stage: 'writing',
     paperDir,
+    entryFile: entryTex,
     artifacts: [],
     reviewRounds: 0,
     updatedAt: new Date().toISOString(),

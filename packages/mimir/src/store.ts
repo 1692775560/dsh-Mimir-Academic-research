@@ -76,6 +76,10 @@ export const projectRecord = z.object({
   stage: z.enum(['idea', 'plan', 'experiment', 'writing', 'done']),
   paperDir: z.string().optional(),
   // Added WITHOUT a version bump: `.optional()` leaves the field absent on
+  // records that predate it, so existing v2 JSON stores keep loading; an
+  // absent entry reads as `main.tex` everywhere (#249).
+  entryFile: z.string().optional(),
+  // Added WITHOUT a version bump: `.optional()` leaves the field absent on
   // records that predate it, so existing v2 JSON stores keep loading.
   venue: z.object({
     /** Built-in registry id, or `custom` for an uploaded kit. */

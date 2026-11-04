@@ -26,19 +26,13 @@ import type {
   ResearchRejected,
   ResearchRevertPaperSnapshotResult,
 } from '../types.ts'
-import { rejected, success } from './common.ts'
+import { entryFileOf, rejected, success } from './common.ts'
 
 /** Everything the paper-snapshot domain functions need from the service scope. */
 export interface PaperSnapshotDeps {
   readonly workspaceDir: string
   readonly domain: ResearchWikiDomain
 }
-
-/**
- * The filename of the paper's main source, the revert's conflict anchor and
- * the one file a revert requires a snapshot to carry.
- */
-const MAIN_TEX = 'main.tex'
 
 /**
  * Resolve the snapshots root of one addressed project, or the rejection to
@@ -130,16 +124,17 @@ export async function getPaperSnapshot(
 /**
  * Write one snapshot's files back over the project's paper sources under the
  * same optimistic concurrency as `savePaperSource`: the commit only lands
- * when `main.tex`'s mtime still equals `baseMtimeMs`. The main source commits
- * first (inside its writer lock, preserving permission bits); the snapshot's
+ * when the entry .tex's mtime still equals `baseMtimeMs`. The entry source
+ * (`main.tex` unless the record persists another — #249) commits first
+ * (inside its writer lock, preserving permission bits); the snapshot's
  * remaining `.tex`/`.bib` files follow, atomically, creating nested
- * directories as needed. A snapshot without `main.tex` cannot anchor the
+ * directories as needed. A snapshot without the entry file cannot anchor the
  * conflict check and rejects with `invalid-input`.
  * @param deps - workspace root and open wiki domain.
  * @param request - the selected project, the snapshot id, the mtime the
- * caller's view of `main.tex` is based on, and an optional explicit paper
+ * caller's view of the entry file is based on, and an optional explicit paper
  * directory (relative to the workspace) overriding the record's `paperDir`.
- * @returns the committed `main.tex` mtime, `project-not-found`,
+ * @returns the committed entry-file mtime, `project-not-found`,
  * `paper-not-found`, `invalid-dir`, `invalid-input`, `snapshot-not-found`, or
  * `conflict` carrying the mtime that displaced the base.
  */
@@ -162,17 +157,18 @@ export async function revertPaperSnapshot(
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   const snapshot = await readPaperSnapshot(root, request.id)
   if (snapshot === undefined) return rejected({ code: 'snapshot-not-found', id: request.id })
-  const main = snapshot.files.find(file => file.path === MAIN_TEX)
+  const entryFile = entryFileOf(record)
+  const main = snapshot.files.find(file => file.path === entryFile)
   if (main === undefined) {
-    return rejected({ code: 'invalid-input', message: `snapshot '${request.id}' does not contain ${MAIN_TEX}` })
+    return rejected({ code: 'invalid-input', message: `snapshot '${request.id}' does not contain ${entryFile}` })
   }
-  const outcome = await saveTextFileOptimistic(join(dir, MAIN_TEX), main.content, request.baseMtimeMs)
+  const outcome = await saveTextFileOptimistic(join(dir, entryFile), main.content, request.baseMtimeMs)
   if (outcome.kind === 'missing') return rejected({ code: 'paper-not-found' })
   if (outcome.kind === 'conflict') {
     return rejected({ code: 'conflict', currentMtimeMs: outcome.currentMtimeMs })
   }
   for (const file of snapshot.files) {
-    if (file.path === MAIN_TEX) continue
+    if (file.path === entryFile) continue
     const target = join(dir, file.path)
     await mkdir(dirname(target), { recursive: true })
     const stats = await stat(target).catch((error: unknown) => {

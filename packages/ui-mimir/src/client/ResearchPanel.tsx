@@ -755,6 +755,7 @@ export function ResearchPanel({
             projectId={selectedProjectId}
             projectTitle={selectedProject?.title}
             dir={selectedProject?.paperDir}
+            entryFile={selectedProject?.entryFile}
             editSource={editSource}
             reloadSource={reloadSource}
             compile={compile}

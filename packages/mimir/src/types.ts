@@ -152,6 +152,12 @@ export interface ProjectRecord {
    * each project point at its own LaTeX tree under the same workspace.
    */
   readonly paperDir?: string | undefined
+  /**
+   * The paper's entry .tex basename, picked at import (`main.tex` preferred,
+   * else the first top-level file with `\documentclass`). Absent on records
+   * that predate the field — every reader falls back to `main.tex` (#249).
+   */
+  readonly entryFile?: string | undefined
   /** Target venue of the paper; absent until one is applied. */
   readonly venue?: VenueView | undefined
   /** Artifact paths relative to the configured workspace directory. */
@@ -304,6 +310,8 @@ export interface ResearchProjectView {
   readonly stage: ProjectStage
   /** Paper directory relative to the workspace root; absent means `paper`. */
   readonly paperDir?: string | undefined
+  /** The paper's entry .tex basename; absent on legacy records means `main.tex` (#249). */
+  readonly entryFile?: string | undefined
   /** Target venue of the paper; absent until one is applied. */
   readonly venue?: VenueView | undefined
   /** Number of completed independent-review rounds. */
