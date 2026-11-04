@@ -296,3 +296,40 @@ describe('ResearchService paper snapshots', () => {
       .resolves.toMatchObject({ ok: false, error: { code: 'snapshot-not-found' } })
   })
 })
+
+describe('snapshot revert with a persisted entry file (#249)', () => {
+  const canFakeLatexmk = process.platform !== 'win32'
+  let workspaceDir: string
+
+  afterEach(async () => {
+    await rm(workspaceDir, { recursive: true, force: true })
+  })
+
+  it.skipIf(!canFakeLatexmk)('anchors the optimistic-concurrency base on the persisted entry file', async () => {
+    const engine = await fakeLatexmk(await mkdtemp(join(tmpdir(), 'mimir-fake-bin-')), true)
+    const env = await harness(engine)
+    workspaceDir = env.workspaceDir
+    await env.domain.table('projects').put(PROJECT.id, { ...PROJECT, entryFile: 'thesis.tex' })
+    await mkdir(join(workspaceDir, 'paper'), { recursive: true })
+    await writeFile(join(workspaceDir, 'paper', 'thesis.tex'), MAIN_TEX, 'utf8')
+    await env.service.compile({ projectId: 'p1' }, new AbortController().signal)
+    const listed = await env.service.listPaperSnapshots({ projectId: 'p1' })
+    const id = listed.ok ? listed.value.snapshots[0]?.id ?? '' : ''
+    expect(id).not.toBe('')
+
+    // The paper moves on through the persisted entry file, not main.tex.
+    const source = await env.service.getPaperSource({ projectId: 'p1' })
+    const base = source.ok ? source.value.mtimeMs : 0
+    const edited = `${MAIN_TEX}\\section{New}\n`
+    const saved = await env.service.savePaperSource({ projectId: 'p1', content: edited, baseMtimeMs: base })
+    expect(saved.ok).toBe(true)
+    expect(await readFile(join(workspaceDir, 'paper', 'thesis.tex'), 'utf8')).toBe(edited)
+
+    const current = await env.service.getPaperSource({ projectId: 'p1' })
+    const reverted = await env.service.revertPaperSnapshot({
+      projectId: 'p1', id, baseMtimeMs: current.ok ? current.value.mtimeMs : 0,
+    })
+    expect(reverted.ok).toBe(true)
+    expect(await readFile(join(workspaceDir, 'paper', 'thesis.tex'), 'utf8')).toBe(MAIN_TEX)
+  })
+})

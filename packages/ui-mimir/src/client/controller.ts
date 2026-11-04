@@ -21,10 +21,9 @@ import { pruneExpiredToasts, pushToast, type ResearchToast, type ResearchToastKi
 import type { EvidenceGraphRequest } from './evidence-graph-view.ts'
 import type {
   ArxivEntry,
-  AddEvidenceEdgeRequest,
-  ResearchAddEvidenceEdgeResult,
   ResearchEvidenceGraphView,
   ResearchGetEvidenceGraphResult,
+  ResearchGetProtocolVersionResult,
   ResearchRetractEvidenceEdgeResult,
   RetractEvidenceEdgeRequest,
   ArxivSubscriptionView,
@@ -77,6 +76,7 @@ import type {
   ResearchExperimentsResult,
   ResearchExportWikiResult,
   ResearchFailure,
+  ResearchResult,
   ResearchFetchPaperPdfResult,
   ResearchFiguresResult,
   ResearchGenerateBriefOptions,
@@ -160,6 +160,8 @@ import type {
   ZoteroItemView,
   ResearchWikiChangeEvent,
 } from 'dsh-mimir/types'
+// Runtime: the handshake's version + verdict, bundled from the same build.
+import { protocolVerdict, RESEARCH_PROTOCOL_VERSION } from 'dsh-mimir/types'
 import {
   createWikiChangeAggregator,
   type LiveSlice,
@@ -182,6 +184,8 @@ export type {
  * literal unions across the boundary).
  */
 export interface ResearchRemote {
+  /** The wire handshake (#250): the host's protocol version. */
+  getProtocolVersion: () => Promise<RemoteResult<ResearchGetProtocolVersionResult>>
   listProjects: () => Promise<RemoteResult<ResearchListProjectsResult>>
   importProject: (request: ResearchImportProjectRequest) => Promise<RemoteResult<ResearchImportProjectResult>>
   createProject: (request: { title: string }) => Promise<RemoteResult<ResearchCreateProjectResult>>
@@ -212,7 +216,6 @@ export interface ResearchRemote {
     tags?: string[] | undefined
     projectIds?: string[] | undefined
     notes?: string | undefined
-    relevance?: { projectId: string; score: number; reason: string } | undefined
   }) => Promise<RemoteResult<ResearchUpdatePaperResult>>
   fetchPaperPdf: (request: { arxivId: string }) => Promise<RemoteResult<ResearchFetchPaperPdfResult>>
   checkZotero: () => Promise<RemoteResult<ResearchCheckZoteroResult>>
@@ -227,7 +230,7 @@ export interface ResearchRemote {
   listArxivSubscriptions: () => Promise<RemoteResult<ResearchArxivSubscriptionsResult>>
   saveArxivSubscription: (request: { query: string }) => Promise<RemoteResult<ResearchSaveArxivSubscriptionResult>>
   deleteArxivSubscription: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteArxivSubscriptionResult>>
-  checkArxivSubscriptions: (request: { id?: string }) => Promise<RemoteResult<ResearchCheckArxivSubscriptionsResult>>
+  checkArxivSubscriptions: () => Promise<RemoteResult<ResearchCheckArxivSubscriptionsResult>>
   listExperiments: (request: { projectId?: string }) => Promise<RemoteResult<ResearchExperimentsResult>>
   deleteExperiment: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteExperimentResult>>
   updateExperiment: (request: {
@@ -430,8 +433,6 @@ export interface ResearchRemote {
     since?: string | undefined
     until?: string | undefined
   }) => Promise<RemoteResult<ResearchGetEvidenceGraphResult>>
-  /** Declare one evidence edge — the panel channel of the graph's writes. */
-  addEvidenceEdge: (request: AddEvidenceEdgeRequest) => Promise<RemoteResult<ResearchAddEvidenceEdgeResult>>
   /** Retract one evidence edge by dedupKey (panel: any edge — human final say). */
   retractEvidenceEdge: (request: RetractEvidenceEdgeRequest) => Promise<RemoteResult<ResearchRetractEvidenceEdgeResult>>
 }
@@ -801,6 +802,8 @@ export interface ResearchSnapshotDetailView {
 
 /** Immutable view published to the panel. */
 export interface ResearchView {
+  /** The host/client protocol handshake (#250); `checking` until it settles. */
+  readonly protocol: ResearchProtocolState
   readonly projects: readonly ResearchProjectView[]
   readonly projectsStatus: ResearchLoadStatus
   readonly projectsFailure: ResearchFailureView | null
@@ -871,6 +874,7 @@ export interface ResearchView {
 }
 
 const INITIAL_VIEW: ResearchView = Object.freeze({
+  protocol: Object.freeze({ status: 'checking' }),
   projects: Object.freeze([]),
   projectsStatus: 'cold',
   projectsFailure: null,
@@ -939,6 +943,41 @@ function businessFailure(error: ResearchFailure): ResearchFailureView {
 function transportFailure(error: unknown): ResearchFailureView {
   return failureOf('transport', error instanceof Error ? error.message : 'research remote call failed')
 }
+
+/**
+ * One settled Remote call with both envelopes peeled: either the business
+ * value, or the failure of whichever layer rejected — the transport carrier
+ * maps through {@link failureOf}, a business rejection through
+ * {@link businessFailure}. The two layers stay distinguishable by code
+ * (transport codes are all `gateway/*`, so no business code collides), and
+ * call sites branch exactly once.
+ */
+type RemoteOutcome<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly failure: ResearchFailureView }
+
+/** Peel both envelopes off one settled Remote call; see {@link RemoteOutcome}. */
+function unwrapRemote<T>(carried: RemoteResult<ResearchResult<T>>): RemoteOutcome<T> {
+  if (!carried.ok) return { ok: false, failure: failureOf(carried.error.code, carried.error.message) }
+  if (!carried.value.ok) return { ok: false, failure: businessFailure(carried.value.error) }
+  return { ok: true, value: carried.value.value }
+}
+
+/**
+ * The host/client handshake state (#250): `checking` until the mount-time
+ * `getProtocolVersion` settles; `incompatible` carries both versions (the
+ * host's is null when the host predates the handshake and the call itself
+ * failed) and the side that must upgrade.
+ */
+export type ResearchProtocolState =
+  | { readonly status: 'checking' }
+  | { readonly status: 'compatible' }
+  | {
+    readonly status: 'incompatible'
+    readonly hostVersion: number | null
+    readonly clientVersion: number
+    readonly verdict: 'host-ahead' | 'client-ahead' | 'unknown'
+  }
 
 /** Whether two evidence window requests name the same fold window (single-flight). */
 function sameEvidenceRequest(left: EvidenceGraphRequest | null, right: EvidenceGraphRequest): boolean {
@@ -1067,8 +1106,56 @@ export class ResearchController implements HostObservable<ResearchView> {
     this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
   }
 
+  /**
+   * The mount-time handshake (#250): compare the host's protocol version with
+   * the one this bundle was built against and publish the verdict. Any call
+   * failure means the host predates the handshake — surfaced as an
+   * unknown-version incompatibility with upgrade guidance instead of a later
+   * random failure at a drifted call. Re-runs on every reconnect resync.
+   */
+  checkProtocol(): void {
+    void (async () => {
+      try {
+        const carried = await this.remote.getProtocolVersion()
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+        if (this.disposed) return
+        const result = unwrapRemote(carried)
+        if (!result.ok) {
+          this.publish({
+            protocol: Object.freeze({
+              status: 'incompatible', hostVersion: null, clientVersion: RESEARCH_PROTOCOL_VERSION, verdict: 'unknown',
+            }),
+          })
+          return
+        }
+        const verdict = protocolVerdict(result.value.version, RESEARCH_PROTOCOL_VERSION)
+        this.publish({
+          protocol: verdict === 'compatible'
+            ? Object.freeze({ status: 'compatible' })
+            : Object.freeze({
+              status: 'incompatible',
+              hostVersion: result.value.version,
+              clientVersion: RESEARCH_PROTOCOL_VERSION,
+              verdict,
+            }),
+        })
+      } catch {
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+        if (this.disposed) return
+        this.publish({
+          protocol: Object.freeze({
+            status: 'incompatible', hostVersion: null, clientVersion: RESEARCH_PROTOCOL_VERSION, verdict: 'unknown',
+          }),
+        })
+      }
+    })()
+  }
+
   /** Re-read the project list (the retry entry and the reconnect resync). */
   resync(): void {
+    // A reconnect may follow a host upgrade: re-run the handshake even when
+    // the panel is cold, so a version change never goes unnoticed.
+    this.checkProtocol()
     if (this.view.projectsStatus === 'cold') return
     this.loadPromise ??= this.loadProjects().finally(() => { this.loadPromise = null })
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
@@ -1085,8 +1172,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.listBackups()
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
       if (this.disposed) return
-      if (!carried.ok || !carried.value.ok) return
-      this.publish({ backup: carried.value.value.backup })
+      const result = unwrapRemote(carried)
+      if (!result.ok) return
+      this.publish({ backup: result.value.backup })
     } catch {
       // Quiet by design: the line simply stays hidden.
     }
@@ -1102,8 +1190,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.getTaskHealth()
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
       if (this.disposed) return
-      if (!carried.ok || !carried.value.ok) return
-      this.publish({ taskHealth: carried.value.value.tasks })
+      const result = unwrapRemote(carried)
+      if (!result.ok) return
+      this.publish({ taskHealth: result.value.tasks })
     } catch {
       // Quiet by design: the block simply stays hidden.
     }
@@ -1144,9 +1233,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async exportWiki(): Promise<ResearchWikiSnapshot | ResearchFailureView> {
     try {
       const carried = await this.remote.exportWiki()
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       return result.value.snapshot
     } catch (error) {
       return transportFailure(error)
@@ -1170,9 +1258,8 @@ export class ResearchController implements HostObservable<ResearchView> {
       // The boundary type is the snapshot shape; the parsed file is unknown
       // here and revalidated row-by-row host-side before any write.
       const carried = await this.remote.importWiki({ snapshot: snapshot as ResearchWikiSnapshot, mode, confirmReplace })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.reloadAll()
       const imported = Object.values(result.value.imported).reduce((sum, count) => sum + count, 0)
       const skipped = Object.values(result.value.skipped).reduce((sum, count) => sum + count, 0)
@@ -1219,13 +1306,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     void (async (): Promise<void> => {
       try {
         const carried = await this.remote.listEvents({ ...filter })
-        if (!carried.ok) {
-          publishLedger({ status: 'error', list: Object.freeze([]), failure: failureOf(carried.error.code, carried.error.message) })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishLedger({ status: 'error', list: Object.freeze([]), failure: businessFailure(result.error) })
+          publishLedger({ status: 'error', list: Object.freeze([]), failure: result.failure })
           return
         }
         publishLedger({ status: 'ready', list: Object.freeze(result.value.events), failure: null })
@@ -1252,14 +1335,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.generateProgressReport({ ...options })
       if (this.disposed || generation !== this.reportGeneration) return null
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ report: Object.freeze({ ...this.view.report, status: 'error', failure }) })
-        return failure
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        const failure = result.failure
         this.publish({ report: Object.freeze({ ...this.view.report, status: 'error', failure }) })
         return failure
       }
@@ -1344,14 +1422,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.generateBrief({ ...options })
       if (this.disposed || generation !== this.briefGeneration) return null
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ brief: Object.freeze({ ...this.view.brief, status: 'error', failure }) })
-        return failure
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        const failure = result.failure
         this.publish({ brief: Object.freeze({ ...this.view.brief, status: 'error', failure }) })
         return failure
       }
@@ -1400,14 +1473,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.generateDigest({ tier, lang })
       if (this.disposed || generation !== this.digestGeneration) return null
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ digest: Object.freeze({ ...this.view.digest, status: 'error', failure }) })
-        return failure
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        const failure = result.failure
         this.publish({ digest: Object.freeze({ ...this.view.digest, status: 'error', failure }) })
         return failure
       }
@@ -1458,9 +1526,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   ): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.setEureka({ ideaId, projectId, title })
-      if (!carried.ok) { this.notify('error', 'eureka.failed'); return failureOf(carried.error.code, carried.error.message) }
-      const result = carried.value
-      if (!result.ok) { this.notify('error', 'eureka.failed'); return businessFailure(result.error) }
+      const result = unwrapRemote(carried)
+      if (!result.ok) { this.notify('error', 'eureka.failed'); return result.failure }
       this.notify('success', 'eureka.ready')
       if (this.view.digest.status === 'ready') void this.generateDigest(this.view.digest.tier, this.view.digest.lang)
       return null
@@ -1479,9 +1546,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async pinMoment(targetEventId: string, note?: string | undefined): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.pinMoment({ targetEventId, note, pinned: true })
-      if (!carried.ok) { this.notify('error', 'moment.failed'); return failureOf(carried.error.code, carried.error.message) }
-      const result = carried.value
-      if (!result.ok) { this.notify('error', 'moment.failed'); return businessFailure(result.error) }
+      const result = unwrapRemote(carried)
+      if (!result.ok) { this.notify('error', 'moment.failed'); return result.failure }
       this.notify('success', 'moment.pinned')
       if (this.view.digest.status === 'ready') void this.generateDigest(this.view.digest.tier, this.view.digest.lang)
       await this.refreshMoments()
@@ -1502,9 +1568,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async declineMoment(targetEventId: string): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.pinMoment({ targetEventId, pinned: false })
-      if (!carried.ok) { this.notify('error', 'moment.failed'); return failureOf(carried.error.code, carried.error.message) }
-      const result = carried.value
-      if (!result.ok) { this.notify('error', 'moment.failed'); return businessFailure(result.error) }
+      const result = unwrapRemote(carried)
+      if (!result.ok) { this.notify('error', 'moment.failed'); return result.failure }
       this.notify('success', 'moment.declined')
       await this.refreshMoments()
       return null
@@ -1540,9 +1605,8 @@ export class ResearchController implements HostObservable<ResearchView> {
         ...(refs?.arousal === undefined ? {} : { arousal: refs.arousal }),
         ...(refs?.question === undefined ? {} : { question: refs.question }),
       })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.notify('success', 'journal.added')
       return null
     } catch (error) {
@@ -1565,14 +1629,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.getWorktree()
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
       if (this.disposed) return
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ worktree: Object.freeze({ status: 'error', view: null, failure }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        const failure = result.failure
         this.publish({ worktree: Object.freeze({ status: 'error', view: null, failure }) })
         return
       }
@@ -1598,14 +1657,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.getForaging()
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
       if (this.disposed) return
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ foraging: Object.freeze({ status: 'error', view: null, failure }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        const failure = result.failure
         this.publish({ foraging: Object.freeze({ status: 'error', view: null, failure }) })
         return
       }
@@ -1638,14 +1692,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.getMomentIndex({})
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
       if (this.disposed) return
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ moments: Object.freeze({ status: 'error', view: null, failure }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        const failure = result.failure
         this.publish({ moments: Object.freeze({ status: 'error', view: null, failure }) })
         return
       }
@@ -1682,14 +1731,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.getEurekaView()
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
       if (this.disposed) return
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ eureka: Object.freeze({ status: 'error', view: null, failure }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        const failure = result.failure
         this.publish({ eureka: Object.freeze({ status: 'error', view: null, failure }) })
         return
       }
@@ -1748,14 +1792,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
       if (this.disposed) return
       if (generation !== this.evidenceGeneration) return
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ evidence: Object.freeze({ status: 'error', view: null, failure }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        const failure = result.failure
         this.publish({ evidence: Object.freeze({ status: 'error', view: null, failure }) })
         return
       }
@@ -1782,9 +1821,8 @@ export class ResearchController implements HostObservable<ResearchView> {
         dedupKey,
         ...(reason === undefined ? {} : { reason }),
       })
-      if (!carried.ok) { this.notify('error', 'evidence.failed'); return failureOf(carried.error.code, carried.error.message) }
-      const result = carried.value
-      if (!result.ok) { this.notify('error', 'evidence.failed'); return businessFailure(result.error) }
+      const result = unwrapRemote(carried)
+      if (!result.ok) { this.notify('error', 'evidence.failed'); return result.failure }
       this.notify('success', 'evidence.retractedToast')
       this.refreshEvidenceGraph()
       return null
@@ -1837,9 +1875,8 @@ export class ResearchController implements HostObservable<ResearchView> {
       : { ideaId: lineId }
     try {
       const carried = await this.remote.setMainline(request)
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.notify('success', 'worktree.mainline.ready')
       this.requeueWorktree()
       return null
@@ -1859,9 +1896,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async setIdeaParent(ideaId: string, parentIdeaId: string | null): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.setIdeaParent({ ideaId, parentIdeaId })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.notify('success', 'worktree.parent.ready')
       this.requeueWorktree()
       return null
@@ -1886,9 +1922,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
     try {
       const carried = await this.remote.closeIdea({ ideaId, reason })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.notify('success', 'worktree.closed')
       this.requeueWorktree()
       // A documented close is a new GUT sample — the baseline refreshes too.
@@ -1907,9 +1942,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async adoptIdea(ideaId: string): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.adoptIdea({ ideaId })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.notify('success', 'worktree.adopted')
       this.requeueWorktree()
       return null
@@ -1958,9 +1992,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.saveArxivSubscription({ query })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadSubscriptions()
       this.notify('success', 'toast.subscriptionSaved', result.value.subscription.query)
       return null
@@ -1978,9 +2011,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.deleteArxivSubscription({ id })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadSubscriptions()
       return null
     } catch (error) {
@@ -2002,20 +2034,14 @@ export class ResearchController implements HostObservable<ResearchView> {
       arxivSubscriptions: Object.freeze({ ...current, checking: true, checkErrors: Object.freeze({}) }),
     })
     try {
-      const carried = await this.remote.checkArxivSubscriptions({})
+      const carried = await this.remote.checkArxivSubscriptions()
       if (this.disposed) return null
-      if (!carried.ok) {
-        this.publish({
-          arxivSubscriptions: Object.freeze({ ...this.view.arxivSubscriptions, checking: false }),
-        })
-        return failureOf(carried.error.code, carried.error.message)
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         this.publish({
           arxivSubscriptions: Object.freeze({ ...this.view.arxivSubscriptions, checking: false }),
         })
-        return businessFailure(result.error)
+        return result.failure
       }
       // Checked subscriptions take their post-check view; unchecked ones (none
       // today — the panel always checks all) carry over.
@@ -2058,23 +2084,13 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.listArxivSubscriptions()
       if (this.disposed) return
-      if (!carried.ok) {
-        this.publish({
-          arxivSubscriptions: Object.freeze({
-            ...this.view.arxivSubscriptions,
-            status: 'error',
-            failure: failureOf(carried.error.code, carried.error.message),
-          }),
-        })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         this.publish({
           arxivSubscriptions: Object.freeze({
             ...this.view.arxivSubscriptions,
             status: 'error',
-            failure: businessFailure(result.error),
+            failure: result.failure,
           }),
         })
         return
@@ -2122,18 +2138,11 @@ export class ResearchController implements HostObservable<ResearchView> {
       }
       try {
         const carried = await this.remote.readArtifact({ projectId, name })
-        if (!carried.ok) {
-          publishArtifact({
-            projectId, name, status: 'error', content: '', mtimeMs: null,
-            failure: failureOf(carried.error.code, carried.error.message),
-          })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
           publishArtifact({
             projectId, name, status: 'error', content: '', mtimeMs: null,
-            failure: businessFailure(result.error),
+            failure: result.failure,
           })
           return
         }
@@ -2181,13 +2190,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       }
       try {
         const carried = await this.remote.listFigures({ projectId, dir: this.dirOf(projectId) })
-        if (!carried.ok) {
-          publishFigures({ projectId, status: 'error', list: [], failure: failureOf(carried.error.code, carried.error.message) })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishFigures({ projectId, status: 'error', list: [], failure: businessFailure(result.error) })
+          publishFigures({ projectId, status: 'error', list: [], failure: result.failure })
           return
         }
         publishFigures({ projectId, status: 'ready', list: result.value.figures, failure: null })
@@ -2216,9 +2221,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async renameFigure(projectId: string, relPath: string, newName: string): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.renameFigure({ projectId, relPath, newName, dir: this.dirOf(projectId) })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.loadFigures(projectId, true)
       // A project switch during the rename makes the re-read stale: it would
       // load the old project's paper over the new one's view.
@@ -2247,9 +2251,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async updateFigure(projectId: string, relPath: string, caption: string): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.updateFigure({ projectId, relPath, caption })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.loadFigures(projectId, true, true)
       return null
     } catch (error) {
@@ -2268,9 +2271,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async deleteFigure(projectId: string, relPath: string): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.deleteFigure({ projectId, relPath, dir: this.dirOf(projectId) })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.loadFigures(projectId, true)
       this.notify('success', 'toast.deleted')
       return null
@@ -2305,13 +2307,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       }
       try {
         const carried = await this.remote.listMeetingDecks({ projectId })
-        if (!carried.ok) {
-          publishMeetings({ projectId, status: 'error', list: [], failure: failureOf(carried.error.code, carried.error.message) })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishMeetings({ projectId, status: 'error', list: [], failure: businessFailure(result.error) })
+          publishMeetings({ projectId, status: 'error', list: [], failure: result.failure })
           return
         }
         publishMeetings({ projectId, status: 'ready', list: result.value.decks, failure: null })
@@ -2348,9 +2346,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   ): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.generateMeetingDeck({ projectId, ...request })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.loadMeetings(projectId, true)
       this.notify('success', 'meetings.generated', String(result.value.slides))
       if (result.value.illustrations > 0) {
@@ -2371,9 +2368,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async deleteMeetingDeck(projectId: string, file: string): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.deleteMeetingDeck({ projectId, file })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.loadMeetings(projectId, true)
       this.notify('success', 'toast.deleted')
       return null
@@ -2400,13 +2396,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.getImageGenConfig()
       if (this.disposed) return
-      if (!carried.ok) {
-        this.publish({ imageGen: Object.freeze({ ...this.view.imageGen, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        this.publish({ imageGen: Object.freeze({ ...this.view.imageGen, status: 'error', failure: businessFailure(result.error) }) })
+        this.publish({ imageGen: Object.freeze({ ...this.view.imageGen, status: 'error', failure: result.failure }) })
         return
       }
       this.publish({ imageGen: Object.freeze({ status: 'ready', ...result.value, failure: null }) })
@@ -2432,9 +2424,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   }): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.setImageGenConfig(input)
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.publish({ imageGen: Object.freeze({ status: 'ready', ...result.value, failure: null }) })
       this.notify('success', 'meetings.imageGenSaved')
       return null
@@ -2454,13 +2445,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.getDigdigConfig()
       if (this.disposed) return
-      if (!carried.ok) {
-        this.publish({ digdigConfig: Object.freeze({ ...this.view.digdigConfig, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        this.publish({ digdigConfig: Object.freeze({ ...this.view.digdigConfig, status: 'error', failure: businessFailure(result.error) }) })
+        this.publish({ digdigConfig: Object.freeze({ ...this.view.digdigConfig, status: 'error', failure: result.failure }) })
         return
       }
       this.publish({ digdigConfig: Object.freeze({ status: 'ready', ...result.value, failure: null }) })
@@ -2486,9 +2473,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   }): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.setDigdigConfig(input)
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.publish({ digdigConfig: Object.freeze({ status: 'ready', ...result.value, failure: null }) })
       this.notify('success', 'papers.digdigConfigSaved')
       return null
@@ -2514,13 +2500,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.listVenueTemplates()
       if (this.disposed) return
-      if (!carried.ok) {
-        this.publish({ venueTemplates: Object.freeze({ ...this.view.venueTemplates, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        this.publish({ venueTemplates: Object.freeze({ ...this.view.venueTemplates, status: 'error', failure: businessFailure(result.error) }) })
+        this.publish({ venueTemplates: Object.freeze({ ...this.view.venueTemplates, status: 'error', failure: result.failure }) })
         return
       }
       this.publish({ venueTemplates: Object.freeze({ status: 'ready', list: result.value.templates, failure: null }) })
@@ -2550,9 +2532,8 @@ export class ResearchController implements HostObservable<ResearchView> {
         ...(options.templateId === undefined ? {} : { templateId: options.templateId }),
         ...(options.customName === undefined ? {} : { customName: options.customName }),
       })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.notify('success', 'toast.venueApplied', result.value.venue.name)
       void this.loadProjects()
       return null
@@ -2569,9 +2550,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async clearVenueTemplate(projectId: string): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.clearVenueTemplate({ projectId })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.notify('success', 'toast.venueCleared')
       void this.loadProjects()
       return null
@@ -2622,8 +2602,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.refreshVenueDeadlines()
       if (this.disposed) return
-      if (!carried.ok) { this.notify('error', 'toast.venueRefreshFailed'); return }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) { this.notify('error', 'toast.venueRefreshFailed'); return }
       this.notify('success', 'toast.venueRefreshed')
       this.refreshVenues(projectId)
@@ -2643,13 +2622,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.listVenueDeadlines(projectId === null ? {} : { projectId })
       if (this.disposed || generation !== this.venuesGeneration) return
-      if (!carried.ok) {
-        this.publish({ venues: Object.freeze({ ...this.view.venues, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        this.publish({ venues: Object.freeze({ ...this.view.venues, status: 'error', failure: businessFailure(result.error) }) })
+        this.publish({ venues: Object.freeze({ ...this.view.venues, status: 'error', failure: result.failure }) })
         return
       }
       this.publish({
@@ -2692,7 +2667,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.setVenueWatch({ projectId, series: seriesKey, watched: !watched })
       if (this.disposed) return
-      if (!carried.ok || !carried.value.ok) throw new Error('watch rejected')
+      if (!unwrapRemote(carried).ok) throw new Error('watch rejected')
     } catch {
       if (this.disposed) return
       // Roll back only this flip, by key, against the CURRENT list: a blanket
@@ -2735,13 +2710,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       }
       try {
         const carried = await this.remote.listPaperSnapshots({ projectId })
-        if (!carried.ok) {
-          publishSnapshots({ projectId, status: 'error', list: [], failure: failureOf(carried.error.code, carried.error.message) })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSnapshots({ projectId, status: 'error', list: [], failure: businessFailure(result.error) })
+          publishSnapshots({ projectId, status: 'error', list: [], failure: result.failure })
           return
         }
         publishSnapshots({ projectId, status: 'ready', list: result.value.snapshots, failure: null })
@@ -2773,13 +2744,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       }
       try {
         const carried = await this.remote.getPaperSnapshot({ projectId, id })
-        if (!carried.ok) {
-          publishDetail({ projectId, id, status: 'error', files: [], failure: failureOf(carried.error.code, carried.error.message) })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishDetail({ projectId, id, status: 'error', files: [], failure: businessFailure(result.error) })
+          publishDetail({ projectId, id, status: 'error', files: [], failure: result.failure })
           return
         }
         publishDetail({ projectId, id, status: 'ready', files: result.value.files, failure: null })
@@ -2815,12 +2782,11 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.revertPaperSnapshot({
         projectId, id, baseMtimeMs: source.mtimeMs, dir: this.dirOf(projectId),
       })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         // A project switch during the revert makes the re-read stale.
-        if (result.error.code === 'conflict' && this.view.source?.projectId === projectId) this.refreshPaper(projectId)
-        return businessFailure(result.error)
+        if (result.failure.code === 'conflict' && this.view.source?.projectId === projectId) this.refreshPaper(projectId)
+        return result.failure
       }
       if (this.view.source?.projectId === projectId) this.refreshPaper(projectId)
       this.snapshotsInFlight = false
@@ -2872,13 +2838,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (isSvgFigure(entry.name)) {
       try {
         const carried = await this.remote.convertFigure({ projectId, relPath: entry.relPath, dir: this.dirOf(projectId) })
-        if (!carried.ok) {
-          this.notify('error', 'toast.figureSvgConvertFailed', carried.error.message)
-          return null
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          this.notify('error', 'toast.figureSvgConvertFailed', businessFailure(result.error).message)
+          this.notify('error', 'toast.figureSvgConvertFailed', result.failure.message)
           return null
         }
         relPath = result.value.relPath
@@ -2939,13 +2901,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     let saved: { relPath: string; caption: string }
     try {
       const carried = await this.remote.saveFigure({ projectId, name, content, caption, dir: this.dirOf(projectId) })
-      if (!carried.ok) {
-        this.notify('error', 'toast.metricFigureFailed', carried.error.message)
-        return null
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        this.notify('error', 'toast.metricFigureFailed', businessFailure(result.error).message)
+        this.notify('error', 'toast.metricFigureFailed', result.failure.message)
         return null
       }
       saved = result.value
@@ -3004,9 +2962,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.getPaperSource({ projectId, dir: this.dirOf(projectId) })
       if (this.disposed || generation !== this.sourceGeneration) return null
-      if (!carried.ok) return fail(failureOf(carried.error.code, carried.error.message))
-      const result = carried.value
-      if (!result.ok) return fail(businessFailure(result.error))
+      const result = unwrapRemote(carried)
+      if (!result.ok) return fail(result.failure)
       const view: ResearchSourceView = Object.freeze({
         projectId, status: 'ready', content: result.value.content,
         mtimeMs: result.value.mtimeMs, saveState: 'clean', failure: null,
@@ -3038,12 +2995,11 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.reorderPaperSections({
         projectId, moves: [...moves], baseOutline: [...baseOutline], dir: this.dirOf(projectId),
       })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         // A project switch during the reorder makes the re-read stale.
-        if (result.error.code === 'conflict' && this.view.source?.projectId === projectId) this.refreshPaper(projectId)
-        return businessFailure(result.error)
+        if (result.failure.code === 'conflict' && this.view.source?.projectId === projectId) this.refreshPaper(projectId)
+        return result.failure
       }
       if (this.view.source?.projectId === projectId) this.refreshPaper(projectId)
       return null
@@ -3075,12 +3031,11 @@ export class ResearchController implements HostObservable<ResearchView> {
         baseOutline: baseOutline.map(section => ({ title: section.title, subsections: [...section.subsections] })),
         dir: this.dirOf(projectId),
       })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         // A project switch during the reorder makes the re-read stale.
-        if (result.error.code === 'conflict' && this.view.source?.projectId === projectId) this.refreshPaper(projectId)
-        return businessFailure(result.error)
+        if (result.failure.code === 'conflict' && this.view.source?.projectId === projectId) this.refreshPaper(projectId)
+        return result.failure
       }
       if (this.view.source?.projectId === projectId) this.refreshPaper(projectId)
       return null
@@ -3110,13 +3065,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       }
       try {
         const carried = await this.remote.searchArxiv({ query: trimmed })
-        if (!carried.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: failureOf(carried.error.code, carried.error.message) })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: businessFailure(result.error) })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
           return
         }
         publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
@@ -3148,13 +3099,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       }
       try {
         const carried = await this.remote.searchWeb({ query: trimmed })
-        if (!carried.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: failureOf(carried.error.code, carried.error.message) })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: businessFailure(result.error) })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
           return
         }
         publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
@@ -3178,9 +3125,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.importPaper(projectId === undefined ? { entry } : { entry, projectId })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadPapers()
       this.notify('success', 'toast.paperImported')
       return null
@@ -3202,9 +3148,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async importProject(path: string, title?: string): Promise<ResearchImportedProject | ResearchFailureView> {
     try {
       const carried = await this.remote.importProject(title === undefined ? { path } : { path, title })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadProjects()
       this.notify('success', 'toast.projectImported', result.value.title)
       return result.value
@@ -3224,9 +3169,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async createProject(title: string): Promise<ResearchProjectView | ResearchFailureView> {
     try {
       const carried = await this.remote.createProject({ title })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadProjects()
       this.notify('success', 'toast.projectCreated', result.value.project.title)
       return result.value.project
@@ -3245,9 +3189,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async renameProject(projectId: string, title: string): Promise<ResearchProjectView | ResearchFailureView> {
     try {
       const carried = await this.remote.renameProject({ projectId, title })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadProjects()
       this.notify('success', 'toast.projectRenamed', result.value.project.title)
       return result.value.project
@@ -3267,9 +3210,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   async deleteProject(projectId: string): Promise<ResearchFailureView | null> {
     try {
       const carried = await this.remote.deleteProject({ projectId, confirm: true })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadProjects()
       this.notify('success', 'toast.projectDeleted')
       return null
@@ -3288,9 +3230,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.removePaper({ arxivId })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadPapers()
       this.notify('success', 'toast.deleted')
       return null
@@ -3314,9 +3255,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.updatePaper({ arxivId, ...patch })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadPapers()
       return null
     } catch (error) {
@@ -3335,9 +3275,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.fetchPaperPdf({ arxivId })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadPapers()
       this.notify('success', 'toast.pdfFetched')
       return null
@@ -3370,18 +3309,11 @@ export class ResearchController implements HostObservable<ResearchView> {
     publishZotero({ status: 'loading', state: null, message: null, collections: [], failure: null })
     try {
       const carried = await this.remote.checkZotero()
-      if (!carried.ok) {
-        publishZotero({
-          status: 'error', state: null, message: null, collections: [],
-          failure: failureOf(carried.error.code, carried.error.message),
-        })
-        return
-      }
-      const probe = carried.value
+      const probe = unwrapRemote(carried)
       if (!probe.ok) {
         publishZotero({
           status: 'error', state: null, message: null, collections: [],
-          failure: businessFailure(probe.error),
+          failure: probe.failure,
         })
         return
       }
@@ -3394,21 +3326,15 @@ export class ResearchController implements HostObservable<ResearchView> {
         return
       }
       const listed = await this.remote.listZoteroCollections()
-      if (!listed.ok) {
+      const result = unwrapRemote(listed)
+      if (!result.ok) {
         publishZotero({
           status: 'error', state: null, message: null, collections: [],
-          failure: failureOf(listed.error.code, listed.error.message),
+          failure: result.failure,
         })
         return
       }
-      if (!listed.value.ok) {
-        publishZotero({
-          status: 'error', state: null, message: null, collections: [],
-          failure: businessFailure(listed.value.error),
-        })
-        return
-      }
-      publishZotero({ status: 'ready', state: 'ok', message: null, collections: listed.value.value.collections, failure: null })
+      publishZotero({ status: 'ready', state: 'ok', message: null, collections: result.value.collections, failure: null })
     } catch (error) {
       publishZotero({ status: 'error', state: null, message: null, collections: [], failure: transportFailure(error) })
     }
@@ -3435,13 +3361,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       }
       try {
         const carried = await this.remote.searchZotero({ query: trimmed })
-        if (!carried.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: failureOf(carried.error.code, carried.error.message) })
-          return
-        }
-        const result = carried.value
+        const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: businessFailure(result.error) })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
           return
         }
         publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
@@ -3465,9 +3387,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.importZoteroItem(projectId === undefined ? { key } : { key, projectId })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadPapers()
       this.notify('success', 'toast.paperImported')
       return null
@@ -3492,9 +3413,8 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.exportZoteroCollectionToBib({
         projectId, collectionKey, dir: this.dirOf(projectId),
       })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       const counts = Object.freeze({ added: result.value.added, skipped: result.value.skipped })
       if (this.disposed) return counts
       this.notify('success', 'toast.bibImported', `× ${counts.added}`)
@@ -3615,19 +3535,16 @@ export class ResearchController implements HostObservable<ResearchView> {
       if (this.disposed || generation !== this.bibGeneration) return null
       const current = this.view.bib
       if (current === null || current.projectId !== bib.projectId || current.status !== 'ready') return null
-      if (!carried.ok) {
-        const failure = failureOf(carried.error.code, carried.error.message)
-        this.publish({ bib: Object.freeze({ ...current, saveState: 'save-error', failure }) })
-        return failure
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        const failure = businessFailure(result.error)
+        // Transport codes are all gateway/*, so a 'conflict' here is always
+        // the host's mtime guard: keep the draft, flag no failure.
+        const failure = result.failure
         this.publish({
           bib: Object.freeze({
             ...current,
-            saveState: result.error.code === 'conflict' ? 'conflict' : 'save-error',
-            failure: result.error.code === 'conflict' ? null : failure,
+            saveState: failure.code === 'conflict' ? 'conflict' : 'save-error',
+            failure: failure.code === 'conflict' ? null : failure,
           }),
         })
         return failure
@@ -3666,9 +3583,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   ): Promise<ResearchFailureView | ResearchImportCounts> {
     try {
       const carried = await this.remote.importPapersToBib({ projectId, arxivIds, dir: this.dirOf(projectId) })
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       const counts = Object.freeze({ added: result.value.added, skipped: result.value.skipped })
       if (this.disposed) return counts
       this.notify('success', 'toast.bibImported', `× ${counts.added}`)
@@ -3694,18 +3610,11 @@ export class ResearchController implements HostObservable<ResearchView> {
       : null
     try {
       const carried = await this.remote.getBibliography({ projectId, dir: this.dirOf(projectId) })
-      if (!carried.ok) {
-        publishBib({
-          projectId, status: 'error', entries: [], mtimeMs: null,
-          saveState: 'clean', failure: failureOf(carried.error.code, carried.error.message), lastImport,
-        })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         publishBib({
           projectId, status: 'error', entries: [], mtimeMs: null,
-          saveState: 'clean', failure: businessFailure(result.error), lastImport,
+          saveState: 'clean', failure: result.failure, lastImport,
         })
         return
       }
@@ -3732,9 +3641,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.deleteExperiment({ id })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       const current = this.view.experiments
       if (current !== null) {
         this.publish({
@@ -3763,9 +3671,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.updateExperiment({ id, serverId })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       const current = this.view.experiments
       if (current !== null) {
         this.publish({
@@ -3794,9 +3701,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.saveExperiment({ experiment })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       const saved = result.value.experiment
       const current = this.view.experiments
       if (current !== null) {
@@ -3832,9 +3738,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.saveServer({ server })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       await this.loadServers()
       return null
     } catch (error) {
@@ -3851,9 +3756,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.deleteServer({ id })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       const checks = { ...this.view.serverChecks }
       delete checks[id]
       this.publish({ serverChecks: Object.freeze(checks) })
@@ -3901,9 +3805,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     })
     try {
       const carried = await this.remote.checkServer({ id })
-      if (!carried.ok) return offline(carried.error.message)
-      const result = carried.value
-      if (!result.ok) return offline(businessFailure(result.error).message)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return offline(result.failure.message)
       return result.value
     } catch (error) {
       return offline(error instanceof Error ? error.message : 'server probe failed')
@@ -3916,16 +3819,10 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.listServers()
       if (this.disposed) return
-      if (!carried.ok) {
-        this.publish({
-          servers: Object.freeze({ ...this.view.servers, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }),
-        })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         this.publish({
-          servers: Object.freeze({ ...this.view.servers, status: 'error', failure: businessFailure(result.error) }),
+          servers: Object.freeze({ ...this.view.servers, status: 'error', failure: result.failure }),
         })
         return
       }
@@ -3968,9 +3865,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.submitJob({ serverId, command, experimentId })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       this.refreshJobs()
       this.notify('success', 'toast.jobSubmitted')
       return null
@@ -3988,9 +3884,8 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.deleteJob({ id })
       if (this.disposed) return null
-      if (!carried.ok) return failureOf(carried.error.code, carried.error.message)
-      const result = carried.value
-      if (!result.ok) return businessFailure(result.error)
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
       const current = this.view.jobs
       this.publish({
         jobs: Object.freeze({
@@ -4013,16 +3908,10 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.listJobs({})
       if (this.disposed) return
-      if (!carried.ok) {
-        this.publish({
-          jobs: Object.freeze({ ...this.view.jobs, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }),
-        })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         this.publish({
-          jobs: Object.freeze({ ...this.view.jobs, status: 'error', failure: businessFailure(result.error) }),
+          jobs: Object.freeze({ ...this.view.jobs, status: 'error', failure: result.failure }),
         })
         return
       }
@@ -4202,14 +4091,9 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.compile({ projectId, dir: this.dirOf(projectId) }, abort.signal)
       // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
       if (this.disposed || generation !== this.compileGeneration || this.compileProject !== projectId) return
-      if (!carried.ok) {
-        this.publishCompileError(projectId, failureOf(carried.error.code, carried.error.message))
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        // E.g. latexmk missing on the host: no log, only the message.
-        this.publishCompileError(projectId, businessFailure(result.error))
+        this.publishCompileError(projectId, result.failure)
         return
       }
       this.publish({
@@ -4354,11 +4238,12 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.getPaperSource({ projectId, dir: this.dirOf(projectId) })
       // A newer re-read started while this one flew: discard the stale reply.
       if (seq !== this.liveSourceReadSeq) return
-      if (this.disposed || !carried.ok || !carried.value.ok) return
+      const result = unwrapRemote(carried)
+      if (this.disposed || !result.ok) return
       const current = this.view.source
       if (current === null || current.projectId !== projectId || current.status !== 'ready') return
       if (current.saveState !== 'clean' && current.saveState !== 'saved') return
-      const { content, mtimeMs } = carried.value.value
+      const { content, mtimeMs } = result.value
       if (content === current.content && mtimeMs === current.mtimeMs) return
       this.publish({
         source: Object.freeze({
@@ -4393,14 +4278,10 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.listProjects()
       if (this.disposed) return
-      if (!carried.ok) {
-        // A failed refresh keeps the last good list; the next live refresh retries.
-        if (!refreshing) this.publish({ projectsStatus: 'error', projectsFailure: failureOf(carried.error.code, carried.error.message) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        if (!refreshing) this.publish({ projectsStatus: 'error', projectsFailure: businessFailure(result.error) })
+        // A failed refresh keeps the last good list; the next live refresh retries.
+        if (!refreshing) this.publish({ projectsStatus: 'error', projectsFailure: result.failure })
         return
       }
       this.publish({ projects: result.value.projects, projectsStatus: 'ready', projectsFailure: null })
@@ -4418,16 +4299,10 @@ export class ResearchController implements HostObservable<ResearchView> {
     try {
       const carried = await this.remote.listPapers()
       if (this.disposed) return
-      if (!carried.ok) {
-        this.publish({
-          papers: Object.freeze({ ...this.view.papers, status: 'error', failure: failureOf(carried.error.code, carried.error.message) }),
-        })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         this.publish({
-          papers: Object.freeze({ ...this.view.papers, status: 'error', failure: businessFailure(result.error) }),
+          papers: Object.freeze({ ...this.view.papers, status: 'error', failure: result.failure }),
         })
         return
       }
@@ -4450,13 +4325,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
     try {
       const carried = await this.remote.listExperiments({ projectId })
-      if (!carried.ok) {
-        publishExperiments({ projectId, status: 'error', list: [], failure: failureOf(carried.error.code, carried.error.message) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        publishExperiments({ projectId, status: 'error', list: [], failure: businessFailure(result.error) })
+        publishExperiments({ projectId, status: 'error', list: [], failure: result.failure })
         return
       }
       publishExperiments({ projectId, status: 'ready', list: result.value.experiments, failure: null })
@@ -4491,13 +4362,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
     try {
       const carried = await this.remote.getPaperOutline({ projectId, dir: this.dirOf(projectId) })
-      if (!carried.ok) {
-        publishOutline({ projectId, status: 'error', nodes: [], failure: failureOf(carried.error.code, carried.error.message) })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
-        publishOutline({ projectId, status: 'error', nodes: [], failure: businessFailure(result.error) })
+        publishOutline({ projectId, status: 'error', nodes: [], failure: result.failure })
         return
       }
       publishOutline({ projectId, status: 'ready', nodes: result.value.nodes, failure: null })
@@ -4514,9 +4381,10 @@ export class ResearchController implements HostObservable<ResearchView> {
       // A compile started meanwhile owns the compile view; do not overwrite it
       // with a pre-run snapshot.
       if (this.disposed || generation !== this.compileGeneration || this.compileProject !== null || this.view.compile.projectId !== projectId) return
-      if (!carried.ok || !carried.value.ok) return
+      const result = unwrapRemote(carried)
+      if (!result.ok) return
       this.publish({
-        compile: Object.freeze({ ...carried.value.value, projectId }),
+        compile: Object.freeze({ ...result.value, projectId }),
       })
     } catch {
       // A status probe failure leaves the previous view in place; the compile
@@ -4532,18 +4400,11 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
     try {
       const carried = await this.remote.getPaperSource({ projectId, dir: this.dirOf(projectId) })
-      if (!carried.ok) {
-        publishSource({
-          projectId, status: 'error', content: '', mtimeMs: null,
-          saveState: 'clean', failure: failureOf(carried.error.code, carried.error.message),
-        })
-        return
-      }
-      const result = carried.value
+      const result = unwrapRemote(carried)
       if (!result.ok) {
         publishSource({
           projectId, status: 'error', content: '', mtimeMs: null,
-          saveState: 'clean', failure: businessFailure(result.error),
+          saveState: 'clean', failure: result.failure,
         })
         return
       }
@@ -4585,26 +4446,21 @@ export class ResearchController implements HostObservable<ResearchView> {
       const carried = await this.remote.savePaperSource({
         projectId, content, baseMtimeMs: mtimeMs, dir: this.dirOf(projectId),
       })
-      if (carried.ok && carried.value.ok) settledMtimeMs = carried.value.value.mtimeMs
+      const result = unwrapRemote(carried)
+      if (result.ok) settledMtimeMs = result.value.mtimeMs
       // A reselection or reload superseded this draft; its reply is stale.
       if (this.disposed || generation !== this.sourceGeneration) return
       const current = this.view.source
       if (current === null || current.projectId !== projectId || current.status !== 'ready') return
-      if (!carried.ok) {
-        this.publish({
-          source: Object.freeze({ ...current, saveState: 'save-error', failure: failureOf(carried.error.code, carried.error.message) }),
-        })
-        return
-      }
-      const result = carried.value
       if (!result.ok) {
-        if (result.error.code === 'conflict') {
+        if (result.failure.code === 'conflict') {
           // The agent landed a newer version: keep the draft, freeze editing,
-          // and let the panel offer the reload.
+          // and let the panel offer the reload. (Transport codes are all
+          // gateway/*, so 'conflict' is always the host's mtime guard.)
           this.publish({ source: Object.freeze({ ...current, saveState: 'conflict' }) })
         } else {
           this.publish({
-            source: Object.freeze({ ...current, saveState: 'save-error', failure: businessFailure(result.error) }),
+            source: Object.freeze({ ...current, saveState: 'save-error', failure: result.failure }),
           })
         }
         return

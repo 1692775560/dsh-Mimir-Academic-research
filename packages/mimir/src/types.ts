@@ -1,7 +1,9 @@
 /**
- * Research-suite record, verdict, and web-panel wire types. Types only — the
- * zod schemas that validate these records at the durable boundary live in
- * `./store.ts`.
+ * Research-suite record, verdict, and web-panel wire types — plus the two
+ * runtime symbols of the host/client protocol handshake (`./protocol.ts`),
+ * re-exported here so the panel reads them through the client-safe `/types`
+ * channel. The zod schemas that validate these records at the durable
+ * boundary live in `./store.ts`.
  * @module dsh-mimir/types
  */
 
@@ -33,6 +35,9 @@ export type {
 export type { OutlineNode, SectionMove, SectionOutlineTitles, SubsectionMove } from './outline.ts'
 export type { BibEntry } from './bibtex.ts'
 import type { BibEntry } from './bibtex.ts'
+// The handshake's two runtime symbols ride this client-safe channel (#250).
+export { RESEARCH_PROTOCOL_VERSION, protocolVerdict } from './protocol.ts'
+export type { ResearchProtocolVerdict } from './protocol.ts'
 
 /**
  * One parsed arXiv entry, shared by both arXiv tools' output. Defined here
@@ -147,6 +152,12 @@ export interface ProjectRecord {
    * each project point at its own LaTeX tree under the same workspace.
    */
   readonly paperDir?: string | undefined
+  /**
+   * The paper's entry .tex basename, picked at import (`main.tex` preferred,
+   * else the first top-level file with `\documentclass`). Absent on records
+   * that predate the field — every reader falls back to `main.tex` (#249).
+   */
+  readonly entryFile?: string | undefined
   /** Target venue of the paper; absent until one is applied. */
   readonly venue?: VenueView | undefined
   /** Artifact paths relative to the configured workspace directory. */
@@ -299,6 +310,8 @@ export interface ResearchProjectView {
   readonly stage: ProjectStage
   /** Paper directory relative to the workspace root; absent means `paper`. */
   readonly paperDir?: string | undefined
+  /** The paper's entry .tex basename; absent on legacy records means `main.tex` (#249). */
+  readonly entryFile?: string | undefined
   /** Target venue of the paper; absent until one is applied. */
   readonly venue?: VenueView | undefined
   /** Number of completed independent-review rounds. */
@@ -992,8 +1005,9 @@ export type ResearchZoteroExportResult = ResearchResult<{
 
 /**
  * The research-wiki tables carried by an export snapshot, in domain order
- * (the runtime-only `jobs` table is excluded; `events` — the CBE engine's
- * single source of truth — is included since snapshot v3).
+ * (the runtime-only `jobs` table and the per-project `venue_watches` follow
+ * list are excluded; `events` — the CBE engine's single source of truth — is
+ * included since snapshot v3).
  */
 export type ResearchWikiTableName = 'papers' | 'ideas' | 'claims' | 'projects' | 'experiments' | 'servers' | 'figures' | 'events'
 
@@ -1021,10 +1035,28 @@ export interface ResearchWikiSnapshot {
   readonly version: 2 | 3
   readonly exportedAt: string
   readonly tables: ResearchWikiSnapshotTables
+  /**
+   * Domain tables the snapshot deliberately does NOT carry (`jobs` is
+   * runtime state; `venue_watches` is the per-project meeting follow list —
+   * an import leaves both untouched). Written since snapshot v3; absent in
+   * older files, whose exclusion set is exactly this list.
+   */
+  readonly excludedTables?: readonly string[]
 }
 
 /** `exportWiki` result: the full snapshot. */
 export type ResearchExportWikiResult = ResearchResult<{ readonly snapshot: ResearchWikiSnapshot }>
+
+/**
+ * `getProtocolVersion` result (#250): the host's wire protocol version. The
+ * panel compares it with its built-in copy on mount and shows an explicit
+ * incompatibility notice — with the side that must upgrade — instead of
+ * failing later at a random drifted call.
+ */
+export type ResearchGetProtocolVersionResult = ResearchResult<{
+  /** The host's protocol version (`RESEARCH_PROTOCOL_VERSION` of the build). */
+  readonly version: number
+}>
 
 /** `importWiki` mode: merge upserts only absent keys; replace wipes first. */
 export type ResearchImportWikiMode = 'merge' | 'replace'

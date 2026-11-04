@@ -222,6 +222,7 @@ export function ResearchPanel({
   const servers = useResearch(view => view.servers)
   const serverChecks = useResearch(view => view.serverChecks)
   const jobs = useResearch(view => view.jobs)
+  const protocol = useResearch(view => view.protocol)
   const bib = useResearch(view => view.bib)
   const snapshots = useResearch(view => view.snapshots)
   const venueTemplates = useResearch(view => view.venueTemplates)
@@ -469,6 +470,16 @@ export function ResearchPanel({
       {/* Fixed full-viewport dimmer; painted behind the window's own content
           (negative z-index inside the workbench stacking context). */}
       <div className={css.backdrop} aria-hidden />
+      {protocol.status === 'incompatible' && (
+        <p className={css.protocolBanner} role="alert">
+          {t('protocol.banner', {
+            detail: protocol.hostVersion === null
+              ? t('protocol.hostUnknown')
+              : t('protocol.versions', { client: protocol.clientVersion, host: protocol.hostVersion }),
+            action: t(protocol.verdict === 'host-ahead' ? 'protocol.upgradeClient' : 'protocol.upgradeHost'),
+          })}
+        </p>
+      )}
       <aside className={css.side} data-folded={sidebarFolded || undefined}>
         <div className={css.sideHead}>
           <div className={css.brand}>
@@ -744,6 +755,7 @@ export function ResearchPanel({
             projectId={selectedProjectId}
             projectTitle={selectedProject?.title}
             dir={selectedProject?.paperDir}
+            entryFile={selectedProject?.entryFile}
             editSource={editSource}
             reloadSource={reloadSource}
             compile={compile}

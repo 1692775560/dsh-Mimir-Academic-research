@@ -1691,7 +1691,7 @@ describe('ResearchService arXiv subscriptions (facade)', () => {
     if (!saved.ok) throw new Error('unreachable')
     const id = saved.value.subscription.id
     // The first check only seeds the baseline: seen, but nothing new.
-    const checked = await service.checkArxivSubscriptions({ id })
+    const checked = await service.checkArxivSubscriptions()
     if (!checked.ok) throw new Error('unreachable')
     expect(checked.value.checks).toHaveLength(1)
     expect(checked.value.checks[0]).toMatchObject({ added: [], error: null })
@@ -1700,8 +1700,6 @@ describe('ResearchService arXiv subscriptions (facade)', () => {
     const listed = await service.listArxivSubscriptions()
     if (!listed.ok) throw new Error('unreachable')
     expect(listed.value.subscriptions).toMatchObject([{ id, query: 'egocentric whole body', newEntries: [] }])
-    await expect(service.checkArxivSubscriptions({ id: 'nope' }))
-      .resolves.toMatchObject({ ok: false, error: { code: 'subscription-not-found' } })
     await expect(service.deleteArxivSubscription({ id })).resolves.toEqual({ ok: true, value: { id } })
     const empty = await service.listArxivSubscriptions()
     expect(empty.ok && empty.value.subscriptions.length).toBe(0)
@@ -1716,9 +1714,9 @@ describe('ResearchService arXiv subscriptions (facade)', () => {
     vi.stubGlobal('fetch', async () => new Response(
       '<feed xmlns="http://www.w3.org/2005/Atom"></feed>', { status: 200 },
     ))
-    await service.checkArxivSubscriptions({ id })
+    await service.checkArxivSubscriptions()
     vi.stubGlobal('fetch', async () => new Response(ARXIV_FEED, { status: 200 }))
-    const checked = await service.checkArxivSubscriptions({ id })
+    const checked = await service.checkArxivSubscriptions()
     if (!checked.ok) throw new Error('unreachable')
     expect(checked.value.checks[0]?.added).toEqual([ARXIV_ENTRY])
     const listed = await service.listArxivSubscriptions()
@@ -1736,9 +1734,11 @@ describe('ResearchService.importPaper project link', () => {
     expect(first).toEqual({ ok: true, value: { imported: true } })
     expect(domain.table('papers').get(ARXIV_ENTRY.id)?.projectIds).toEqual(['p1'])
     // A re-import without the project keeps the existing link and relevance.
-    await service.updatePaper({
-      arxivId: ARXIV_ENTRY.id,
-      relevance: { projectId: 'p1', score: 8, reason: 'central' },
+    const importedPaper = domain.table('papers').get(ARXIV_ENTRY.id)
+    if (importedPaper === undefined) throw new Error('unreachable')
+    await domain.table('papers').put(ARXIV_ENTRY.id, {
+      ...importedPaper,
+      relevance: { p1: { score: 8, reason: 'central', at: '2026-08-20T00:00:00.000Z' } },
     })
     const again = await service.importPaper({ entry: ARXIV_ENTRY })
     expect(again).toEqual({ ok: true, value: { imported: false } })
@@ -1751,48 +1751,6 @@ describe('ResearchService.importPaper project link', () => {
     const { service } = await harness()
     await expect(service.importPaper({ entry: ARXIV_ENTRY, projectId: 'nope' }))
       .resolves.toMatchObject({ ok: false, error: { code: 'project-not-found' } })
-  })
-})
-
-describe('ResearchService.updatePaper relevance', () => {
-  it('scores a paper against one project without touching other verdicts', async () => {
-    const { domain, service } = await harness()
-    await domain.table('projects').put(PROJECT.id, PROJECT)
-    await domain.table('projects').put('p2', { ...PROJECT, id: 'p2' })
-    await service.importPaper({ entry: ARXIV_ENTRY })
-    const scored = await service.updatePaper({
-      arxivId: ARXIV_ENTRY.id,
-      relevance: { projectId: 'p1', score: 8.5, reason: 'central to the direction' },
-    })
-    if (!scored.ok) throw new Error('unreachable')
-    expect(scored.value.paper.relevance?.['p1']?.score).toBe(8.5)
-    const rescored = await service.updatePaper({
-      arxivId: ARXIV_ENTRY.id,
-      relevance: { projectId: 'p2', score: 2, reason: 'peripheral there' },
-    })
-    if (!rescored.ok) throw new Error('unreachable')
-    expect(rescored.value.paper.relevance?.['p1']?.score).toBe(8.5)
-    expect(rescored.value.paper.relevance?.['p2']?.score).toBe(2)
-  })
-
-  it('rejects an out-of-range score and an unknown project', async () => {
-    const { service } = await harness()
-    await service.importPaper({ entry: ARXIV_ENTRY })
-    await expect(service.updatePaper({
-      arxivId: ARXIV_ENTRY.id,
-      relevance: { projectId: 'p1', score: 11, reason: 'too high' },
-    })).resolves.toMatchObject({ ok: false, error: { code: 'project-not-found' } })
-    const { domain, service: service2 } = await harness()
-    await domain.table('projects').put(PROJECT.id, PROJECT)
-    await service2.importPaper({ entry: ARXIV_ENTRY })
-    await expect(service2.updatePaper({
-      arxivId: ARXIV_ENTRY.id,
-      relevance: { projectId: 'p1', score: 11, reason: 'too high' },
-    })).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
-    await expect(service2.updatePaper({
-      arxivId: ARXIV_ENTRY.id,
-      relevance: { projectId: 'p1', score: Number.NaN, reason: 'not a number' },
-    })).resolves.toMatchObject({ ok: false, error: { code: 'invalid-input' } })
   })
 })
 
