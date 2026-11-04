@@ -278,8 +278,9 @@ export async function readArtifact(
 
 /**
  * List the image files of the addressed project's paper directory (top
- * level plus the `figures/` subdirectory), merged with the wiki's figures
- * metadata table (caption / linked experiment, keyed `<projectId>:<relPath>`).
+ * level plus the whole `figures/` subtree, nested directories included),
+ * merged with the wiki's figures metadata table (caption / linked
+ * experiment, keyed `<projectId>:<relPath>`).
  * @param deps - workspace root and open wiki domain.
  * @param request - the selected project, plus an optional explicit paper
  * directory (relative to the workspace) overriding the record's `paperDir`.
@@ -516,39 +517,35 @@ export async function saveFigure(
 
 /**
  * Collect the `.tex` files that may reference a figure: the paper directory's
- * top level plus one level of subdirectories (the `sections/` convention).
- * Unreadable subdirectories are skipped; a missing paper directory yields an
- * empty list.
+ * whole subtree, so a reference in a deeply nested chapter
+ * (`sections/ch3/intro.tex`) follows a rename just like a top-level one.
+ * Directory entries come from `readdir`'s lstat view, so a symlinked
+ * directory is never followed and the walk stays inside the paper directory;
+ * an unreadable subdirectory is skipped instead of failing the walk.
  * @param dir - absolute paper directory.
- * @returns absolute `.tex` file paths, name-sorted per directory.
+ * @returns absolute `.tex` file paths, each directory name-sorted, nested
+ * directories walked in name order.
  */
 async function texFilesOf(dir: string): Promise<string[]> {
-  const texIn = async (current: string): Promise<string[]> => {
+  const walk = async (current: string): Promise<string[]> => {
     let entries
     try {
       entries = await readdir(current, { withFileTypes: true })
-    } catch (error) {
-      if (isNotFound(error)) return []
-      throw error
+    } catch {
+      // Missing or unreadable directory: nothing to collect from it.
+      return []
     }
-    return entries
+    const tex = entries
       .filter(entry => entry.isFile() && entry.name.endsWith('.tex'))
       .map(entry => join(current, entry.name))
       .sort()
+    const nested: string[] = []
+    for (const entry of entries.filter(e => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name))) {
+      nested.push(...await walk(join(current, entry.name)))
+    }
+    return [...tex, ...nested]
   }
-  const top = await texIn(dir)
-  let subs: string[] = []
-  let entries
-  try {
-    entries = await readdir(dir, { withFileTypes: true })
-  } catch (error) {
-    if (isNotFound(error)) return top
-    throw error
-  }
-  for (const entry of entries) {
-    if (entry.isDirectory()) subs = [...subs, ...await texIn(join(dir, entry.name))]
-  }
-  return [...top, ...subs]
+  return walk(dir)
 }
 
 /**
@@ -559,7 +556,9 @@ async function texFilesOf(dir: string): Promise<string[]> {
  * `savePaperSource`/`saveBibliography` commit holds — with the content re-read
  * under the lock, so a rename never overwrites a concurrent save's text it
  * never saw (the draft survives) and the rewrite always lands on the live
- * body. Only changed files are rewritten (atomically).
+ * body. Only changed files are rewritten (atomically). An unreadable `.tex`
+ * is skipped rather than failing the rename: the file already moved, the
+ * remaining references still rewrite, and the result count says how many.
  * @param dir - absolute paper directory.
  * @param oldRelPath - the figure's previous paper-directory-relative path.
  * @param newRelPath - the figure's new paper-directory-relative path.
@@ -574,7 +573,7 @@ async function rewriteFigureReferences(dir: string, oldRelPath: string, newRelPa
     // read so the rewrite cannot self-deadlock (the locking reader is not
     // re-entrant), as `appendBibEntries` does for `references.bib`.
     const changed = await withFileLock(file, async (): Promise<boolean> => {
-      const snapshot = await readPaperSourceUnlocked(file)
+      const snapshot = await readPaperSourceUnlocked(file).catch(() => undefined)
       if (snapshot === undefined) return false
       let next = snapshot.content.split(oldRelPath).join(newRelPath)
       if (oldStem !== oldRelPath) next = next.split(`{${oldStem}}`).join(`{${newStem}}`)

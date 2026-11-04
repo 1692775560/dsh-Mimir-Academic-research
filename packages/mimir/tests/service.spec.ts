@@ -1852,6 +1852,21 @@ describe('ResearchService.renameFigure', () => {
       .resolves.toEqual({ ok: true, value: { relPath: 'figures/plot.png', references: 0 } })
   })
 
+  it('rewrites references in deeply nested chapter files too (#255)', async () => {
+    const { domain, workspaceDir, service } = await harness()
+    await domain.table('projects').put(PROJECT.id, PROJECT)
+    await scaffoldWithReference(workspaceDir)
+    await mkdir(join(workspaceDir, 'paper', 'sections', 'ch3'), { recursive: true })
+    await writeFile(
+      join(workspaceDir, 'paper', 'sections', 'ch3', 'intro.tex'),
+      '\\includegraphics{figures/plot}\n',
+    )
+    const outcome = await service.renameFigure({ projectId: 'p1', relPath: 'figures/plot.png', newName: 'loss-curve.png' })
+    expect(outcome).toEqual({ ok: true, value: { relPath: 'figures/loss-curve.png', references: 3 } })
+    await expect(readFile(join(workspaceDir, 'paper', 'sections', 'ch3', 'intro.tex'), 'utf8'))
+      .resolves.toContain('{figures/loss-curve}')
+  })
+
   it('runs the reference rewrite under the body lock: a draft landed mid-rename survives (R23)', async () => {
     const { domain, workspaceDir, service } = await harness()
     await domain.table('projects').put(PROJECT.id, PROJECT)
