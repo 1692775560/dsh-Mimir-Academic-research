@@ -354,6 +354,27 @@ export async function generateBriefRemote(
       eventCount: events.length,
       derivationVersion: CBE_DERIVATION_VERSION,
       questions,
+      // The state strip (I6): re-derivable line momentum, surfaced for the
+      // structured UI — the markdown remains the narrative, this is the data.
+      lines: brief.lines.map(line => ({
+        id: line.id,
+        label: line.label,
+        state: line.state,
+        tier: line.tier,
+        drift: line.drift,
+        eventCount: line.eventCount,
+        decisionDays: line.decisionDays,
+      })),
+      transitions: brief.transitions.map(transition => ({
+        kind: transition.kind, id: transition.id, to: transition.to, ts: transition.ts,
+      })),
+      openLoops: brief.openLoops.map(loop => ({
+        kind: loop.kind, refId: loop.refId, openedAt: loop.openedAt,
+      })),
+      moments: brief.moments.map(moment => ({
+        from: moment.from, to: moment.to, eventCount: moment.eventCount,
+        creationCount: moment.creationCount, baseline: moment.baseline,
+      })),
     })
   } catch (error) {
     return rejected({

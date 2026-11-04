@@ -24,6 +24,7 @@ import type {
   EvidenceTimelineEntry,
   EvidenceTimelineGroup,
 } from 'dsh-mimir/types'
+import { lineHueOf } from './line-hue.ts'
 
 /**
  * The minimal fold-product shape the layout consumes. `dsh-mimir/types` does
@@ -75,12 +76,15 @@ export const EVIDENCE_GRAPH_LAYOUT_DEFAULTS = Object.freeze({
   maxParallelEdgeOffset: 14,
   /** Edge hit target stroke width for pointer selection (§99). */
   edgeHitWidth: 18,
+  /** Maximum labeled date ticks on the time axis (first/last kept, evenly
+   *  sampled between — deterministic for a given input). */
+  maxTickLabels: 8,
   /** Bottom padding. */
   bottomPad: 18,
 })
 
 /** The line palette size (bands cycle it; color continuity per line). */
-export const LINE_HUES = 6
+export { LINE_HUES } from './line-hue.ts'
 
 /** The canvas kinds of one positioned node. */
 export type EvidenceNodeKind = 'event' | 'retract' | 'claim' | 'eureka' | 'source'
@@ -101,6 +105,8 @@ export interface EvidenceNodeLayout {
   readonly r: number
   /** The research-line hue index (structure color). */
   readonly hue: number
+  /** The research-line band key this node renders in (null only if un-attributed). */
+  readonly bandKey: string | null
   /** The claim key whose rail carries the node (null on eureka/source nodes). */
   readonly claimKey: string | null
   readonly ts: string
@@ -137,6 +143,9 @@ export interface EvidenceRailLayout {
   readonly status: string | null
 }
 
+/** The declared life of one research line (mirrors the worktree's status). */
+export type EvidenceLineStatus = 'open' | 'failed' | 'adopted'
+
 /** One research-line band: the y-axis swimlane grouping claim rails. */
 export interface EvidenceBandLayout {
   readonly key: string
@@ -146,6 +155,10 @@ export interface EvidenceBandLayout {
   readonly y: number
   readonly height: number
   readonly claimKeys: readonly string[]
+  /** The declared line status (from the worktree); null when un-attributed. */
+  readonly status: EvidenceLineStatus | null
+  /** Open lanes: days since the lane's last touch (from the worktree). */
+  readonly idleDays: number | null
 }
 
 /** One date tick on the time axis. */
@@ -173,9 +186,17 @@ export interface EvidenceEurekaPoint {
   readonly lineId: string | null
 }
 
-/** Layout options: researcher-declared Eureka markers (worktree alignment is P2). */
+/** One declared research-line state, keyed by band key (see {@link bandKeyOfLine}). */
+export interface EvidenceLineState {
+  readonly status: EvidenceLineStatus
+  readonly idleDays: number | null
+}
+
+/** Layout options: researcher-declared Eureka markers + declared line states. */
 export interface EvidenceGraphLayoutOptions {
   readonly eurekaDeclarations?: readonly EvidenceEurekaPoint[] | undefined
+  /** Worktree-declared line states, keyed by band key; absent ⇒ unattributed. */
+  readonly lineStates?: ReadonlyMap<string, EvidenceLineState> | undefined
 }
 
 /** An Eureka declaration attributed to no band renders on this trailing band. */
@@ -187,10 +208,17 @@ interface Point {
 }
 
 /** Map one Eureka lineId onto the timeline-group key spelling. */
-function bandKeyOfLine(lineId: string | null): string {
+/** Map a worktree/eureka lineId onto the timeline-group key spelling. */
+export function bandKeyOfLine(lineId: string | null): string {
   if (lineId === null) return EUREKA_FALLBACK_BAND
   if (lineId.startsWith('project:')) return `project:${lineId.slice('project:'.length)}`
   return `idea:${lineId}`
+}
+
+/** The inverse of {@link bandKeyOfLine}: band key → the worktree's raw line id. */
+export function lineIdOfBandKey(bandKey: string): string {
+  if (bandKey.startsWith('idea:')) return bandKey.slice('idea:'.length)
+  return bandKey
 }
 
 /** The relation color class of one timeline entry. */
@@ -311,17 +339,20 @@ export function deriveEvidenceGraphLayout(
   const claimByKey = new Map<string, EvidenceClaimHistory>()
   const beadDrafts: BeadDraft[] = []
   let bandY = topPad
-  ordered.forEach(({ group }, bandIndex) => {
+  ordered.forEach(({ group }) => {
     const claims = claimsOf(group)
     const bandTop = bandY
+    const lineState = options.lineStates?.get(group.key)
     const band: EvidenceBandLayout = {
       key: group.key,
       kind: group.kind,
       label: group.label,
-      hue: bandIndex % LINE_HUES,
+      hue: lineHueOf(group.key),
       y: bandTop,
       height: bandHeader + claims.length * lane,
       claimKeys: Object.freeze(claims.map(claim => claim.claimKey)),
+      status: lineState?.status ?? null,
+      idleDays: lineState?.idleDays ?? null,
     }
     bands.push(band)
     claims.forEach((claim, laneIndex) => {
@@ -363,10 +394,12 @@ export function deriveEvidenceGraphLayout(
       key: EUREKA_FALLBACK_BAND,
       kind: 'project',
       label: null,
-      hue: ordered.length % LINE_HUES,
+      hue: lineHueOf(EUREKA_FALLBACK_BAND),
       y: bandY,
       height: bandHeader,
       claimKeys: Object.freeze([]),
+      status: null,
+      idleDays: null,
     })
     bandY += bandHeader
   }
@@ -440,6 +473,7 @@ export function deriveEvidenceGraphLayout(
       y: bead.y,
       r,
       hue: band?.hue ?? 0,
+      bandKey: band?.key ?? null,
       claimKey: bead.claimKey,
       ts: bead.entry.ts,
       label: `${bead.entry.ts.slice(0, 16)} · ${bead.entry.rel} · ${ACTOR_OF(bead.entry.actor)}${bead.entry.note !== null ? ` · ${bead.entry.note}` : ''}`,
@@ -468,6 +502,7 @@ export function deriveEvidenceGraphLayout(
       y: rail.y,
       r: EVIDENCE_GRAPH_LAYOUT_DEFAULTS.nodeMilestoneRadius,
       hue: rail.hue,
+      bandKey: bandByClaim.get(claimKey)?.key ?? null,
       claimKey,
       ts: lastTsByClaim.get(claimKey) ?? '',
       label: rail.label,
@@ -496,6 +531,7 @@ export function deriveEvidenceGraphLayout(
       y: headerYOf(bandKey),
       r: EVIDENCE_GRAPH_LAYOUT_DEFAULTS.nodeEurekaRadius,
       hue: band?.hue ?? 0,
+      bandKey,
       claimKey: null,
       ts: point.at,
       label: point.title,
@@ -544,6 +580,7 @@ export function deriveEvidenceGraphLayout(
         y: origin.y,
         r: 4,
         hue: node.hue,
+        bandKey: node.bandKey,
         claimKey: null,
         ts: edge.ts,
         label: edge.src,
@@ -597,6 +634,9 @@ export function deriveEvidenceGraphLayout(
     a.kind.localeCompare(b.kind) || a.fromId.localeCompare(b.fromId) || a.toId.localeCompare(b.toId))
 
   /* ── 7. Ticks at the first bead of every date. */
+  /* ── 7. Ticks at the first bead of every date, thinned to ≤ maxTickLabels
+     (a 90-day window would otherwise stack 90 labels; first and last stay,
+     the middle samples evenly — same input, same ticks). */
   const ticks: EvidenceTickLayout[] = []
   let previousDate = ''
   for (const bead of beadDrafts) {
@@ -605,6 +645,10 @@ export function deriveEvidenceGraphLayout(
     previousDate = date
     ticks.push(Object.freeze({ x: bead.x, label: date }))
   }
+  const maxTicks = EVIDENCE_GRAPH_LAYOUT_DEFAULTS.maxTickLabels
+  const thinned: EvidenceTickLayout[] = ticks.length <= maxTicks
+    ? ticks
+    : [...thinTicks(ticks, maxTicks)]
 
   /* ── 8. Extent. */
   let maxRailX: number = plotLeft
@@ -623,7 +667,7 @@ export function deriveEvidenceGraphLayout(
       .map(rail => Object.freeze(rail))),
     nodes: Object.freeze(nodes),
     links: Object.freeze(links),
-    ticks: Object.freeze(ticks),
+    ticks: Object.freeze(thinned),
   })
 }
 
@@ -635,6 +679,20 @@ function parallelSlot(registry: Map<string, number>, key: string, step: number):
   const depth = Math.min(Math.floor(index / 2), 2)
   const direction = index % 2 === 0 ? 1 : -1
   return direction * depth * step
+}
+
+/**
+ * Thin one-per-date ticks to at most `max` labels: the first and the last
+ * always stay, the middle picks evenly spaced indices (rounded, deduped,
+ * key order preserved) — the same input always thins identically.
+ */
+function thinTicks(ticks: readonly EvidenceTickLayout[], max: number): EvidenceTickLayout[] {
+  const last = ticks.length - 1
+  const picked = new Set<number>([0, last])
+  for (let slot = 1; slot < max - 1; slot += 1) {
+    picked.add(Math.round((slot * last) / (max - 1)))
+  }
+  return [...picked].sort((a, b) => a - b).map(index => ticks[index] as EvidenceTickLayout)
 }
 
 function firstEntryTs(claim: EvidenceClaimHistory): string {

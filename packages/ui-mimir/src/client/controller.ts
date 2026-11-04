@@ -52,7 +52,11 @@ import type {
   ResearchSetIdeaParentResult,
   ResearchSetMainlineResult,
   ResearchWorktreeView,
+  ResearchBriefLine,
+  ResearchBriefMoment,
+  ResearchBriefOpenLoop,
   ResearchBriefQuestion,
+  ResearchBriefTransition,
   ResearchBackupStatusView,
   ResearchBibliographyResult,
   ResearchCheckArxivSubscriptionsResult,
@@ -707,6 +711,11 @@ export interface ResearchBriefView {
   readonly recalibrated: boolean
   /** Label-resolved boundary questions (the confirmation cards' data). */
   readonly questions: readonly ResearchBriefQuestion[]
+  /** The research-line state strip (I6: re-derivable momentum, never a fact). */
+  readonly lines: readonly ResearchBriefLine[]
+  readonly transitions: readonly ResearchBriefTransition[]
+  readonly openLoops: readonly ResearchBriefOpenLoop[]
+  readonly moments: readonly ResearchBriefMoment[]
   readonly failure: ResearchFailureView | null
 }
 
@@ -903,7 +912,7 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   }),
   ledger: Object.freeze({ status: 'cold', list: Object.freeze([]), failure: null }),
   report: Object.freeze({ status: 'idle', markdown: '', generatedAt: null, eventCount: null, failure: null }),
-  brief: Object.freeze({ status: 'idle', markdown: '', generatedAt: null, eventCount: null, derivationVersion: null, recalibrated: false, questions: Object.freeze([]), failure: null }),
+  brief: Object.freeze({ status: 'idle', markdown: '', generatedAt: null, eventCount: null, derivationVersion: null, recalibrated: false, questions: Object.freeze([]), lines: Object.freeze([]), transitions: Object.freeze([]), openLoops: Object.freeze([]), moments: Object.freeze([]), failure: null }),
   worktree: Object.freeze({ status: 'cold', view: null, failure: null }),
   foraging: Object.freeze({ status: 'cold', view: null, failure: null }),
   moments: Object.freeze({ status: 'cold', view: null, failure: null }),
@@ -1325,6 +1334,10 @@ export class ResearchController implements HostObservable<ResearchView> {
         derivationVersion: null,
         recalibrated: false,
         questions: Object.freeze([]),
+        lines: Object.freeze([]),
+        transitions: Object.freeze([]),
+        openLoops: Object.freeze([]),
+        moments: Object.freeze([]),
         failure: null,
       }),
     })
@@ -1351,6 +1364,10 @@ export class ResearchController implements HostObservable<ResearchView> {
           derivationVersion: result.value.derivationVersion,
           recalibrated: this.derivationRecalibrated(result.value.derivationVersion),
           questions: Object.freeze(result.value.questions),
+          lines: Object.freeze(result.value.lines),
+          transitions: Object.freeze(result.value.transitions),
+          openLoops: Object.freeze(result.value.openLoops),
+          moments: Object.freeze(result.value.moments),
           failure: null,
         }),
       })
