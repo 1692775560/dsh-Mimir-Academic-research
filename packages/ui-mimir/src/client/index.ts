@@ -139,6 +139,9 @@ function panelApply(ctx: ClientContext): void {
 
   const panel = createResearchPanelStore()
   const controller = new ResearchController(ctx.remote.research)
+  // The mount-time handshake (#250): an incompatible host surfaces as a
+  // banner with upgrade guidance, not a random failure at a drifted call.
+  controller.checkProtocol()
 
   // The header chrome snapshot adapts the host theme/locale services into one
   // HostObservable. Both services emit change events on this context's root;

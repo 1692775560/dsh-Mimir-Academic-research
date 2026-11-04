@@ -25,6 +25,7 @@ import type {
   ResearchAddEvidenceEdgeResult,
   ResearchEvidenceGraphView,
   ResearchGetEvidenceGraphResult,
+  ResearchGetProtocolVersionResult,
   ResearchRetractEvidenceEdgeResult,
   RetractEvidenceEdgeRequest,
   ArxivSubscriptionView,
@@ -161,6 +162,8 @@ import type {
   ZoteroItemView,
   ResearchWikiChangeEvent,
 } from 'dsh-mimir/types'
+// Runtime: the handshake's version + verdict, bundled from the same build.
+import { protocolVerdict, RESEARCH_PROTOCOL_VERSION } from 'dsh-mimir/types'
 import {
   createWikiChangeAggregator,
   type LiveSlice,
@@ -183,6 +186,8 @@ export type {
  * literal unions across the boundary).
  */
 export interface ResearchRemote {
+  /** The wire handshake (#250): the host's protocol version. */
+  getProtocolVersion: () => Promise<RemoteResult<ResearchGetProtocolVersionResult>>
   listProjects: () => Promise<RemoteResult<ResearchListProjectsResult>>
   importProject: (request: ResearchImportProjectRequest) => Promise<RemoteResult<ResearchImportProjectResult>>
   createProject: (request: { title: string }) => Promise<RemoteResult<ResearchCreateProjectResult>>
@@ -802,6 +807,8 @@ export interface ResearchSnapshotDetailView {
 
 /** Immutable view published to the panel. */
 export interface ResearchView {
+  /** The host/client protocol handshake (#250); `checking` until it settles. */
+  readonly protocol: ResearchProtocolState
   readonly projects: readonly ResearchProjectView[]
   readonly projectsStatus: ResearchLoadStatus
   readonly projectsFailure: ResearchFailureView | null
@@ -872,6 +879,7 @@ export interface ResearchView {
 }
 
 const INITIAL_VIEW: ResearchView = Object.freeze({
+  protocol: Object.freeze({ status: 'checking' }),
   projects: Object.freeze([]),
   projectsStatus: 'cold',
   projectsFailure: null,
@@ -959,6 +967,22 @@ function unwrapRemote<T>(carried: RemoteResult<ResearchResult<T>>): RemoteOutcom
   if (!carried.value.ok) return { ok: false, failure: businessFailure(carried.value.error) }
   return { ok: true, value: carried.value.value }
 }
+
+/**
+ * The host/client handshake state (#250): `checking` until the mount-time
+ * `getProtocolVersion` settles; `incompatible` carries both versions (the
+ * host's is null when the host predates the handshake and the call itself
+ * failed) and the side that must upgrade.
+ */
+export type ResearchProtocolState =
+  | { readonly status: 'checking' }
+  | { readonly status: 'compatible' }
+  | {
+    readonly status: 'incompatible'
+    readonly hostVersion: number | null
+    readonly clientVersion: number
+    readonly verdict: 'host-ahead' | 'client-ahead' | 'unknown'
+  }
 
 /** Whether two evidence window requests name the same fold window (single-flight). */
 function sameEvidenceRequest(left: EvidenceGraphRequest | null, right: EvidenceGraphRequest): boolean {
@@ -1087,8 +1111,56 @@ export class ResearchController implements HostObservable<ResearchView> {
     this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
   }
 
+  /**
+   * The mount-time handshake (#250): compare the host's protocol version with
+   * the one this bundle was built against and publish the verdict. Any call
+   * failure means the host predates the handshake — surfaced as an
+   * unknown-version incompatibility with upgrade guidance instead of a later
+   * random failure at a drifted call. Re-runs on every reconnect resync.
+   */
+  checkProtocol(): void {
+    void (async () => {
+      try {
+        const carried = await this.remote.getProtocolVersion()
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+        if (this.disposed) return
+        const result = unwrapRemote(carried)
+        if (!result.ok) {
+          this.publish({
+            protocol: Object.freeze({
+              status: 'incompatible', hostVersion: null, clientVersion: RESEARCH_PROTOCOL_VERSION, verdict: 'unknown',
+            }),
+          })
+          return
+        }
+        const verdict = protocolVerdict(result.value.version, RESEARCH_PROTOCOL_VERSION)
+        this.publish({
+          protocol: verdict === 'compatible'
+            ? Object.freeze({ status: 'compatible' })
+            : Object.freeze({
+              status: 'incompatible',
+              hostVersion: result.value.version,
+              clientVersion: RESEARCH_PROTOCOL_VERSION,
+              verdict,
+            }),
+        })
+      } catch {
+        // oxlint-disable-next-line typescript/no-unnecessary-condition -- dispose() can run during the await.
+        if (this.disposed) return
+        this.publish({
+          protocol: Object.freeze({
+            status: 'incompatible', hostVersion: null, clientVersion: RESEARCH_PROTOCOL_VERSION, verdict: 'unknown',
+          }),
+        })
+      }
+    })()
+  }
+
   /** Re-read the project list (the retry entry and the reconnect resync). */
   resync(): void {
+    // A reconnect may follow a host upgrade: re-run the handshake even when
+    // the panel is cold, so a version change never goes unnoticed.
+    this.checkProtocol()
     if (this.view.projectsStatus === 'cold') return
     this.loadPromise ??= this.loadProjects().finally(() => { this.loadPromise = null })
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })

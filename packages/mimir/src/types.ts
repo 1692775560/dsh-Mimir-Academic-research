@@ -1,7 +1,9 @@
 /**
- * Research-suite record, verdict, and web-panel wire types. Types only — the
- * zod schemas that validate these records at the durable boundary live in
- * `./store.ts`.
+ * Research-suite record, verdict, and web-panel wire types — plus the two
+ * runtime symbols of the host/client protocol handshake (`./protocol.ts`),
+ * re-exported here so the panel reads them through the client-safe `/types`
+ * channel. The zod schemas that validate these records at the durable
+ * boundary live in `./store.ts`.
  * @module dsh-mimir/types
  */
 
@@ -33,6 +35,9 @@ export type {
 export type { OutlineNode, SectionMove, SectionOutlineTitles, SubsectionMove } from './outline.ts'
 export type { BibEntry } from './bibtex.ts'
 import type { BibEntry } from './bibtex.ts'
+// The handshake's two runtime symbols ride this client-safe channel (#250).
+export { RESEARCH_PROTOCOL_VERSION, protocolVerdict } from './protocol.ts'
+export type { ResearchProtocolVerdict } from './protocol.ts'
 
 /**
  * One parsed arXiv entry, shared by both arXiv tools' output. Defined here
@@ -1033,6 +1038,17 @@ export interface ResearchWikiSnapshot {
 
 /** `exportWiki` result: the full snapshot. */
 export type ResearchExportWikiResult = ResearchResult<{ readonly snapshot: ResearchWikiSnapshot }>
+
+/**
+ * `getProtocolVersion` result (#250): the host's wire protocol version. The
+ * panel compares it with its built-in copy on mount and shows an explicit
+ * incompatibility notice — with the side that must upgrade — instead of
+ * failing later at a random drifted call.
+ */
+export type ResearchGetProtocolVersionResult = ResearchResult<{
+  /** The host's protocol version (`RESEARCH_PROTOCOL_VERSION` of the build). */
+  readonly version: number
+}>
 
 /** `importWiki` mode: merge upserts only absent keys; replace wipes first. */
 export type ResearchImportWikiMode = 'merge' | 'replace'

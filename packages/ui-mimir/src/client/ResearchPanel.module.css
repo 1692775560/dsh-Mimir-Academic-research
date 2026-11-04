@@ -3796,6 +3796,22 @@ li.dropIndicator {
   font-size: 13px;
 }
 
+/* The protocol handshake banner (#250): pinned across the workbench top when
+   the host/panel versions disagree, above every view. */
+.protocolBanner {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  margin: 0;
+  padding: 8px 16px;
+  background: var(--dsw-alias-state-error-primary, #d93026);
+  color: #fff;
+  font-size: 13px;
+  text-align: center;
+}
+
 /* The corner toast stack: bottom-right of the workbench, one card per queued
    toast with a kind-colored accent bar; the entrance slides in from the right. */
 .toastStack {

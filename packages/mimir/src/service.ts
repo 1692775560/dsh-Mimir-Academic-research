@@ -2,7 +2,7 @@
  * The `research` Remote namespace: the host half of the web research panel.
  * This file is a thin facade — it keeps the class, the `super(ctx,
  * 'research')` registration, the config type, the Context augmentation, and
- * all 64 `@Remote` signatures intact, and forwards every method body to a
+ * all 65 `@Remote` signatures intact, and forwards every method body to a
  * pure-function domain module under `./services`. It owns no domain logic:
  * the mutable instance state (`compileStatus` map, the id counters) rides a
  * single {@link ServiceState} object created here, so every
@@ -29,6 +29,7 @@ import type {
   ResearchGetHabitsResult,
   ResearchGetLibraryThemesResult,
   ResearchGenerateJournalDraftResult,
+  ResearchGetProtocolVersionResult,
   ResearchGetWorktreeResult,
   ResearchSetIdeaParentResult,
   ResearchSetMainlineResult,
@@ -140,6 +141,7 @@ import type { MeetingDeps } from './services/meeting.ts'
 import * as imagegen from './services/image-gen.ts'
 import * as digdigConfig from './services/digdig-config.ts'
 import { abortLongTasks, linkLongTask, success, type ServiceState } from './services/common.ts'
+import { RESEARCH_PROTOCOL_VERSION } from './protocol.ts'
 
 declare module '@deepseek-ai/cordis' {
   interface Context {
@@ -229,7 +231,7 @@ export interface ResearchServiceConfig {
 
 /**
  * Host service behind the web research panel. Thin facade: keeps the
- * `research` Remote namespace and all 64 `@Remote` signatures; every method
+ * `research` Remote namespace and all 65 `@Remote` signatures; every method
  * body forwards to a domain module under `./services`. Owns no domain logic.
  */
 export class ResearchService extends TypertRemoteService {
@@ -286,6 +288,12 @@ export class ResearchService extends TypertRemoteService {
   /** Broadcast a file-side wiki write to subscribed panels (a no-op unwired). */
   private wikiFileChanged(table: 'paper-source' | 'bibliography', projectId: string): void {
     this.deps.notifyWikiChange?.({ table, key: projectId, operation: 'put' })
+  }
+
+  // handshake: the panel compares this with its built-in copy on mount (#250)
+  @Remote('getProtocolVersion')
+  getProtocolVersion(): Promise<ResearchGetProtocolVersionResult> {
+    return Promise.resolve(success({ version: RESEARCH_PROTOCOL_VERSION }))
   }
 
   // wiki-admin domain
