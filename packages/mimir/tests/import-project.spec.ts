@@ -18,6 +18,8 @@ import { canCreateSymlink } from './helpers/symlink-capability.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
 import type { ResearchWikiDomain } from '../src/store.ts'
 import { expandHome, extractTexTitle, importProject, slugify } from '../src/services/import-project.ts'
+import { getPaperOutline, getPaperSource, savePaperSource } from '../src/services/paper.ts'
+import type { PaperDeps } from '../src/services/paper.ts'
 import type { ResearchImportedProject } from '../src/types.ts'
 
 /** Boot a memory-backed wiki domain plus a fresh temp workspace. */
@@ -278,5 +280,52 @@ describe('importProject helpers', () => {
     await writeFile(join(source, 'main.tex'), 'changed')
     expect(await readFile(join(workspaceDir, value.paperDir, 'main.tex'), 'utf8')).toBe(MAIN_TEX)
     expect((await readdir(join(workspaceDir, value.paperDir))).sort()).toContain('references.bib')
+  })
+})
+
+describe('entry file persistence (#249)', () => {
+  it('persists a non-main entry tex on the record and routes source/outline through it', async () => {
+    const { domain, workspaceDir } = await harness()
+    const parent = await mkdtemp(join(tmpdir(), 'mimir-import-src-'))
+    const dir = join(parent, 'thesis')
+    await mkdir(dir, { recursive: true })
+    const thesis = '\\documentclass{report}\n\\section{Intro}\nHello\n'
+    await writeFile(join(dir, 'thesis.tex'), thesis)
+
+    const value = imported(await importProject({ workspaceDir, domain }, { path: dir }))
+    expect(value.entryTex).toBe('thesis.tex')
+    // The record carries the entry file, so later sessions need no rediscovery.
+    expect(domain.table('projects').get(value.projectId)?.entryFile).toBe('thesis.tex')
+
+    const paper: PaperDeps = { workspaceDir, domain, latex: { engine: 'auto', timeoutMs: 1000 } }
+    const source = await getPaperSource(paper, { projectId: value.projectId })
+    expect(source.ok && source.value.content).toBe(thesis)
+    const outline = await getPaperOutline(paper, { projectId: value.projectId })
+    expect(outline.ok && outline.value.nodes.map(node => node.title)).toEqual(['Intro'])
+    if (!source.ok) throw new Error('expected the entry source read to succeed')
+    const saved = await savePaperSource(paper, {
+      projectId: value.projectId,
+      content: `${thesis}\\section{Next}\n`,
+      baseMtimeMs: source.value.mtimeMs,
+    })
+    expect(saved.ok).toBe(true)
+    expect(await readFile(join(workspaceDir, value.paperDir, 'thesis.tex'), 'utf8'))
+      .toBe(`${thesis}\\section{Next}\n`)
+  })
+
+  it('falls back to main.tex for records predating the entryFile field', async () => {
+    const { domain, workspaceDir } = await harness()
+    await domain.table('projects').put('legacy', {
+      id: 'legacy', title: 'Legacy', stage: 'writing', paperDir: 'paper',
+      artifacts: [], reviewRounds: 0, updatedAt: '2026-08-20T00:00:00.000Z',
+    })
+    await mkdir(join(workspaceDir, 'paper'), { recursive: true })
+    await writeFile(join(workspaceDir, 'paper', 'main.tex'), MAIN_TEX)
+
+    const paper: PaperDeps = { workspaceDir, domain, latex: { engine: 'auto', timeoutMs: 1000 } }
+    const source = await getPaperSource(paper, { projectId: 'legacy' })
+    expect(source.ok && source.value.content).toBe(MAIN_TEX)
+    const outline = await getPaperOutline(paper, { projectId: 'legacy' })
+    expect(outline.ok).toBe(true)
   })
 })

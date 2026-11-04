@@ -310,12 +310,12 @@ export async function removePaper(
 
 /**
  * Partially update one remembered paper's organization fields: only the
- * present fields (`tags`, `projectIds`, `notes`, `relevance`) change. Tags
- * are trimmed, emptied out, and deduped; every linked project id must exist
- * in the wiki (`invalid-input` otherwise). A `relevance` write scores the
- * paper against one project (the project must exist; the score is a finite
- * 0–10 number) and lands under that project's key, leaving other projects'
- * verdicts untouched. An unknown arXiv id is `paper-not-found`.
+ * present fields (`tags`, `projectIds`, `notes`) change. Tags are trimmed,
+ * emptied out, and deduped; every linked project id must exist in the wiki
+ * (`invalid-input` otherwise). An unknown arXiv id is `paper-not-found`.
+ * Relevance verdicts are NOT writable here — they land through the agent's
+ * `wiki_note set_paper` action (#245: the Remote `relevance` field had no
+ * consumer and was removed).
  * @param deps - open wiki domain.
  * @param request - the bare arXiv id plus the fields to replace.
  * @returns the stored record after the update.
@@ -327,7 +327,6 @@ export async function updatePaper(
     tags?: string[] | undefined
     projectIds?: string[] | undefined
     notes?: string | undefined
-    relevance?: { projectId: string; score: number; reason: string } | undefined
   },
 ): Promise<ResearchUpdatePaperResult> {
   const table = deps.domain.table('papers')
@@ -340,15 +339,6 @@ export async function updatePaper(
       }
     }
   }
-  if (request.relevance !== undefined) {
-    const { projectId, score } = request.relevance
-    if (deps.domain.table('projects').get(projectId) === undefined) {
-      return rejected({ code: 'project-not-found', projectId })
-    }
-    if (!Number.isFinite(score) || score < 0 || score > 10) {
-      return rejected({ code: 'invalid-input', message: 'relevance score must be a finite number between 0 and 10' })
-    }
-  }
   return withPaperMutationLock(request.arxivId, async () => {
     const current = table.get(request.arxivId)
     if (current === undefined) return rejected({ code: 'paper-not-found' })
@@ -359,19 +349,9 @@ export async function updatePaper(
         : [...new Set(request.tags.map(tag => tag.trim()).filter(tag => tag !== ''))],
       projectIds: request.projectIds ?? current.projectIds,
       notes: request.notes ?? current.notes,
-      ...(request.relevance === undefined ? {} : {
-        relevance: {
-          ...current.relevance,
-          [request.relevance.projectId]: {
-            score: request.relevance.score,
-            reason: request.relevance.reason,
-            at: new Date().toISOString(),
-          },
-        },
-      }),
     }
     await table.put(request.arxivId, next)
-    const changed = (['tags', 'projectIds', 'notes', 'relevance'] as const).filter(field => request[field] !== undefined)
+    const changed = (['tags', 'projectIds', 'notes'] as const).filter(field => request[field] !== undefined)
     await emitEvent(deps.domain, {
       actor: PANEL_ACTOR,
       action: 'literature.paper.updated',

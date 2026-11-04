@@ -39,7 +39,7 @@ import type {
   SectionOutlineTitles,
   SubsectionMove,
 } from '../types.ts'
-import { rejected, success } from './common.ts'
+import { entryBaseOf, entryFileOf, rejected, success } from './common.ts'
 import type { ServiceState } from './common.ts'
 
 /** Everything the Paper domain functions need from the service scope. */
@@ -74,7 +74,8 @@ async function pdfMtime(pdfPath: string): Promise<number | null> {
 }
 
 /**
- * Parse the section outline of the addressed project's paper `main.tex`.
+ * Parse the section outline of the addressed project's entry .tex
+ * (`main.tex` unless the record carries a persisted `entryFile` — #249).
  * @param deps - workspace root and open wiki domain.
  * @param request - the selected project, plus an optional explicit paper
  * directory (relative to the workspace) overriding the record's `paperDir`.
@@ -94,7 +95,7 @@ export async function getPaperOutline(
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
   let tex: string
   try {
-    tex = await readFile(join(dir, 'main.tex'), 'utf8')
+    tex = await readFile(join(dir, entryFileOf(record)), 'utf8')
   } catch (error) {
     if (isNotFound(error)) return rejected({ code: 'paper-not-found' })
     throw error
@@ -103,7 +104,7 @@ export async function getPaperOutline(
 }
 
 /**
- * Read the addressed project's paper `main.tex` with the mtime its content
+ * Read the addressed project's entry .tex with the mtime its content
  * belongs to. The mtime is the optimistic-concurrency base for
  * `savePaperSource`.
  * @param deps - workspace root and open wiki domain.
@@ -123,13 +124,13 @@ export async function getPaperSource(
   }
   const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
-  const snapshot = await readPaperSource(join(dir, 'main.tex'))
+  const snapshot = await readPaperSource(join(dir, entryFileOf(record)))
   if (snapshot === undefined) return rejected({ code: 'paper-not-found' })
   return success(snapshot)
 }
 
 /**
- * Replace the addressed project's paper `main.tex` under optimistic
+ * Replace the addressed project's entry .tex under optimistic
  * concurrency: the commit only lands when the file's mtime still equals
  * `baseMtimeMs`. The mtime check and the atomic write run inside the writer
  * lock, so an agent writing through the file tools can never interleave a
@@ -156,7 +157,7 @@ export async function savePaperSource(
   }
   const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
-  const outcome = await savePaperSourceFile(join(dir, 'main.tex'), request.content, request.baseMtimeMs)
+  const outcome = await savePaperSourceFile(join(dir, entryFileOf(record)), request.content, request.baseMtimeMs)
   if (outcome.kind === 'missing') return rejected({ code: 'paper-not-found' })
   if (outcome.kind === 'conflict') {
     return rejected({ code: 'conflict', currentMtimeMs: outcome.currentMtimeMs })
@@ -165,8 +166,8 @@ export async function savePaperSource(
 }
 
 /**
- * Reorder the top-level `\section` blocks of the addressed project's paper
- * `main.tex`. `baseOutline` is the top-level section title sequence the
+ * Reorder the top-level `\section` blocks of the addressed project's entry
+ * .tex. `baseOutline` is the top-level section title sequence the
  * client's drag gesture was based on; when the file's current sequence
  * differs (the agent edited the document mid-gesture) the call rejects with
  * `conflict` and writes nothing. The reorder and the commit ride the same
@@ -196,7 +197,7 @@ export async function reorderPaperSections(
   }
   const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
-  const texPath = join(dir, 'main.tex')
+  const texPath = join(dir, entryFileOf(record))
   const snapshot = await readPaperSource(texPath)
   if (snapshot === undefined) return rejected({ code: 'paper-not-found' })
   const sections = parseTexOutline(snapshot.content)
@@ -229,8 +230,8 @@ export async function reorderPaperSections(
 }
 
 /**
- * Reorder the `\subsection` blocks of the addressed project's paper
- * `main.tex`, inside their own section or across sections. `baseOutline` is
+ * Reorder the `\subsection` blocks of the addressed project's entry .tex,
+ * inside their own section or across sections. `baseOutline` is
  * the section/subsection title tree the client's drag gesture was based on;
  * when the file's current tree differs (the agent edited the document
  * mid-gesture) the call rejects with `conflict` and writes nothing. The
@@ -260,7 +261,7 @@ export async function reorderPaperSubsections(
   }
   const dir = await resolvePaperDirReal(deps.workspaceDir, request.dir, record.paperDir)
   if (dir === undefined) return rejected({ code: 'invalid-dir', dir: request.dir ?? record.paperDir ?? '' })
-  const texPath = join(dir, 'main.tex')
+  const texPath = join(dir, entryFileOf(record))
   const snapshot = await readPaperSource(texPath)
   if (snapshot === undefined) return rejected({ code: 'paper-not-found' })
   const outline: SectionOutlineTitles[] = parseTexOutline(snapshot.content)
@@ -515,9 +516,10 @@ export async function compile(
   }
   state.compileStatus.set(key, { ...previous, state: 'running' })
 
+  const entryFile = entryFileOf(record)
   let outcome
   try {
-    outcome = await compileLatex(dir, deps.latex, signal)
+    outcome = await compileLatex(dir, deps.latex, signal, entryFile)
   } catch (error) {
     // Missing engine (ENOENT) or missing paper directory: the run never
     // produced a log, so there are no issues to show — only the message.
@@ -538,7 +540,7 @@ export async function compile(
     issues: Object.freeze([...outcome.errors, ...outcome.warnings]),
     engine: outcome.engine,
     pdfUpdatedAt: outcome.success
-      ? await pdfMtime(join(dir, 'main.pdf'))
+      ? await pdfMtime(join(dir, `${entryBaseOf(entryFile)}.pdf`))
       : previous.pdfUpdatedAt,
     observed: true,
   })
@@ -564,7 +566,8 @@ export async function compile(
  * Read the last known compile status without running anything.
  *
  * Restart semantics (#221): the status map is process-local, so on a miss the
- * project's paper directory is probed for an existing `main.pdf`. A found PDF
+ * project's paper directory is probed for an existing entry PDF (`main.pdf`,
+ * or the persisted entry's basename — #249). A found PDF
  * backfills an `ok` view from its mtime with `observed: false` (compiled in a
  * previous session, not witnessed by this process); no PDF stays `idle`. The
  * backfill is cached so a later compile cleanly overwrites it.
@@ -588,7 +591,7 @@ export async function getCompileStatus(
   const known = state.compileStatus.get(key)
   if (known !== undefined) return success(known)
   const dir = await resolvePaperDirReal(deps.workspaceDir, undefined, record?.paperDir)
-  const mtime = dir === undefined ? null : await pdfMtime(join(dir, 'main.pdf'))
+  const mtime = dir === undefined ? null : await pdfMtime(join(dir, `${entryBaseOf(entryFileOf(record))}.pdf`))
   if (mtime === null) return success(IDLE_STATUS)
   // A PDF on disk proves a previous session compiled successfully; the engine
   // and issue list of that run are lost with the process.

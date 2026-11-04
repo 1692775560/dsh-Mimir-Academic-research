@@ -18,24 +18,26 @@ const DEFAULT_PAPER_DIR = 'paper'
 export interface CompileFixRequest {
   /** The compile issue being handed to the agent. */
   readonly issue: LatexIssue
-  /** The current `main.tex` draft (unsaved edits included), when loaded. */
+  /** The current entry-file draft (unsaved edits included), when loaded. */
   readonly source: string | null
   /** The project's paper directory relative to the workspace root, when overridden. */
   readonly dir: string | undefined
+  /** The project's entry .tex basename; defaults to `main.tex` (legacy projects — #249). */
+  readonly entryFile?: string | undefined
 }
 
 /** The issue's file resolved against the paper directory for display. */
-function issuePath(issue: LatexIssue, dir: string): string {
-  if (issue.file === undefined) return `${dir}/main.tex`
+function issuePath(issue: LatexIssue, dir: string, entryFile: string): string {
+  if (issue.file === undefined) return `${dir}/${entryFile}`
   const bare = issue.file.replace(/^\.\//, '')
   return bare.includes('/') ? bare : `${dir}/${bare}`
 }
 
 /** Whether the loaded draft is the file the issue points at. */
-function isMainSource(issue: LatexIssue): boolean {
+function isEntrySource(issue: LatexIssue, entryFile: string): boolean {
   if (issue.file === undefined) return true
   const bare = issue.file.replace(/^\.\//, '')
-  return bare === 'main.tex' || bare.endsWith('/main.tex')
+  return bare === entryFile || bare.endsWith(`/${entryFile}`)
 }
 
 /**
@@ -50,20 +52,21 @@ function isMainSource(issue: LatexIssue): boolean {
 export function buildCompileFixPrompt(request: CompileFixRequest): string {
   const { issue, source } = request
   const dir = request.dir ?? DEFAULT_PAPER_DIR
-  const where = issue.line === undefined ? issuePath(issue, dir) : `${issuePath(issue, dir)}:${issue.line}`
+  const entryFile = request.entryFile ?? 'main.tex'
+  const where = issue.line === undefined ? issuePath(issue, dir, entryFile) : `${issuePath(issue, dir, entryFile)}:${issue.line}`
   const lines: string[] = [
     'The paper\'s LaTeX compile reported the issue below. Please fix it.',
     '',
     `Issue: [${issue.severity}] ${where} ${issue.message}`,
     `Paper directory: ${dir} (relative to the workspace root)`,
   ]
-  if (issue.line !== undefined && source !== null && isMainSource(issue)) {
+  if (issue.line !== undefined && source !== null && isEntrySource(issue, entryFile)) {
     const draft = source.split('\n')
     const from = Math.max(1, issue.line - FIX_CONTEXT_RADIUS)
     const to = Math.min(draft.length, issue.line + FIX_CONTEXT_RADIUS)
     lines.push(
       '',
-      `Source context (${issuePath(issue, dir)}, lines ${from}-${to}; the issue is at line ${issue.line}):`,
+      `Source context (${issuePath(issue, dir, entryFile)}, lines ${from}-${to}; the issue is at line ${issue.line}):`,
       '```latex',
     )
     for (let line = from; line <= to; line += 1) lines.push(`${line} | ${draft[line - 1] ?? ''}`)

@@ -78,9 +78,10 @@ function isMissingEngine(error: unknown): boolean {
 }
 
 /** Engine command line per dialect; both run inside the project directory. */
-const ENGINE_ARGS: Record<LatexEngineKind, readonly string[]> = {
-  latexmk: ['-pdf', '-interaction=nonstopmode', '-halt-on-error', 'main.tex'],
-  tectonic: ['--keep-logs', '--synctex', 'main.tex'],
+function engineArgs(kind: LatexEngineKind, entryFile: string): readonly string[] {
+  return kind === 'latexmk'
+    ? ['-pdf', '-interaction=nonstopmode', '-halt-on-error', entryFile]
+    : ['--keep-logs', '--synctex', entryFile]
 }
 
 /** Real PATH probe: `<command> --version` runs to completion, or ENOENT says absent. */
@@ -222,11 +223,12 @@ function runEngine(
   projectDir: string,
   timeoutMs: number,
   signal: AbortSignal,
+  entryFile: string,
 ): Promise<{ ok: boolean; log: string }> {
   return new Promise((resolve, reject) => {
     execFile(
       engine.executable,
-      [...ENGINE_ARGS[engine.kind]],
+      engineArgs(engine.kind, entryFile),
       { cwd: projectDir, timeout: timeoutMs, signal, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' },
       (error: ExecFileException | null, stdout: string, stderr: string) => {
         if (error !== null && signal.aborted) {
@@ -248,27 +250,30 @@ function runEngine(
 }
 
 /**
- * Compile `main.tex` inside one project directory and parse the log.
- * Tectonic's `--keep-logs` leaves a standard TeX `main.log`; when present it
- * is parsed with the latexmk log parser, otherwise the run's `error:` /
+ * Compile the entry .tex inside one project directory and parse the log.
+ * Tectonic's `--keep-logs` leaves a standard TeX `<entry>.log`; when present
+ * it is parsed with the latexmk log parser, otherwise the run's `error:` /
  * `warning:` lines are parsed instead.
- * @param projectDir - Directory containing `main.tex`; must exist.
+ * @param projectDir - Directory containing the entry file; must exist.
  * @param options - Resolved engine selection and timeout.
  * @param signal - Caller cancellation; kills the engine process.
+ * @param entryFile - the entry .tex basename (`main.tex` for the agent-facing
+ * tool; the panel passes the project record's persisted entry — #249).
  * @returns parsed diagnostics, the engine used, success flag, and log tail.
  */
-export async function compileLatex(projectDir: string, options: LatexToolOptions, signal: AbortSignal): Promise<LatexCompileResult> {
+export async function compileLatex(projectDir: string, options: LatexToolOptions, signal: AbortSignal, entryFile = 'main.tex'): Promise<LatexCompileResult> {
   const stats = await stat(projectDir).catch(() => undefined)
   if (stats === undefined || !stats.isDirectory()) {
-    throw new Error('latex_compile: project_dir is not an existing directory containing main.tex')
+    throw new Error(`latex_compile: project_dir is not an existing directory containing ${entryFile}`)
   }
   const engine = await resolveLatexEngine(options.engine, options.probe)
-  const { ok, log } = await runEngine(engine, projectDir, options.timeoutMs, signal)
+  const { ok, log } = await runEngine(engine, projectDir, options.timeoutMs, signal, entryFile)
   // Prefer the on-disk TeX log tectonic leaves behind (--keep-logs): it is
   // far richer than tectonic's terse console lines. Capped at the tail — an
   // unbounded readFile let a pathological log into memory whole (#234).
+  const entryBase = entryFile.endsWith('.tex') ? entryFile.slice(0, -'.tex'.length) : entryFile
   const diskLog = engine.kind === 'tectonic'
-    ? await readLogTail(join(projectDir, 'main.log'))
+    ? await readLogTail(join(projectDir, `${entryBase}.log`))
     : undefined
   const source = diskLog ?? log
   const issues = diskLog !== undefined

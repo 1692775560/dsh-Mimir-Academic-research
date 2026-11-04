@@ -8,7 +8,7 @@
 import { describe, expect, it } from 'vitest'
 import { wikiExportFilename, wikiSnapshotSummary } from '../src/client/wiki-transfer.ts'
 
-/** One well-formed minimal snapshot for the summary tests. */
+/** One well-formed minimal v2 snapshot (seven tables, no ledger) for the summary tests. */
 function validSnapshot(): unknown {
   return {
     format: 'mimir-wiki',
@@ -21,6 +21,7 @@ function validSnapshot(): unknown {
       projects: [{ id: 'p' }],
       experiments: [{ id: 'e1' }, { id: 'e2' }, { id: 'e3' }],
       servers: [],
+      figures: [{ id: 'p:f.png' }],
     },
   }
 }
@@ -47,8 +48,41 @@ describe('wikiSnapshotSummary', () => {
         { name: 'projects', count: 1 },
         { name: 'experiments', count: 3 },
         { name: 'servers', count: 0 },
+        { name: 'figures', count: 1 },
       ],
+      // A file written before the field existed still gets the historical
+      // exclusion list: jobs (runtime state) and the meeting watch list.
+      excludedTables: ['jobs', 'venue_watches'],
     })
+  })
+
+  it('summarizes a v3 snapshot with the ledger table and its exclusion list', () => {
+    const raw = validSnapshot() as { version: number; excludedTables?: unknown; tables: Record<string, unknown> }
+    raw.version = 3
+    raw.tables['events'] = [{ id: 'ev1' }, { id: 'ev2' }]
+    raw.excludedTables = ['jobs', 'venue_watches']
+    const summary = wikiSnapshotSummary(raw)
+    expect(summary?.tables).toHaveLength(8)
+    expect(summary?.tables.at(-1)).toEqual({ name: 'events', count: 2 })
+    expect(summary?.excludedTables).toEqual(['jobs', 'venue_watches'])
+  })
+
+  it('rejects a v3 snapshot missing the events ledger', () => {
+    const raw = validSnapshot() as { version: number }
+    raw.version = 3
+    expect(wikiSnapshotSummary(raw)).toBeNull()
+  })
+
+  it('rejects a v2 snapshot missing one of its seven tables', () => {
+    const raw = validSnapshot() as { tables: Record<string, unknown> }
+    delete raw.tables['figures']
+    expect(wikiSnapshotSummary(raw)).toBeNull()
+  })
+
+  it('falls back to the historical exclusion list when the field is malformed', () => {
+    const raw = validSnapshot() as { excludedTables?: unknown }
+    raw.excludedTables = 'jobs'
+    expect(wikiSnapshotSummary(raw)?.excludedTables).toEqual(['jobs', 'venue_watches'])
   })
 
   it('rejects a wrong format tag', () => {

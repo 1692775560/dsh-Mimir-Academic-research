@@ -299,7 +299,7 @@ function OutlineTree({ nodes, onJump, reorder, gripLabel, dropZoneLabel }: {
  * @returns the editing surface.
  */
 export function PaperView({
-  outline, compileView, source, projectId, projectTitle, dir, editSource, reloadSource, compile, requestCompileFix,
+  outline, compileView, source, projectId, projectTitle, dir, entryFile, editSource, reloadSource, compile, requestCompileFix,
   bib, papers, ensureBibliography, reloadBibliography, deleteBibEntry, updateBibEntry, importPapersToBib,
   ensurePapers, reorderPaperSections, reorderPaperSubsections, paperJump, consumePaperJump, fullscreen, setFullscreen,
   snapshots, snapshotDetail, loadSnapshots, loadSnapshotDetail, closeSnapshotDetail, revertSnapshot,
@@ -313,6 +313,8 @@ export function PaperView({
   /** Title of the selected project, shown as a strip on top of the panes. */
   readonly projectTitle: string | undefined
   readonly dir: string | undefined
+  /** The selected project's entry .tex basename (#249); undefined falls back to `main.tex`. */
+  readonly entryFile: string | undefined
   /** The selected project's target venue; undefined until one is applied. */
   readonly venue: VenueView | undefined
   /** The venue picker's built-in template registry slice. */
@@ -657,6 +659,7 @@ export function PaperView({
       issue,
       source: currentSource !== null && currentSource.status === 'ready' ? currentSource.content : null,
       dir,
+      entryFile,
     })
     void requestCompileFix(prompt).finally(() => { setFixingIndex(null) })
   }
@@ -1068,6 +1071,7 @@ export function PaperView({
                 snapshotDetail={snapshotDetail}
                 source={source}
                 projectId={projectId}
+                entryFile={entryFile}
                 loadSnapshots={loadSnapshots}
                 loadSnapshotDetail={loadSnapshotDetail}
                 closeSnapshotDetail={closeSnapshotDetail}

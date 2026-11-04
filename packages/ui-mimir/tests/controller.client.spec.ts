@@ -68,6 +68,7 @@ import type {
   ResearchUpdatePaperResult,
   ResearchVenueDeadlinesResult,
 } from 'dsh-mimir/types'
+import { RESEARCH_PROTOCOL_VERSION } from 'dsh-mimir/types'
 
 /** Wrap one business result in the carrier's success branch. */
 function carried<T>(value: T): RemoteResult<T> {
@@ -2853,5 +2854,68 @@ describe('loadEvidenceGraph window request', () => {
     await Promise.resolve()
     await Promise.resolve()
     expect(controller.getSnapshot().evidence.view?.graph.stats.totalEdges).toBe(2)
+  })
+})
+
+describe('protocol handshake (#250)', () => {
+  it('settles compatible when host and client run the same protocol version', async () => {
+    const controller = new ResearchController(stubRemote({
+      getProtocolVersion: () => Promise.resolve(carried({ ok: true, value: { version: RESEARCH_PROTOCOL_VERSION } })),
+    }))
+    expect(controller.getSnapshot().protocol.status).toBe('checking')
+    controller.checkProtocol()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().protocol).toEqual({ status: 'compatible' })
+  })
+
+  it('flags a newer host: the client side must upgrade', async () => {
+    const controller = new ResearchController(stubRemote({
+      getProtocolVersion: () => Promise.resolve(carried({ ok: true, value: { version: RESEARCH_PROTOCOL_VERSION + 1 } })),
+    }))
+    controller.checkProtocol()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().protocol).toEqual({
+      status: 'incompatible',
+      hostVersion: RESEARCH_PROTOCOL_VERSION + 1,
+      clientVersion: RESEARCH_PROTOCOL_VERSION,
+      verdict: 'host-ahead',
+    })
+  })
+
+  it('flags an older host: the host side must upgrade', async () => {
+    const controller = new ResearchController(stubRemote({
+      getProtocolVersion: () => Promise.resolve(carried({ ok: true, value: { version: RESEARCH_PROTOCOL_VERSION - 1 } })),
+    }))
+    controller.checkProtocol()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().protocol).toMatchObject({ status: 'incompatible', verdict: 'client-ahead' })
+  })
+
+  it('treats a failed handshake call as a pre-handshake host, never a silent drift', async () => {
+    const controller = new ResearchController(stubRemote({
+      getProtocolVersion: () => Promise.resolve({ ok: false, error: new RemoteError('unavailable', 'host down', {}) }),
+    }))
+    controller.checkProtocol()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().protocol).toEqual({
+      status: 'incompatible',
+      hostVersion: null,
+      clientVersion: RESEARCH_PROTOCOL_VERSION,
+      verdict: 'unknown',
+    })
+  })
+
+  it('treats a thrown handshake call the same way', async () => {
+    const controller = new ResearchController(stubRemote({
+      getProtocolVersion: () => Promise.reject(new Error('no such method')),
+    }))
+    controller.checkProtocol()
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(controller.getSnapshot().protocol).toMatchObject({ status: 'incompatible', hostVersion: null, verdict: 'unknown' })
   })
 })

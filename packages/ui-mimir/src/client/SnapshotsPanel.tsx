@@ -19,23 +19,22 @@ import { collapseDiffRows, diffLines } from './snapshot-diff.ts'
 import { failureCopy, formatSize, relativeTime, type ResearchT } from './view-common.ts'
 import css from './ResearchPanel.module.css'
 
-/** The filename whose lines the diff compares (the paper's main source). */
-const MAIN_TEX = 'main.tex'
-
 /**
  * The diff of one expanded snapshot against the current source.
- * @param props - the snapshot's fetched files and the current draft.
+ * @param props - the snapshot's fetched files, the current draft, the entry
+ * filename (the diff's subject — #249), and copy.
  */
-function SnapshotDiff({ detail, current, t }: {
+function SnapshotDiff({ detail, current, entryFile, t }: {
   readonly detail: ResearchSnapshotDetailView
   readonly current: string
+  readonly entryFile: string
   readonly t: ResearchT
 }) {
   const rows = useMemo(() => {
-    const snapshotMain = detail.files.find(file => file.path === MAIN_TEX)
+    const snapshotMain = detail.files.find(file => file.path === entryFile)
     return snapshotMain === undefined ? null : collapseDiffRows(diffLines(snapshotMain.content, current))
-  }, [detail.files, current])
-  if (rows === null) return <p className={css.hint}>{t('snapshots.noMain')}</p>
+  }, [detail.files, current, entryFile])
+  if (rows === null) return <p className={css.hint}>{t('snapshots.noMain', { file: entryFile })}</p>
   if (rows.every(row => row.type === 'same')) {
     return <p className={css.hint}>{t('snapshots.unchanged')}</p>
   }
@@ -64,13 +63,15 @@ function SnapshotDiff({ detail, current, t }: {
  * @returns the snapshots panel.
  */
 export function SnapshotsPanel({
-  snapshots, snapshotDetail, source, projectId,
+  snapshots, snapshotDetail, source, projectId, entryFile,
   loadSnapshots, loadSnapshotDetail, closeSnapshotDetail, revertSnapshot, onClose, t,
 }: {
   readonly snapshots: ResearchProjectSlice<readonly PaperSnapshotView[]> | null
   readonly snapshotDetail: ResearchSnapshotDetailView | null
   readonly source: ResearchSourceView | null
   readonly projectId: string
+  /** The project's entry .tex basename (the diff subject and revert anchor); defaults to `main.tex` (#249). */
+  readonly entryFile?: string | undefined
   readonly loadSnapshots: (projectId: string, force?: boolean) => void
   readonly loadSnapshotDetail: (projectId: string, id: string) => void
   readonly closeSnapshotDetail: () => void
@@ -235,7 +236,7 @@ export function SnapshotsPanel({
                 ) : detail.status === 'error' ? (
                   <p className={css.failure} role="alert">{failureCopy(t, detail.failure)}</p>
                 ) : (
-                  <SnapshotDiff detail={detail} current={currentContent ?? ''} t={t} />
+                  <SnapshotDiff detail={detail} current={currentContent ?? ''} entryFile={entryFile ?? 'main.tex'} t={t} />
                 )
               )}
             </li>

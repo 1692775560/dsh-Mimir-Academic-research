@@ -95,6 +95,21 @@ export function success<T>(value: T): ResearchSuccess<T> {
   return Object.freeze({ ok: true, value })
 }
 
+/**
+ * The paper's entry .tex basename of one project record (#249): the import's
+ * persisted pick, `main.tex` for records that predate the field.
+ * @param record - the project row (undefined for the unkeyed compile slot).
+ * @returns the entry basename, never empty.
+ */
+export function entryFileOf(record: { readonly entryFile?: string | undefined } | undefined): string {
+  return record?.entryFile ?? 'main.tex'
+}
+
+/** The entry file's basename without the `.tex` suffix (`thesis.tex` → `thesis`). */
+export function entryBaseOf(entryFile: string): string {
+  return entryFile.endsWith('.tex') ? entryFile.slice(0, -'.tex'.length) : entryFile
+}
+
 /** Build a frozen business-failure branch. */
 export function rejected<E extends ResearchFailure>(error: E): ResearchRejected<E> {
   return Object.freeze({ ok: false, error: Object.freeze(error) })

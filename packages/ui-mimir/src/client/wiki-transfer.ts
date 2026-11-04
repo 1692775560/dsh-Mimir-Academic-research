@@ -9,10 +9,22 @@
 
 import type { ResearchWikiTableName } from 'dsh-mimir/types'
 
-/** The six wiki tables, in display order (kept in sync with the Host's list). */
+/** The eight snapshot tables, in display order (kept in sync with the Host's list). */
 export const WIKI_TABLE_LABELS: readonly ResearchWikiTableName[] = Object.freeze([
-  'papers', 'ideas', 'claims', 'projects', 'experiments', 'servers',
+  'papers', 'ideas', 'claims', 'projects', 'experiments', 'servers', 'figures', 'events',
 ])
+
+/** The table list of a legacy v2 snapshot: the ledger was not carried yet. */
+export const WIKI_TABLE_LABELS_V2: readonly ResearchWikiTableName[] = Object.freeze([
+  'papers', 'ideas', 'claims', 'projects', 'experiments', 'servers', 'figures',
+])
+
+/**
+ * Exclusion list assumed for a snapshot that carries no `excludedTables`
+ * field (every file written before the field existed excludes exactly these —
+ * kept in sync with the Host's `WIKI_EXCLUDED_TABLES`).
+ */
+export const WIKI_EXCLUDED_TABLES_DEFAULT: readonly string[] = Object.freeze(['jobs', 'venue_watches'])
 
 /** The export download's filename: `mimir-wiki-YYYYMMDD.json` (UTC date). */
 export function wikiExportFilename(date: Date): string {
@@ -30,13 +42,16 @@ export interface WikiSnapshotTableCount {
 export interface WikiSnapshotSummary {
   readonly exportedAt: string
   readonly tables: readonly WikiSnapshotTableCount[]
+  /** Domain tables the snapshot does not carry; an import leaves them alone. */
+  readonly excludedTables: readonly string[]
 }
 
 /**
  * Summarize one parsed export file for the import dialog: per-table row
- * counts plus the export timestamp. Returns null for anything that is not a
- * recognizable mimir-wiki snapshot (bad format/version, missing table
- * arrays) so the dialog can refuse it before it reaches the Host.
+ * counts plus the export timestamp and the exclusion list. Returns null for
+ * anything that is not a recognizable mimir-wiki snapshot (bad format/
+ * version, missing table arrays) so the dialog can refuse it before it
+ * reaches the Host.
  */
 export function wikiSnapshotSummary(raw: unknown): WikiSnapshotSummary | null {
   if (typeof raw !== 'object' || raw === null) return null
@@ -44,6 +59,7 @@ export function wikiSnapshotSummary(raw: unknown): WikiSnapshotSummary | null {
     format?: unknown
     version?: unknown
     exportedAt?: unknown
+    excludedTables?: unknown
     tables?: unknown
   }
   // v2 (seven tables) is still importable; v3 adds the `events` ledger.
@@ -52,11 +68,16 @@ export function wikiSnapshotSummary(raw: unknown): WikiSnapshotSummary | null {
   if (typeof snapshot.exportedAt !== 'string') return null
   if (typeof snapshot.tables !== 'object' || snapshot.tables === null) return null
   const tables = snapshot.tables as Record<string, unknown>
+  const names = snapshot.version === 2 ? WIKI_TABLE_LABELS_V2 : WIKI_TABLE_LABELS
   const counts: WikiSnapshotTableCount[] = []
-  for (const name of WIKI_TABLE_LABELS) {
+  for (const name of names) {
     const rows = tables[name]
     if (!Array.isArray(rows)) return null
     counts.push({ name, count: rows.length })
   }
-  return { exportedAt: snapshot.exportedAt, tables: counts }
+  const rawExcluded = snapshot.excludedTables
+  const excludedTables = Array.isArray(rawExcluded) && rawExcluded.every(name => typeof name === 'string')
+    ? Object.freeze([...rawExcluded])
+    : WIKI_EXCLUDED_TABLES_DEFAULT
+  return { exportedAt: snapshot.exportedAt, tables: counts, excludedTables }
 }
