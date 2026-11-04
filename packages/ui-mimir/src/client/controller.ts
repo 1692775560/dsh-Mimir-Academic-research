@@ -160,8 +160,8 @@ import type {
   ZoteroItemView,
   ResearchWikiChangeEvent,
 } from 'dsh-mimir/types'
-// Runtime: the handshake's version + verdict, bundled from the same build.
-import { protocolVerdict, RESEARCH_PROTOCOL_VERSION } from 'dsh-mimir/types'
+// Runtime: the client's own copy of the handshake version + verdict (#250).
+import { protocolVerdict, RESEARCH_PROTOCOL_VERSION } from './protocol.ts'
 import {
   createWikiChangeAggregator,
   type LiveSlice,

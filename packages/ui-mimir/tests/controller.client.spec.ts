@@ -68,7 +68,7 @@ import type {
   ResearchUpdatePaperResult,
   ResearchVenueDeadlinesResult,
 } from 'dsh-mimir/types'
-import { RESEARCH_PROTOCOL_VERSION } from 'dsh-mimir/types'
+import { RESEARCH_PROTOCOL_VERSION } from '../src/client/protocol.ts'
 
 /** Wrap one business result in the carrier's success branch. */
 function carried<T>(value: T): RemoteResult<T> {
