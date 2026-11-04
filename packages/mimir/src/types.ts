@@ -992,8 +992,9 @@ export type ResearchZoteroExportResult = ResearchResult<{
 
 /**
  * The research-wiki tables carried by an export snapshot, in domain order
- * (the runtime-only `jobs` table is excluded; `events` — the CBE engine's
- * single source of truth — is included since snapshot v3).
+ * (the runtime-only `jobs` table and the per-project `venue_watches` follow
+ * list are excluded; `events` — the CBE engine's single source of truth — is
+ * included since snapshot v3).
  */
 export type ResearchWikiTableName = 'papers' | 'ideas' | 'claims' | 'projects' | 'experiments' | 'servers' | 'figures' | 'events'
 
@@ -1021,6 +1022,13 @@ export interface ResearchWikiSnapshot {
   readonly version: 2 | 3
   readonly exportedAt: string
   readonly tables: ResearchWikiSnapshotTables
+  /**
+   * Domain tables the snapshot deliberately does NOT carry (`jobs` is
+   * runtime state; `venue_watches` is the per-project meeting follow list —
+   * an import leaves both untouched). Written since snapshot v3; absent in
+   * older files, whose exclusion set is exactly this list.
+   */
+  readonly excludedTables?: readonly string[]
 }
 
 /** `exportWiki` result: the full snapshot. */

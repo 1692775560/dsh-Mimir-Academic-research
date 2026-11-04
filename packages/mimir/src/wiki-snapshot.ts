@@ -37,6 +37,15 @@ export const WIKI_TABLE_NAMES_V2 = [
   'papers', 'ideas', 'claims', 'projects', 'experiments', 'servers', 'figures',
 ] as const satisfies readonly ResearchWikiTableName[]
 
+/**
+ * Domain tables a snapshot deliberately does NOT carry, written into the
+ * envelope so importers can say exactly what a restore leaves alone: `jobs`
+ * is runtime state rather than research data, and `venue_watches` holds the
+ * per-project meeting follow list. Snapshots predate this field only by
+ * omission — their exclusion set was exactly this list.
+ */
+export const WIKI_EXCLUDED_TABLES: readonly string[] = Object.freeze(['jobs', 'venue_watches'])
+
 /** Primary-key field of each table's record (papers key by the arXiv id). */
 export const WIKI_TABLE_KEY: Record<ResearchWikiTableName, string> = {
   papers: 'arxivId',
@@ -91,6 +100,7 @@ export function buildWikiSnapshot(domain: WikiSnapshotSource, now = new Date()):
     format: WIKI_SNAPSHOT_FORMAT,
     version: WIKI_SNAPSHOT_VERSION,
     exportedAt: now.toISOString(),
+    excludedTables: WIKI_EXCLUDED_TABLES,
     tables: {
       papers: rows('papers') as ResearchWikiSnapshot['tables']['papers'],
       ideas: rows('ideas') as ResearchWikiSnapshot['tables']['ideas'],
@@ -127,6 +137,7 @@ export function snapshotEnvelopeError(raw: unknown): string | null {
     format?: unknown
     version?: unknown
     exportedAt?: unknown
+    excludedTables?: unknown
     tables?: unknown
   }
   if (snapshot.format !== WIKI_SNAPSHOT_FORMAT) return `format must be "${WIKI_SNAPSHOT_FORMAT}"`
@@ -135,6 +146,14 @@ export function snapshotEnvelopeError(raw: unknown): string | null {
     return `version must be ${WIKI_SNAPSHOT_MIN_VERSION} or ${WIKI_SNAPSHOT_VERSION}`
   }
   if (typeof snapshot.exportedAt !== 'string') return 'exportedAt must be a string'
+  // Additive metadata: older files carry no exclusion list at all, but one
+  // that is present must be a plain string list.
+  if (snapshot.excludedTables !== undefined) {
+    const excluded = snapshot.excludedTables
+    if (!Array.isArray(excluded) || excluded.some(name => typeof name !== 'string')) {
+      return 'excludedTables must be a string array'
+    }
+  }
   if (typeof snapshot.tables !== 'object' || snapshot.tables === null) return 'tables must be an object'
   const tables = snapshot.tables as Record<string, unknown>
   // A v2 snapshot is held only to its own seven tables: missing `events` is

@@ -19,7 +19,7 @@ import { researchWikiDomainSpec } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
 import {
   buildWikiSnapshot, snapshotEnvelopeError, snapshotTables, tableRowsError,
-  WIKI_SNAPSHOT_FORMAT, WIKI_SNAPSHOT_VERSION, WIKI_SNAPSHOT_MIN_VERSION,
+  WIKI_EXCLUDED_TABLES, WIKI_SNAPSHOT_FORMAT, WIKI_SNAPSHOT_VERSION, WIKI_SNAPSHOT_MIN_VERSION,
 } from '../src/wiki-snapshot.ts'
 import { recoverPendingWikiImport, WIKI_IMPORT_RECOVERY_FILE } from '../src/services/wiki-admin.ts'
 import { appendEvent, PANEL_ACTOR } from '../src/ledger.ts'
@@ -168,6 +168,47 @@ describe('exportWiki', () => {
     // silently zero worktree / habits / foraging / eureka / digest.
     expect(snapshot.tables.events).toHaveLength(1)
     expect(snapshotTables(snapshot)).toContain('events')
+  })
+
+  it('declares the excluded tables in the envelope metadata', async () => {
+    const { service } = await harness()
+    const snapshot = await exportOk(service)
+    // jobs is runtime state; venue_watches is the meeting follow list —
+    // neither is research data a snapshot should move.
+    expect(snapshot.excludedTables).toEqual(WIKI_EXCLUDED_TABLES)
+    expect(snapshot.tables).not.toHaveProperty('jobs')
+    expect(snapshot.tables).not.toHaveProperty('venue_watches')
+  })
+})
+
+describe('meeting watch consistency', () => {
+  it('keeps the venue watch list across both import modes (#253)', async () => {
+    const { domain, service } = await harness()
+    await seed(domain)
+    const watched = await service.setVenueWatch({ projectId: PROJECT.id, series: 'CVPR', watched: true })
+    expect(watched.ok).toBe(true)
+    const watchId = `${PROJECT.id}:cvpr`
+    expect(domain.table('venue_watches').get(watchId)).toBeDefined()
+
+    const snapshot = await exportOk(service)
+    // The follow list is not snapshot data: the envelope says so, and neither
+    // import mode may create, wipe, or overwrite it.
+    expect(snapshot.excludedTables).toContain('venue_watches')
+
+    const merged = await service.importWiki({
+      snapshot: JSON.parse(JSON.stringify(snapshot)) as ResearchWikiSnapshot,
+      mode: 'merge',
+    })
+    expect(merged.ok).toBe(true)
+    expect(domain.table('venue_watches').get(watchId)).toMatchObject({ projectId: PROJECT.id, series: 'cvpr' })
+
+    const replaced = await service.importWiki({
+      snapshot: JSON.parse(JSON.stringify(snapshot)) as ResearchWikiSnapshot,
+      mode: 'replace',
+      confirmReplace: true,
+    })
+    expect(replaced.ok).toBe(true)
+    expect(domain.table('venue_watches').get(watchId)).toMatchObject({ projectId: PROJECT.id, series: 'cvpr' })
   })
 })
 
@@ -395,6 +436,16 @@ describe('wiki-snapshot validators', () => {
     expect(snapshotEnvelopeError(null)).toBe('snapshot must be an object')
     expect(snapshotEnvelopeError({ format: WIKI_SNAPSHOT_FORMAT, version: 2, exportedAt: 'x', tables: { papers: 'x' } }))
       .toBe('tables.papers must be an array')
+  })
+
+  it('rejects a malformed excludedTables list but tolerates its absence', () => {
+    const base = {
+      format: WIKI_SNAPSHOT_FORMAT, version: 2, exportedAt: 'x',
+      tables: { papers: [], ideas: [], claims: [], projects: [], experiments: [], servers: [], figures: [] },
+    }
+    expect(snapshotEnvelopeError(base)).toBeNull()
+    expect(snapshotEnvelopeError({ ...base, excludedTables: 'jobs' })).toBe('excludedTables must be a string array')
+    expect(snapshotEnvelopeError({ ...base, excludedTables: ['jobs', 1] })).toBe('excludedTables must be a string array')
   })
 
   it('rejects duplicate primary keys within one table', () => {

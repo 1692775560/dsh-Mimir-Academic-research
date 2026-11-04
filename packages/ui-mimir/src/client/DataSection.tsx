@@ -3,11 +3,12 @@
  * reports the host's scheduled-backup knobs and on-disk count (hidden until
  * `listBackups` settles). Export downloads
  * the whole wiki as one dated JSON snapshot; import walks a three-step flow
- * — pick a file, review its summary (per-table row counts and the export
- * timestamp), then choose merge (existing keys are skipped, never
- * overwritten) or replace (a red-armed second confirm, since it wipes all
- * six tables first) — and ends with the per-table imported/skipped counts.
- * A successful import re-fetches every loaded slice host-side.
+ * — pick a file, review its summary (per-table row counts, the export
+ * timestamp, and the tables the snapshot deliberately excludes), then choose
+ * merge (existing keys are skipped, never overwritten) or replace (a
+ * red-armed second confirm, since it wipes the carried tables first) — and
+ * ends with the totals plus the per-table impact scope. A successful import
+ * re-fetches every loaded slice host-side.
  * @module dsh-client-ui-mimir/client/DataSection
  */
 
@@ -16,7 +17,7 @@ import type { ResearchBackupStatusView, ResearchImportWikiMode, ResearchSchedule
 import type { ResearchFailureView } from './controller.ts'
 import { failureCopy, type ResearchT } from './view-common.ts'
 import {
-  wikiExportFilename, wikiSnapshotSummary, type WikiSnapshotSummary,
+  WIKI_TABLE_LABELS, wikiExportFilename, wikiSnapshotSummary, type WikiSnapshotSummary,
 } from './wiki-transfer.ts'
 import css from './ResearchPanel.module.css'
 
@@ -56,7 +57,9 @@ export function DataSection({ backup, taskHealth, exportWiki, importWiki, t }: {
   const [pending, setPending] = useState<{ snapshot: unknown; summary: WikiSnapshotSummary } | null>(null)
   // True after the user picked replace: the red warning confirm step.
   const [replaceArmed, setReplaceArmed] = useState(false)
-  const [result, setResult] = useState<ImportCounts | null>(null)
+  // The settled import: counts plus the snapshot's exclusion list (the
+  // pending summary is gone by then, so the result carries its own copy).
+  const [result, setResult] = useState<{ counts: ImportCounts; excludedTables: readonly string[] } | null>(null)
 
   const onExport = (): void => {
     setError(null)
@@ -101,6 +104,7 @@ export function DataSection({ backup, taskHealth, exportWiki, importWiki, t }: {
 
   const runImport = (mode: ResearchImportWikiMode): void => {
     if (pending === null) return
+    const { excludedTables } = pending.summary
     setError(null)
     setBusy(true)
     void importWiki(pending.snapshot, mode, mode === 'replace').then((outcome) => {
@@ -111,9 +115,13 @@ export function DataSection({ backup, taskHealth, exportWiki, importWiki, t }: {
         setError(`${t('overview.importFailed')}：${failureCopy(t, outcome)}`)
         return
       }
-      setResult(outcome)
+      setResult({ counts: outcome, excludedTables })
     })
   }
+
+  /** Localized, separator-joined exclusion list (`job queue, meeting watch list`). */
+  const excludedCopy = (names: readonly string[]): string =>
+    names.map(name => t(`excludedTable.${name}` as Parameters<ResearchT>[0])).join(t('overview.listSep'))
 
   return (
     <div className={css.dataSection}>
@@ -178,6 +186,11 @@ export function DataSection({ backup, taskHealth, exportWiki, importWiki, t }: {
               <li key={table.name}>{t(`wikiTable.${table.name}` as Parameters<ResearchT>[0])} × {table.count}</li>
             ))}
           </ul>
+          {pending.summary.excludedTables.length > 0 && (
+            <p className={css.hint}>
+              {t('overview.excludedTables')}：{excludedCopy(pending.summary.excludedTables)}
+            </p>
+          )}
           {replaceArmed ? (
             <>
               <p className={css.dataWarning} role="alert">{t('overview.replaceWarning')}</p>
@@ -233,10 +246,28 @@ export function DataSection({ backup, taskHealth, exportWiki, importWiki, t }: {
         </div>
       )}
       {result !== null && (
-        <p className={css.hint} role="status">
-          {t('overview.importDone')}
-          ：{t('overview.imported')} {totalOf(result.imported)} · {t('overview.skipped')} {totalOf(result.skipped)}
-        </p>
+        <div className={css.dataSummary}>
+          <p className={css.hint} role="status">
+            {t('overview.importDone')}
+            ：{t('overview.imported')} {totalOf(result.counts.imported)} · {t('overview.skipped')} {totalOf(result.counts.skipped)}
+          </p>
+          <ul className={css.artifactList}>
+            {WIKI_TABLE_LABELS
+              .filter(name => (result.counts.imported[name] ?? 0) + (result.counts.skipped[name] ?? 0) > 0)
+              .map(name => (
+                <li key={name}>
+                  {t(`wikiTable.${name}` as Parameters<ResearchT>[0])}
+                  ：{t('overview.imported')} {result.counts.imported[name] ?? 0}
+                  {' · '}{t('overview.skipped')} {result.counts.skipped[name] ?? 0}
+                </li>
+              ))}
+          </ul>
+          {result.excludedTables.length > 0 && (
+            <p className={css.hint}>
+              {t('overview.excludedTables')}：{excludedCopy(result.excludedTables)}
+            </p>
+          )}
+        </div>
       )}
     </div>
   )
