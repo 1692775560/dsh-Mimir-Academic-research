@@ -633,7 +633,6 @@ export function deriveEvidenceGraphLayout(
   links.sort((a, b) =>
     a.kind.localeCompare(b.kind) || a.fromId.localeCompare(b.fromId) || a.toId.localeCompare(b.toId))
 
-  /* ── 7. Ticks at the first bead of every date. */
   /* ── 7. Ticks at the first bead of every date, thinned to ≤ maxTickLabels
      (a 90-day window would otherwise stack 90 labels; first and last stay,
      the middle samples evenly — same input, same ticks). */
