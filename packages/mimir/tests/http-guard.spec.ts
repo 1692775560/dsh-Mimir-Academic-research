@@ -206,14 +206,18 @@ describe('the boundary keeps its copy fixed (#209)', () => {
 
 describe('every route is registered through the boundary (#209)', () => {
   it('wraps every handler and routes every stream through the helper', async () => {
-    const source = await readFile(new URL('../src/index.ts', import.meta.url), 'utf8')
+    // The handlers live in `routes.ts` (#238) and the registrations in
+    // `index.ts`; the seam spans both, so both are read.
+    const registrations = await readFile(new URL('../src/index.ts', import.meta.url), 'utf8')
+    const handlers = await readFile(new URL('../src/routes.ts', import.meta.url), 'utf8')
     // A new route that forgets the boundary is exactly the bug this exists to
     // prevent, so the seam is counted rather than assumed.
-    const registrations = source.match(/handler: [^,]+\(/g) ?? []
-    expect(registrations).toHaveLength(7)
-    expect(source.match(/handler: guardRoute\(/g) ?? []).toHaveLength(registrations.length)
+    const wired = registrations.match(/handler: [^,]+?\(/g) ?? []
+    expect(wired).toHaveLength(7)
+    expect(registrations.match(/handler: guardRoute\(/g) ?? []).toHaveLength(wired.length)
     // No route may pipe a file stream directly: the error event needs an owner.
-    expect(source).not.toContain('.pipe(res)')
-    expect(source.match(/streamToResponse\(createReadStream\(/g) ?? []).toHaveLength(4)
+    expect(handlers).not.toContain('.pipe(res)')
+    expect(registrations).not.toContain('.pipe(res)')
+    expect(handlers.match(/streamToResponse\(createReadStream\(/g) ?? []).toHaveLength(4)
   })
 })
