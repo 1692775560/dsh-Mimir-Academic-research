@@ -14,6 +14,15 @@ import { describe, expect, it } from 'vitest'
 import { ResearchController } from '../src/client/controller.ts'
 import type { ResearchRemote } from '../src/client/controller.ts'
 import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import { RemoteError } from '@deepseek-ai/dsh-typert-protocol'
+import { RESEARCH_PROTOCOL_VERSION } from '../src/client/protocol.ts'
+
+declare module '@deepseek-ai/dsh-typert-protocol' {
+  interface RemoteErrorDetailsMap {
+    /** Test-only carrier failure code for unreachable-host simulations. */
+    'unavailable': {}
+  }
+}
 import {
   isProjectScoped,
   LOAD_MATRIX,
@@ -30,8 +39,8 @@ import type {
 } from 'dsh-mimir/types'
 
 const carried = <T>(value: T): RemoteResult<T> => ({ ok: true, value })
-const failed = <T>(failure: { code: string; message: string }): RemoteResult<T> => ({
-  ok: false, failure,
+const failed = <T>(code: 'unavailable', message: string): RemoteResult<T> => ({
+  ok: false, error: new RemoteError(code, message, {}),
 })
 
 const NO_PROJECTS: ResearchListProjectsResult = { ok: true, value: { projects: [] } }
@@ -136,7 +145,7 @@ describe('ResearchController load matrix (#222)', () => {
       listPapers: () => {
         calls += 1
         return calls === 1
-          ? Promise.resolve(failed<ResearchPapersResult>({ code: 'unavailable', message: 'offline' }))
+          ? Promise.resolve(failed<ResearchPapersResult>('unavailable', 'offline'))
           : Promise.resolve(carried(NO_PAPERS))
       },
     }))
@@ -189,10 +198,10 @@ describe('ResearchController load matrix (#222)', () => {
       listPapers: () => {
         papers += 1
         return papers === 1
-          ? Promise.resolve(failed<ResearchPapersResult>({ code: 'unavailable', message: 'offline' }))
+          ? Promise.resolve(failed<ResearchPapersResult>('unavailable', 'offline'))
           : Promise.resolve(carried(NO_PAPERS))
       },
-      getProtocolVersion: () => Promise.resolve(carried({ version: '1' })),
+      getProtocolVersion: () => Promise.resolve(carried({ ok: true, value: { version: RESEARCH_PROTOCOL_VERSION } })),
     }))
     controller.loadSlice('projects', 'first-open')
     controller.loadSlice('papers', 'first-open')
@@ -214,7 +223,7 @@ describe('ResearchController load matrix (#222)', () => {
         jobs += 1
         return Promise.resolve(carried(NO_JOBS))
       },
-      getProtocolVersion: () => Promise.resolve(carried({ version: '1' })),
+      getProtocolVersion: () => Promise.resolve(carried({ ok: true, value: { version: RESEARCH_PROTOCOL_VERSION } })),
     }))
     controller.loadSlice('projects', 'first-open')
     controller.loadSlice('jobs', 'first-open')
@@ -238,10 +247,10 @@ describe('ResearchController load matrix (#222)', () => {
       listProjects: () => {
         loads += 1
         return loads === 1
-          ? Promise.resolve(failed<ResearchListProjectsResult>({ code: 'unavailable', message: 'offline' }))
+          ? Promise.resolve(failed<ResearchListProjectsResult>('unavailable', 'offline'))
           : Promise.resolve(carried(NO_PROJECTS))
       },
-      getProtocolVersion: () => Promise.resolve(carried({ version: '1' })),
+      getProtocolVersion: () => Promise.resolve(carried({ ok: true, value: { version: RESEARCH_PROTOCOL_VERSION } })),
     }))
     controller.ensure()
     await settle()
@@ -259,7 +268,7 @@ describe('ResearchController load matrix (#222)', () => {
         jobs += 1
         return Promise.resolve(carried(NO_JOBS))
       },
-      getProtocolVersion: () => Promise.resolve(carried({ version: '1' })),
+      getProtocolVersion: () => Promise.resolve(carried({ ok: true, value: { version: RESEARCH_PROTOCOL_VERSION } })),
     }))
     controller.loadSlice('projects', 'first-open')
     await settle()
@@ -310,7 +319,7 @@ describe('ResearchController load matrix (#222)', () => {
       listArxivSubscriptions: () => {
         loads += 1
         return loads === 1
-          ? Promise.resolve(failed<ResearchArxivSubscriptionsResult>({ code: 'unavailable', message: 'offline' }))
+          ? Promise.resolve(failed<ResearchArxivSubscriptionsResult>('unavailable', 'offline'))
           : Promise.resolve(carried(NO_SUBSCRIPTIONS))
       },
     }))

@@ -79,8 +79,8 @@ export function sliceAction(
     return 'load'
   }
   // First open and revisit are the same question: is anything on screen yet?
-  // `loading` without `inFlight` is unreachable, but treats it as a load so a
-  // stranded spinner can recover rather than sit there.
+  // `loading` without `inFlight` is unreachable, so skipping it is safe — the
+  // in-flight load owns the transition out of the spinner.
   return status === 'ready' || status === 'loading' ? 'skip' : 'load'
 }
 
