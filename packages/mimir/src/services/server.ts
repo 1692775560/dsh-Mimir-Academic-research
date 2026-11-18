@@ -197,6 +197,22 @@ async function sshInvocation(server: ServerRecord, remoteCommand: string): Promi
  * @returns the parsed GPU rows, or the failure stage (`ssh` session vs `gpu`
  * readout) plus the failure message.
  */
+/**
+ * One numeric `nvidia-smi` CSV field, or null when the field is empty or not a
+ * finite number (#236).
+ *
+ * `Number('')` is `0`, which is how a missing measurement used to become a
+ * real-looking 0% bar; `Number('N/A')` is `NaN`, and a NaN bar is not
+ * renderable. Both mean "no reading", so both skip the row.
+ * @param field - one trimmed CSV field.
+ * @returns the value, or null when there is no usable measurement.
+ */
+function parseNumericField(field: string | undefined): number | null {
+  if (field === undefined || field === '') return null
+  const value = Number(field)
+  return Number.isFinite(value) ? value : null
+}
+
 async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
   const invocation = await sshInvocation(record, NVIDIA_SMI_QUERY)
   try {
@@ -209,12 +225,13 @@ async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
       const trimmed = line.trim()
       if (trimmed === '') continue
       const [name, utilizationPct, memoryUsedMb, memoryTotalMb] = trimmed.split(',').map(field => field.trim())
-      const utilization = Number(utilizationPct)
-      const usedMb = Number(memoryUsedMb)
-      const totalMb = Number(memoryTotalMb)
-      // #236: a malformed nvidia-smi row (NaN/Infinity) is skipped outright,
-      // never stored as a NaN bar.
-      if (!Number.isFinite(utilization) || !Number.isFinite(usedMb) || !Number.isFinite(totalMb)) continue
+      // #236: `Number('')` is `0`, so an empty field (`gpu0, , ,`) used to store
+      // a plausible-looking 0% / 0 MiB card. A field that is not a number at
+      // all has nothing to show, so the row is skipped rather than guessed.
+      const utilization = parseNumericField(utilizationPct)
+      const usedMb = parseNumericField(memoryUsedMb)
+      const totalMb = parseNumericField(memoryTotalMb)
+      if (utilization === null || usedMb === null || totalMb === null) continue
       gpus.push({
         name: name ?? '',
         utilizationPct: utilization,
@@ -249,6 +266,19 @@ async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
  */
 const SSH_TOKEN_RE = /^[a-zA-Z0-9._:-]+$/
 const SSH_USERNAME_RE = /^[a-zA-Z0-9._-]+$/
+/**
+ * #236: a token made only of separators (`..`, `::`, `-`, `._`) passes the
+ * character whitelist and names nothing. ssh then reports "could not resolve
+ * hostname", one layer below where the user can fix it.
+ */
+const SEPARATOR_ONLY_RE = /^[.:_-]+$/
+/**
+ * `user@host:port` is ssh's own target grammar, so a colon inside the stored
+ * host silently redirects the port. The whitelist allows colons for IPv6
+ * literals, which are always bracketed-free and contain hex digits — so the
+ * separator-only check above plus this one covers the ambiguity.
+ */
+const HOST_COLON_WITH_DIGITS_RE = /^[^:]*:\d+$/
 
 /**
  * Password bounds (#263): the cap exists only so a pathological payload
@@ -261,15 +291,25 @@ const SSH_USERNAME_RE = /^[a-zA-Z0-9._-]+$/
 const SERVER_PASSWORD_MAX_CHARS = 256
 const SERVER_PASSWORD_CONTROL_RE = /[\x00-\x1f\x7f]/
 
-/** First invalid-input message for one server upsert payload, or null when valid. */
-function validateServerInput(input: ServerInput): string | null {
+/**
+ * First invalid-input message for one server upsert payload, or null when valid.
+ *
+ * Exported for the tests (#236): these checks are a contract about which stored
+ * records may exist, and the cheapest place to state that contract is where it
+ * can be read — not behind a tool call that has to reach ssh first.
+ * @param input - the payload as the panel or the tool handed it over.
+ * @returns the first violation, or null when the payload is acceptable.
+ */
+export function validateServerInput(input: ServerInput): string | null {
   if (input.name.trim().length === 0) return 'name must be non-empty'
   if (input.host.trim().length === 0) return 'host must be non-empty'
-  if (input.host.startsWith('-') || !SSH_TOKEN_RE.test(input.host)) {
+  if (input.host.startsWith('-') || !SSH_TOKEN_RE.test(input.host)
+    || SEPARATOR_ONLY_RE.test(input.host) || HOST_COLON_WITH_DIGITS_RE.test(input.host)) {
     return 'host must be a plain hostname or IP (letters, digits, dots, dashes, colons)'
   }
   if (input.username !== undefined && input.username.trim() !== ''
-    && (input.username.startsWith('-') || !SSH_USERNAME_RE.test(input.username))) {
+    && (input.username.startsWith('-') || !SSH_USERNAME_RE.test(input.username)
+      || SEPARATOR_ONLY_RE.test(input.username))) {
     return 'username must be a plain ssh login user (letters, digits, dots, dashes, underscores)'
   }
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
