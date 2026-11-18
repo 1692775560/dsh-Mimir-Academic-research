@@ -14,18 +14,20 @@
  * @module dsh-client-ui-mimir/client/ResearchPanel
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import type { ResearchTab } from './store.ts'
 import type { ResearchKey } from './locales.ts'
 import { arrowTab, trapFocusIndex } from './focus.ts'
 import { cleanProjectTitle, nextSelectionAfterDelete } from './project-form.ts'
 import { failureCopy } from './view-common.ts'
-import type { ResearchFailureView } from './controller.ts'
+import type { ResearchCapabilitySet, ResearchFailureView } from './controller.ts'
 import { readSidebarFolded, SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue } from './sidebar-fold.ts'
 import { readStorageFlag, readStorageValue, storageFlagValue, writeStorageValue } from './storage.ts'
-import { shortcutFor, TABS } from './shortcuts.ts'
+import { shortcutFor } from './shortcuts.ts'
 import { countUpcomingDeadlines } from './venues-view.ts'
+import { LOAD_MATRIX, SLICES_BY_TAB } from './slice-policy.ts'
 import type { ResearchPanelProps } from './slots.ts'
+import type { ResearchCapability } from 'dsh-mimir/types'
 import { OverviewView } from './OverviewView.tsx'
 import { PaperView } from './PaperView.tsx'
 import { PapersView } from './PapersView.tsx'
@@ -40,6 +42,68 @@ import { ImportProjectDialog } from './ImportProjectDialog.tsx'
 import css from './ResearchPanel.module.css'
 
 /** Locale key of one tab label. */
+/** One rail tab; shared by the main path and the "More" list (#243). */
+function NavTab({ tab, activeTab, count, setTab, t }: {
+  readonly tab: ResearchTab
+  readonly activeTab: ResearchTab
+  readonly count: number | null | undefined
+  readonly setTab: (tab: ResearchTab) => void
+  readonly t: (key: ResearchKey) => string
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      role="tab"
+      className={css.navItem}
+      data-active={tab === activeTab || undefined}
+      aria-selected={tab === activeTab}
+      title={t(TAB_KEYS[tab])}
+      onClick={() => { setTab(tab) }}
+    >
+      <span className={css.navIcon} aria-hidden>{TAB_ICONS[tab]}</span>
+      <span className={css.navLabel}>{t(TAB_KEYS[tab])}</span>
+      {count !== undefined && count !== null && (
+        <span className={css.navCount} aria-label={String(count)}>{count}</span>
+      )}
+    </button>
+  )
+}
+
+/**
+ * The rail in two tiers (#243): the research main path stays on the first
+ * level, the low-frequency tools sit behind one "More" affordance.
+ *
+ * The split is by capability layer — `core` and `presentation` are the path a
+ * paper actually travels (read, write, look at, present); `automation`,
+ * `compute` and `insights` are instruments reached for occasionally. Tying
+ * the fold to the layer keeps it honest: a view added to a core layer lands on
+ * the main path without anyone editing a list here.
+ */
+const PRIMARY_CAPABILITIES: ReadonlySet<ResearchCapability> = new Set<ResearchCapability>(['core', 'presentation'])
+
+/** A capability-gated rail split into two tiers. */
+export interface RailTiers {
+  /** Tabs on the first level, in rail order. */
+  readonly primary: readonly ResearchTab[]
+  /** Tabs behind the "More" affordance, in rail order. */
+  readonly secondary: readonly ResearchTab[]
+}
+
+/**
+ * Split a capability-gated rail into its two tiers.
+ * @param capabilities - the enabled layers; null means "not known yet".
+ * @returns both tiers, each in rail order, partitioning `visibleTabs`.
+ */
+export function railTiers(capabilities: ResearchCapabilitySet): RailTiers {
+  const primary: ResearchTab[] = []
+  const secondary: ResearchTab[] = []
+  for (const tab of visibleTabs(capabilities)) {
+    const target = PRIMARY_CAPABILITIES.has(TAB_CAPABILITY[tab]) ? primary : secondary
+    target.push(tab)
+  }
+  return { primary: Object.freeze(primary), secondary: Object.freeze(secondary) }
+}
+
 const TAB_KEYS: Record<ResearchTab, ResearchKey> = {
   overview: 'tab.overview',
   paper: 'tab.paper',
@@ -50,6 +114,49 @@ const TAB_KEYS: Record<ResearchTab, ResearchKey> = {
   servers: 'tab.servers',
   ledger: 'tab.ledger',
   venues: 'tab.venues',
+}
+
+/**
+ * Which capability layer each view belongs to (#242). A view whose layer the
+ * host disabled is absent from the rail: the audit's complaint was that
+ * switched-off product domains still occupy the main path, and a greyed-out
+ * tab occupies it just the same.
+ *
+ * `insights` covers the views that read the growth record rather than the
+ * paper: the ledger and the briefing surfaces inside Overview. It maps to the
+ * bundled-skills switch because insights are what that layer contributes —
+ * writing the panel's views into a layer of their own would add a sixth switch
+ * nobody asked for.
+ */
+const TAB_CAPABILITY: Record<ResearchTab, ResearchCapability> = {
+  overview: 'core',
+  paper: 'core',
+  papers: 'core',
+  experiments: 'core',
+  figures: 'presentation',
+  meetings: 'presentation',
+  venues: 'automation',
+  servers: 'compute',
+  ledger: 'insights',
+}
+
+/** The rail order: main-path views first, then the capability-gated ones. */
+const TAB_ORDER: readonly ResearchTab[] = Object.freeze([
+  'overview', 'paper', 'papers', 'experiments', 'figures', 'meetings', 'venues', 'servers', 'ledger',
+])
+
+/**
+ * The views this panel may render, given the host's enabled layers.
+ *
+ * `capabilities` is null until `getCapabilities` answers; the full rail is the
+ * right answer then, because hiding a view on a request that has not failed is
+ * worse than showing one that a later answer removes.
+ * @param capabilities - enabled layers, or null while unknown.
+ * @returns the visible tabs in rail order.
+ */
+export function visibleTabs(capabilities: ResearchCapabilitySet): readonly ResearchTab[] {
+  if (capabilities === null) return TAB_ORDER
+  return TAB_ORDER.filter(tab => capabilities.has(TAB_CAPABILITY[tab]))
 }
 
 /** One 16×16 stroke icon per tab, painted in the nav item's currentColor. */
@@ -117,9 +224,6 @@ const TAB_ICONS: Record<ResearchTab, ReactNode> = {
   ),
 }
 
-/** The artifact shown by the experiments view's log section. */
-const EXPERIMENT_LOG_ARTIFACT = 'EXPERIMENT_LOG.md'
-
 /** localStorage key the sidebar project-list fold persists under. */
 const PROJECTS_COLLAPSED_STORAGE_KEY = 'mimir.sideProjects.collapsed'
 
@@ -172,19 +276,20 @@ const FOCUSABLE_SELECTOR = 'button:not(:disabled), a[href], input:not(:disabled)
  */
 export function ResearchPanel({
   useStore, actions, useResearch, useChrome, useSessionList,
-  ensure, selectProject, importProject, createProject, renameProject, deleteProject, selectSession, compile, editSource, reloadSource, requestCompileFix,
+  ensure, loadSlice, setSelectedProjectId, selectProject, importProject, createProject, renameProject, deleteProject,
+  selectSession, compile, editSource, reloadSource, requestCompileFix,
   requestRelatedWork, requestPaperScore, requestFigureOrganize,
-  ensurePapers, refreshPapers, searchArxiv, searchWeb, importPaper, removePaper, updatePaper, fetchPaperPdf, loadArtifact, loadFigures, uploadFigures, deleteFigure,
+  ensurePapers, refreshPapers, searchArxiv, searchWeb, importPaper, removePaper, updatePaper, fetchPaperPdf, loadFigures, uploadFigures, deleteFigure,
   renameFigure, updateFigure,
-  ensureSubscriptions, saveArxivSubscription, deleteArxivSubscription, checkArxivSubscriptions,
-  ensureZotero, recheckZotero, searchZotero, importZoteroItem, exportZoteroCollectionToBib,
+  saveArxivSubscription, deleteArxivSubscription, checkArxivSubscriptions,
+  recheckZotero, searchZotero, importZoteroItem, exportZoteroCollectionToBib,
   insertFigure, consumePaperJump, generateMetricFigure,
   deleteExperiment, updateExperiment, saveExperiment, ensureServers, saveServer, deleteServer, checkServer, checkAllServers,
   ensureJobs, refreshJobs, submitJob, deleteJob,
   ensureBibliography, reloadBibliography, deleteBibEntry, updateBibEntry, importPapersToBib, reorderPaperSections, reorderPaperSubsections,
   loadSnapshots, loadSnapshotDetail, closeSnapshotDetail, revertSnapshot,
   ensureVenueTemplates, applyVenueTemplate, clearVenueTemplate, uploadTemplateFiles, requestVenueFormat,
-  ensureVenues, refreshVenues, refreshVenueCatalog, toggleVenueWatch,
+  refreshVenues, refreshVenueCatalog, toggleVenueWatch,
   loadMeetings, generateMeetingDeck, deleteMeetingDeck, getImageGenConfig, saveImageGenConfig,
   loadLedger, generateReport, generateBrief, addJournal,
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
@@ -202,6 +307,9 @@ export function ResearchPanel({
   const paperFullscreen = useStore(state => state.paperFullscreen)
   const dark = useChrome(chrome => chrome.dark)
   const locale = useChrome(chrome => chrome.locale)
+  const capabilities = useResearch(view => view.capabilities)
+  const rail = visibleTabs(capabilities)
+  const tiers = railTiers(capabilities)
   const projects = useResearch(view => view.projects)
   const projectsStatus = useResearch(view => view.projectsStatus)
   const outline = useResearch(view => view.outline)
@@ -290,36 +398,31 @@ export function ResearchPanel({
       selectProject(projects[0]?.id ?? '')
     }
   }, [open, projectsStatus, selectedProjectId, projects, selectProject])
+  // Mirror the selection onto the controller so a slice loader that needs the
+  // project id (venues, figures, the experiment artifact) can be driven by
+  // loadSlice alone. Runs before the trigger effect below so the id is current
+  // when a project switch fires.
   useEffect(() => {
-    if (open && activeTab === 'papers') ensurePapers()
-    if (open && activeTab === 'papers') ensureSubscriptions()
-    if (open && activeTab === 'papers') ensureZotero()
-  }, [open, activeTab, ensurePapers, ensureSubscriptions, ensureZotero])
-  // The overview's stat chips count the papers and figures slices, both lazy:
-  // warm them when the overview opens so the chips show real numbers instead
-  // of dashes; the activity card reads the jobs slice, equally lazy. The
-  // experiments slice is already loaded by select().
+    setSelectedProjectId(selectedProjectId)
+  }, [selectedProjectId, setSelectedProjectId])
+  // One trigger, one question (#222): "which slices does this tab want?" The
+  // freshness policy (fresh / failed / in flight) lives in loadSlice's matrix,
+  // not here — these effects only declare intent, so a failed slice retries on
+  // the next visit instead of waiting for its own button, and the reconnect
+  // and project-switch paths reach the same table.
   useEffect(() => {
-    if (open && activeTab === 'overview') {
-      ensurePapers()
-      ensureJobs()
-      ensureVenues(selectedProjectId)
-      if (selectedProjectId !== null) loadFigures(selectedProjectId)
-    }
-  }, [open, activeTab, selectedProjectId, ensurePapers, ensureJobs, ensureVenues, loadFigures])
+    if (!open) return
+    for (const slice of SLICES_BY_TAB[activeTab] ?? []) loadSlice(slice, 'first-open')
+  }, [open, activeTab, loadSlice])
+  // A project switch re-reads the project-scoped slices: their content is a
+  // different project's, so the settled view is stale rather than fresh.
+  const previousProjectId = useRef(selectedProjectId)
   useEffect(() => {
-    if (open && activeTab === 'venues') ensureVenues(selectedProjectId)
-  }, [open, activeTab, selectedProjectId, ensureVenues])
-  useEffect(() => {
-    if (open && activeTab === 'experiments' && selectedProjectId !== null) {
-      loadArtifact(selectedProjectId, EXPERIMENT_LOG_ARTIFACT)
-    }
-  }, [open, activeTab, selectedProjectId, loadArtifact])
-  useEffect(() => {
-    if (open && activeTab === 'figures' && selectedProjectId !== null) {
-      loadFigures(selectedProjectId)
-    }
-  }, [open, activeTab, selectedProjectId, loadFigures])
+    const previous = previousProjectId.current
+    previousProjectId.current = selectedProjectId
+    if (!open || previous === selectedProjectId) return
+    for (const slice of LOAD_MATRIX['project-switch']) loadSlice(slice, 'project-switch')
+  }, [open, selectedProjectId, loadSlice])
 
   // Dialog focus management: opening the panel moves focus into the rail (to
   // the active tab), and closing returns it to the element that held it
@@ -331,7 +434,8 @@ export function ResearchPanel({
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const root = rootRef.current
     const tabs = root?.querySelectorAll<HTMLElement>('[role="tab"]')
-    const active = tabs?.[TABS.indexOf(activeTab)]
+    const visible = visibleTabs(capabilities)
+    const active = tabs?.[visible.indexOf(activeTab)]
     ;(active ?? root?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR))?.focus()
     return () => { previous?.focus() }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
@@ -370,6 +474,7 @@ export function ResearchPanel({
         altKey: event.altKey,
         editable: isEditableTarget(event.target),
         fullscreen: paperFullscreen !== null,
+        rail: visibleTabs(capabilities),
       })
       if (action === null) return
       event.preventDefault()
@@ -514,41 +619,47 @@ export function ResearchPanel({
             </button>
           </div>
         </div>
-        {/* The nine views as a tablist: 1–9 and ArrowUp/Down/Left/Right all
-            switch, aria-selected carries the active tab to AT. */}
+        {/* Two tiers, one tablist (#243): the research main path on the first
+            level, the low-frequency instruments behind "More". The rail order
+            is still the shortcut order, so `n` stays one number per view; a
+            view behind More still lights its own More button, so the rail
+            never claims nothing is selected. Arrow keys walk the whole rail
+            across both tiers. */}
         <nav
           className={css.nav}
           role="tablist"
           aria-label={t('panel.views')}
           onKeyDown={(event) => {
-            const next = arrowTab(activeTab, event.key)
+            const next = arrowTab(activeTab, event.key, rail)
             if (next === null) return
             event.preventDefault()
             actions.setTab(next)
             const tabs = event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
-            tabs[TABS.indexOf(next)]?.focus()
+            tabs[rail.indexOf(next)]?.focus()
           }}
         >
-          {TABS.map(tab => (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              className={css.navItem}
-              data-active={tab === activeTab || undefined}
-              aria-selected={tab === activeTab}
-              title={t(TAB_KEYS[tab])}
-              onClick={() => { actions.setTab(tab) }}
-            >
-              <span className={css.navIcon} aria-hidden>{TAB_ICONS[tab]}</span>
-              <span className={css.navLabel}>{t(TAB_KEYS[tab])}</span>
-              {navCounts[tab] !== undefined && navCounts[tab] !== null && (
-                <span className={css.navCount} aria-label={String(navCounts[tab])}>
-                  {navCounts[tab]}
-                </span>
-              )}
-            </button>
+          {tiers.primary.map(tab => (
+            <NavTab key={tab} tab={tab} activeTab={activeTab} count={navCounts[tab]} setTab={actions.setTab} t={t} />
           ))}
+          {tiers.secondary.length > 0 && (
+            <details className={css.navMore} data-lit={tiers.secondary.includes(activeTab) || undefined}>
+              <summary
+                className={css.navItem}
+                role="tab"
+                aria-selected={tiers.secondary.includes(activeTab)}
+                aria-label={t('nav.more')}
+                title={t('nav.more')}
+              >
+                <span className={css.navIcon} aria-hidden>⋯</span>
+                <span className={css.navLabel}>{t('nav.more')}</span>
+              </summary>
+              <div className={css.navMoreList}>
+                {tiers.secondary.map(tab => (
+                  <NavTab key={tab} tab={tab} activeTab={activeTab} count={navCounts[tab]} setTab={actions.setTab} t={t} />
+                ))}
+              </div>
+            </details>
+          )}
         </nav>
         {/* The rail fold toggle (narrow icons-only rail); hides in top-bar
             mode via CSS. The 1–9 shortcuts work in both states. */}
@@ -937,6 +1048,7 @@ export function ResearchPanel({
             eureka={eureka}
             ensureEureka={ensureEureka}
             digest={digest}
+            locale={locale}
             ensureDigest={ensureDigest}
             refreshDigest={refreshDigest}
             generateDigest={generateDigest}

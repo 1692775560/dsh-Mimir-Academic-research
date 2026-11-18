@@ -84,11 +84,68 @@ function engineArgs(kind: LatexEngineKind, entryFile: string): readonly string[]
     : ['--keep-logs', '--synctex', entryFile]
 }
 
-/** Real PATH probe: `<command> --version` runs to completion, or ENOENT says absent. */
-async function probeOnPath(command: string): Promise<boolean> {
+/**
+ * Why one engine candidate is unusable, when it is (#235). The three cases
+ * need three different sentences in front of the user, and the old probe
+ * collapsed all of them — plus a genuine `--version` failure — into a bare
+ * boolean.
+ */
+export type LatexProbeFailure = 'missing' | 'permission' | 'timeout' | 'broken'
+
+/** One probe outcome: whether the command runs, and why not when it does not. */
+export interface LatexProbeOutcome {
+  readonly available: boolean
+  readonly failure?: LatexProbeFailure | undefined
+}
+
+/** Node error code of one probe failure, when it carries one. */
+function probeErrorCode(error: ExecFileException): string | number | null {
+  return typeof error.code === 'string' || typeof error.code === 'number' ? error.code : null
+}
+
+/**
+ * Classify one probe failure. `ENOENT` is the command not being on PATH at
+ * all; `EACCES` / `EPERM` is a binary that is there but not executable; a
+ * `killed` process means `--version` hung past the probe timeout; anything
+ * else is a binary that exists but cannot describe itself.
+ */
+export function classifyProbeFailure(error: ExecFileException): LatexProbeFailure {
+  if (isMissingEngine(error)) return 'missing'
+  const code = probeErrorCode(error)
+  if (code === 'EACCES' || code === 'EPERM') return 'permission'
+  if (error.killed === true || code === 'ETIMEDOUT') return 'timeout'
+  return 'broken'
+}
+
+/** The sentence naming why one candidate was rejected. */
+function probeFailureCopy(command: string, failure: LatexProbeFailure): string {
+  switch (failure) {
+    case 'missing':
+      return `'${command}' is not on PATH`
+    case 'permission':
+      return `'${command}' is on PATH but not executable (EACCES)`
+    case 'timeout':
+      return `'${command} --version' timed out, so the binary looks hung`
+    case 'broken':
+      return `'${command} --version' failed, so the binary is unusable`
+  }
+}
+
+/**
+ * Real PATH probe: `<command> --version` must run to completion. A binary
+ * that exists but exits non-zero, is not executable, or hangs is NOT a usable
+ * engine, and each of those fails differently (#235).
+ * @param command - the engine candidate to probe.
+ * @returns whether it runs, plus the classified reason when it does not.
+ */
+async function probeOnPathDetailed(command: string): Promise<LatexProbeOutcome> {
   return new Promise((resolve) => {
     execFile(command, ['--version'], { timeout: 10_000 }, (error: ExecFileException | null) => {
-      resolve(error === null || !isMissingEngine(error))
+      if (error === null) {
+        resolve({ available: true })
+        return
+      }
+      resolve({ available: false, failure: classifyProbeFailure(error) })
     })
   })
 }
@@ -114,6 +171,26 @@ async function detectEngine(probe: LatexEngineProbe): Promise<ResolvedLatexEngin
 }
 
 /**
+ * {@link detectEngine} with per-candidate reasons (#235): the same two probes,
+ * but a total failure reports WHY each candidate was rejected — a `tectonic`
+ * that is installed but not executable and a `tectonic` that is absent need
+ * different fixes, and the old message said the same thing for both.
+ * @param probe - the detailed probe (classifies the failure).
+ * @returns the first usable engine.
+ */
+async function detectEngineDetailed(
+  probe: (command: string) => Promise<LatexProbeOutcome>,
+): Promise<ResolvedLatexEngine> {
+  const rejections: string[] = []
+  for (const kind of ['latexmk', 'tectonic'] as const) {
+    const outcome = await probe(kind)
+    if (outcome.available) return { kind, executable: kind }
+    rejections.push(probeFailureCopy(kind, outcome.failure ?? 'broken'))
+  }
+  throw new Error(`No usable LaTeX engine on PATH: ${rejections.join('; ')}. ${INSTALL_GUIDANCE}`)
+}
+
+/**
  * Build the process-lifetime cached auto resolver: the probe runs once and
  * the settled engine is shared by every later resolve. A FAILED probe is
  * never cached — the rejection clears the slot so the next resolve re-probes
@@ -133,8 +210,21 @@ export function createAutoEngineResolver(probe: LatexEngineProbe): () => Promise
   }
 }
 
-/** The process-lifetime auto resolver around the real PATH probe. */
-const resolveAutoEngine = createAutoEngineResolver(probeOnPath)
+/** The process-lifetime auto resolver, with per-candidate rejection reasons (#235). */
+const resolveAutoEngineDetailed = (() => {
+  let cache: Promise<ResolvedLatexEngine> | undefined
+  return async (): Promise<ResolvedLatexEngine> => {
+    cache ??= detectEngineDetailed(probeOnPathDetailed)
+    try {
+      return await cache
+    } catch (error) {
+      // A failed probe is never cached: a TeX distribution installed
+      // mid-session gets picked up by the next resolve.
+      cache = undefined
+      throw error
+    }
+  }
+})()
 
 /**
  * Resolve the configured engine selection to a concrete executable.
@@ -154,7 +244,7 @@ export async function resolveLatexEngine(engine: string, probe?: LatexEngineProb
     return { kind: 'latexmk', executable: engine }
   }
   if (probe !== undefined) return detectEngine(probe)
-  return resolveAutoEngine()
+  return resolveAutoEngineDetailed()
 }
 
 /** One tectonic diagnostic line: `error: [file.tex:NN: ]message`. */

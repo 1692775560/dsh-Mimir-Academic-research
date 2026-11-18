@@ -241,6 +241,36 @@
   padding: 4px 12px 16px;
 }
 
+/* The "More" folder (#243): the low-frequency tier folds into one row so the
+   main path stays scannable. The summary is the row itself; the list drops
+   out of flow beneath it, so the rail order never shifts. */
+.navMore {
+  display: contents;
+}
+
+.navMore > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.navMore > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A view behind the folder still lights its entry: the rail must never look
+   like nothing is selected. */
+.navMore[data-lit] > summary {
+  color: var(--dsw-alias-text-primary, inherit);
+  font-weight: 600;
+}
+
+.navMoreList {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 10px;
+}
+
 .navItem {
   position: relative;
   display: flex;
@@ -569,8 +599,11 @@
     flex-basis: 60px;
   }
 
+  /* The close button stays reachable when the rail folds (#142 item 4): the
+     theme and language toggles are re-entrant from the header, the close
+     action is not, so hiding all three stranded anyone who folded the rail. */
   .side[data-folded] .brandCopy,
-  .side[data-folded] .headActions,
+  .side[data-folded] .headActions > .iconButton,
   .side[data-folded] .navLabel,
   .side[data-folded] .navCount,
   .side[data-folded] .sideProjects,
@@ -579,9 +612,17 @@
     display: none;
   }
 
+  /* Folded head: the brand shrinks to the glyph and the close button stays on
+     the same row, right-aligned so it is still the reachable corner (#142). */
   .side[data-folded] .sideHead {
     justify-content: center;
     padding: 20px 8px 18px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .side[data-folded] .headActions {
+    justify-content: center;
   }
 
   .side[data-folded] .nav {
@@ -615,6 +656,12 @@
   color: var(--dsw-alias-label-tertiary, #5b6474);
   font-size: 13px;
   line-height: 1.6;
+}
+
+/* The backup loop's failure line (#227): same size as a hint, but it must not
+   read as one more piece of muted metadata. */
+.hint[data-danger] {
+  color: var(--dsw-alias-state-error-primary, #a24b3f);
 }
 
 .failure {
@@ -2387,6 +2434,24 @@ li.dropIndicator {
   gap: 10px;
 }
 
+/* #208: the superseded rows stay legible but read as "being replaced", so a
+   user never mistakes them for the answer to the query they just typed. */
+.papersResults[data-stale] {
+  opacity: 0.72;
+}
+
+.searchPending {
+  margin-left: 8px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.searchStaleNote {
+  margin: 0 0 8px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
 .paperResult {
   display: flex;
   flex-direction: column;
@@ -2510,6 +2575,19 @@ li.dropIndicator {
   background: var(--dsw-alias-markdown-code-block, #f1f3f5);
   color: var(--dsw-alias-label-secondary, #3c4557);
   font-size: 12px;
+}
+
+/** Badge marking an experiment record the panel captured from a run (#152). */
+.experimentDraft {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px dashed currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  opacity: 0.75;
+  vertical-align: middle;
+  white-space: nowrap;
 }
 
 .experimentStatus[data-status='running'] {
@@ -6083,4 +6161,87 @@ li.dropIndicator {
   color: var(--dsw-alias-label-tertiary, #5b6474);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
+}
+
+/* ── LaTeX completion (#154) ────────────────────────────────────────────────
+   The popover is placed by `PaperView` from line/column arithmetic, so it is an
+   absolutely positioned sibling inside `.editorStack` and never takes part in
+   the editor's layout. Every colour is a host alias with a light fallback, so
+   the dark theme flips it through the tokens `.workbench` already overrides —
+   no second rule, and no hardcoded palette to keep in sync. */
+.editorMeasure {
+  position: absolute;
+  top: 0;
+  left: -9999px;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.completion {
+  position: absolute;
+  z-index: 30;
+  min-width: 200px;
+  /* Narrow on purpose: the popover lives inside the editor pane, and a wider
+     box gets clipped by the pane instead of growing past it. */
+  max-width: 300px;
+  max-height: 214px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l2, #e6e8eb);
+  border-radius: 8px;
+  background: var(--dsw-specific-menu, #fff);
+  box-shadow: 0 12px 28px rgb(31 35 41 / 16%);
+}
+
+.completionHead {
+  margin: 0 0 4px;
+  padding: 2px 8px;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8f959e);
+}
+
+.completionList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.completionRow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #1f2329);
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.completionRow[data-active] {
+  background: var(--dsw-alias-interactive-bg-hover, #eef1f5);
+}
+
+.completionValue {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.completionDetail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-tertiary, #8f959e);
 }

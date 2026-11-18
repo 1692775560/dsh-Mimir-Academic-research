@@ -5,14 +5,19 @@
  */
 
 import { describe, expect, it } from 'vitest'
-import type { ServerRecord } from 'dsh-mimir/types'
+import type { ServerView } from 'dsh-mimir/types'
 import { collectServerTags, filterServers } from '../src/client/view-common.ts'
 
-/** One server fixture; only the fields the helpers read differ. */
-function server(id: string, tags: string[]): ServerRecord {
+/**
+ * One server fixture; only the fields the helpers read differ. The helpers take
+ * `ServerView` — the record minus the password plus `hasPassword` — so the
+ * fixture has to be that view, not the stored record. Key auth, hence `false`.
+ */
+function server(id: string, tags: string[]): ServerView {
   return {
     id, name: id, host: '10.0.0.1', port: 22, username: '', note: '',
-    tags, createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    tags, hasPassword: false,
+    createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
   }
 }
 

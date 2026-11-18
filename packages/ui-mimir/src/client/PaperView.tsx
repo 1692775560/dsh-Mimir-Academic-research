@@ -26,6 +26,11 @@ import type {
 } from './controller.ts'
 import { VenuePicker } from './VenuePicker.tsx'
 import { wrapIndex } from './focus.ts'
+import {
+  COMPLETION_LIMIT, LATEX_COMMANDS, LATEX_ENVIRONMENTS, applyCompletion, citationItemsOf,
+  detectCompletion, filterCompletion,
+  type CompletionItem, type CompletionTrigger,
+} from './completion.ts'
 import { buildCompileFixPrompt } from './compile-fix.ts'
 import { EDITOR_LINE_HEIGHT_PX, splitTokensByLine, visibleLineRange, widestLine } from './highlight-window.ts'
 import { HIGHLIGHT_MAX_LENGTH, tokenizeLatex } from './latex-highlight.ts'
@@ -393,6 +398,19 @@ export function PaperView({
   // highlight overlay. Coarsened to whole lines so mid-line scrolls don't
   // re-render.
   const [viewport, setViewport] = useState({ firstLine: 0, height: 0 })
+  // The open completion popover (#154), or null. `selected` indexes `items`.
+  const [completion, setCompletion] = useState<{
+    readonly trigger: CompletionTrigger
+    readonly items: readonly CompletionItem[]
+    readonly selected: number
+  } | null>(null)
+  // A character-width probe: the popover is positioned from line/column math,
+  // which needs the mono glyph width and cannot ask the textarea for it.
+  const measureRef = useRef<HTMLSpanElement>(null)
+  const [glyphWidth, setGlyphWidth] = useState(7.8)
+  // The edit that accepting a row is about to make, applied to the caret once
+  // the controlled value has actually reached the textarea.
+  const pendingCaretRef = useRef<{ readonly text: string; readonly caret: number } | null>(null)
   // Pane widths; restored from localStorage, written back on every settle.
   // The outline rail's collapsed flag persists inside the same record.
   const [layout, setLayout] = useState<PaperLayout>(() => loadPaperLayout(key => localStorage.getItem(key)))
@@ -591,6 +609,97 @@ export function PaperView({
   }
 
   const currentSource = source !== null && source.projectId === projectId ? source : null
+
+  /**
+   * Recompute the popover from the textarea's current caret (#154). Called after
+   * every edit and every caret move, because completion follows the caret rather
+   * than a "completion mode".
+   */
+  const refreshCompletion = (): void => {
+    const editor = editorRef.current
+    if (editor === null) { setCompletion(null); return }
+    const trigger = detectCompletion(editor.value, editor.selectionStart)
+    if (trigger === null) { setCompletion(null); return }
+    const table = trigger.kind === 'citation'
+      ? citationItemsOf(bib !== null && bib.projectId === projectId ? bib.entries : [])
+      : trigger.kind === 'environment' ? LATEX_ENVIRONMENTS : LATEX_COMMANDS
+    const items = filterCompletion(table, trigger.prefix)
+    setCompletion(items.length === 0 ? null : { trigger, items, selected: 0 })
+  }
+
+  /** Accept one row: rewrite the source, and move the caret once it lands. */
+  const acceptCompletion = (item: CompletionItem): void => {
+    const editor = editorRef.current
+    if (editor === null || completion === null) return
+    const edit = applyCompletion(editor.value, completion.trigger, item.value)
+    pendingCaretRef.current = { text: edit.source, caret: edit.caret }
+    setCompletion(null)
+    editSource(edit.source)
+  }
+
+  /**
+   * Keys the popover owns while it is open. Returns whether the event was
+   * consumed, so the editor's own handlers never see a swallowed arrow key.
+   */
+  const onCompletionKeyDown = (event: ReactKeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (completion === null) return false
+    const last = completion.items.length - 1
+    switch (event.key) {
+      case 'ArrowDown':
+        event.preventDefault()
+        setCompletion({ ...completion, selected: wrapIndex(completion.selected, 1, last + 1) })
+        return true
+      case 'ArrowUp':
+        event.preventDefault()
+        setCompletion({ ...completion, selected: wrapIndex(completion.selected, -1, last + 1) })
+        return true
+      case 'Enter':
+      case 'Tab': {
+        const item = completion.items[completion.selected]
+        if (item === undefined) { setCompletion(null); return false }
+        event.preventDefault()
+        acceptCompletion(item)
+        return true
+      }
+      case 'Escape':
+        event.preventDefault()
+        setCompletion(null)
+        return true
+      default:
+        return false
+    }
+  }
+
+  // The mono glyph width, measured once per font load: the popover's left edge
+  // is `column * glyphWidth`, and a wrong width drifts by a whole word by
+  // column 30.
+  useEffect(() => {
+    const probe = measureRef.current
+    if (probe === null) return
+    const width = probe.getBoundingClientRect().width / 8
+    if (width > 0) setGlyphWidth(width)
+  }, [])
+
+  // `\cite` completion needs the project's keys even when the bibliography
+  // panel was never opened; the controller's own ensure is idempotent.
+  useEffect(() => {
+    if (projectId !== null) ensureBibliography(projectId)
+  }, [ensureBibliography, projectId])
+
+  // A project switch invalidates both the keys and the caret's meaning.
+  useEffect(() => { setCompletion(null) }, [projectId])
+
+  // Place the caret after an accepted row, once the controlled value is what we
+  // wrote. Comparing the text keeps a dropped write from stranding the caret.
+  useEffect(() => {
+    const pending = pendingCaretRef.current
+    const editor = editorRef.current
+    if (pending === null || editor === null || editor.value !== pending.text) return
+    pendingCaretRef.current = null
+    editor.focus()
+    editor.setSelectionRange(pending.caret, pending.caret)
+    syncEditorScroll()
+  }, [currentSource?.content])
 
   // A figure insert from the figures view (or its duplicate jump) carries a
   // ticket addressed to one project: once the editor shows that project's
@@ -934,9 +1043,70 @@ export function PaperView({
               value={currentSource?.content ?? ''}
               disabled={projectId === null || currentSource === null
                 || currentSource.status !== 'ready' || currentSource.saveState === 'conflict'}
-              onChange={(event) => { editSource(event.target.value) }}
-              onScroll={syncEditorScroll}
+              onChange={(event) => { editSource(event.target.value); refreshCompletion() }}
+              onScroll={() => { syncEditorScroll(); setCompletion(null) }}
+              onKeyDown={(event) => {
+                if (onCompletionKeyDown(event)) return
+                // Arrow/home/end move the caret after this event, so the popover
+                // is refreshed once the browser has moved it.
+                if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') {
+                  setTimeout(refreshCompletion, 0)
+                }
+              }}
+              onClick={() => { refreshCompletion() }}
+              onKeyUp={(event) => {
+                // Typing is handled by onChange; this catches caret moves the
+                // click path misses (shift+arrows, ctrl+home, …).
+                if (event.key.startsWith('Arrow') || event.key === 'Home' || event.key === 'End') return
+                if (completion === null) return
+                refreshCompletion()
+              }}
+              onBlur={() => { setCompletion(null) }}
             />
+            {/* Kept inside the stack so it inherits the editor's font, and
+                hidden from layout: it exists only to be measured. */}
+            <span ref={measureRef} className={css.editorMeasure} aria-hidden>MMMMMMMM</span>
+            {completion !== null && (() => {
+              const editor = editorRef.current
+              const value = editor?.value ?? ''
+              const caret = editor?.selectionStart ?? 0
+              const head = value.slice(0, caret)
+              const line = head.split('\n').length - 1
+              const column = caret - (head.lastIndexOf('\n') + 1)
+              const top = 10 + (line + 1) * EDITOR_LINE_HEIGHT - (editor?.scrollTop ?? 0)
+              const left = Math.max(0, 12 + column * glyphWidth - (editor?.scrollLeft ?? 0))
+              return (
+                <div
+                  className={css.completion}
+                  style={{ top: Math.max(0, top), left }}
+                  role="listbox"
+                  aria-label={t('editor.completion')}
+                  data-kind={completion.trigger.kind}
+                >
+                  <p className={css.completionHead}>{completion.trigger.opener}</p>
+                  <ul className={css.completionList}>
+                    {completion.items.slice(0, COMPLETION_LIMIT).map((item, index) => (
+                      <li key={item.value}>
+                        <button
+                          type="button"
+                          role="option"
+                          aria-selected={index === completion.selected}
+                          className={css.completionRow}
+                          data-active={index === completion.selected || undefined}
+                          // Pointer down, not click: the textarea's blur would
+                          // close the popover before a click could land.
+                          onMouseDown={(event) => { event.preventDefault(); acceptCompletion(item) }}
+                          onMouseEnter={() => { setCompletion({ ...completion, selected: index }) }}
+                        >
+                          <span className={css.completionValue}>{item.value}</span>
+                          <span className={css.completionDetail}>{item.detail}</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )
+            })()}
           </div>
         </div>
       </section>

@@ -6,10 +6,18 @@ Thanks for helping build Mimir! This guide covers the workflow, the checks every
 change must pass, and the pitfalls that have bitten us before. Code-level
 conventions live in [CODE_STYLE.md](CODE_STYLE.md) — read it before your first PR.
 
-> **Hard gate:** a PR is merged only if `node scripts/check-style.mjs`
-> (enforced in CI) passes and the change follows CODE_STYLE.md. PRs that fix
-> nothing real, skip the tests, or restyle unrelated code are not merged —
-> they get review feedback instead.
+> **Hard gate:** a PR is merged only if `node scripts/check-style.mjs` and
+> `pnpm run lint` (both enforced in CI) pass and the change follows
+> CODE_STYLE.md. PRs that fix nothing real, skip the tests, or restyle
+> unrelated code are not merged — they get review feedback instead.
+
+The two gates answer different questions. `check-style.mjs` decides the rules
+that are visible one line at a time (a bare `var(--x)`, a `console.log`, a
+skipped test). `pnpm run lint` decides the ones that need the type checker —
+above all "is this promise awaited?", which is why a dropped `void` or a
+missing `.catch` fails the build instead of dying silently at runtime. A rule
+that needs an exemption takes an inline `eslint-disable-next-line` with a
+reason, the same as `style-gate: allow`.
 
 ## Setup
 

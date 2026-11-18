@@ -23,7 +23,7 @@ import type { ResearchWikiDomain } from '../src/store.ts'
 import { ResearchService } from '../src/service.ts'
 import { createWikiNoteTool } from '../src/tools/wiki.ts'
 import { withProjectMutationLock } from '../src/services/mutation-locks.ts'
-import type { PaperRecord, ProjectRecord } from '../src/types.ts'
+import type { JobRecord, PaperRecord, ProjectRecord } from '../src/types.ts'
 
 /** Boot a service over a memory-backed domain and a fresh temp workspace. */
 async function harness(pool?: MemoryMediaPool) {
@@ -300,6 +300,31 @@ describe('deleteProject', () => {
     const removed = await service.deleteProject({ projectId: 'p1', confirm: true })
     expect(removed).toMatchObject({ ok: true, value: { removed: { meetingsRemoved: false, paperDirRemoved: false } } })
   })
+
+  it('keeps the project\'s jobs but drops their metrics-capture link (#152)', async () => {
+    const { service, domain } = await harness()
+    await seedProject(domain, 'p1')
+    const job: JobRecord = {
+      id: 'job-1',
+      serverId: 'srv-1',
+      command: 'python train.py',
+      status: 'succeeded',
+      projectId: 'p1',
+      workdir: '/home/ops/run-1',
+      exitCode: 0,
+      stdoutTail: '',
+      stderrTail: '',
+      createdAt: '2026-09-01T00:00:00.000Z',
+    }
+    await domain.table('jobs').put(job.id, job)
+
+    const removed = await service.deleteProject({ projectId: 'p1', confirm: true })
+    expect(removed.ok).toBe(true)
+    // The audit trail survives; only the link into the deleted project is gone.
+    const kept = domain.table('jobs').get('job-1')
+    expect(kept).toMatchObject({ id: 'job-1', status: 'succeeded', workdir: '/home/ops/run-1' })
+    expect(kept && 'projectId' in kept).toBe(false)
+  })
 })
 
 describe('cascade completeness', () => {
@@ -307,12 +332,14 @@ describe('cascade completeness', () => {
   // or explicitly exempt. A NEW table with project semantics fails here until
   // its cascade story is decided.
   const CASCADED = new Set(['experiments', 'figures', 'venue_watches', 'ideas'])
-  const UNLINKED = new Set(['papers'])
+  const UNLINKED = new Set([
+    'papers',
+    'jobs', // kept as the audit trail of what ran; the #152 capture link unlinks
+  ])
   const EXEMPT = new Set([
     'projects', // the row the verb itself deletes
     'claims', // claim rows carry no project link (audit knowledge)
     'servers', // global compute resources shared across projects
-    'jobs', // runtime state of those resources; kept as the audit trail
     'events', // the ledger IS the audit trail; project.deleted rides it
   ])
 

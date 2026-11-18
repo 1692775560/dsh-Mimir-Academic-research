@@ -1,14 +1,17 @@
 /**
- * Zotero Web API client (read-only): a connection probe, the collection
- * list, a full-text item search, a single-item read, and BibTeX export. The
- * JSON payloads are parsed with plain defensive handling (the API's item
- * shape is broad; only the fields the panel needs are read). The API key
- * rides the `Zotero-API-Key` header — it never enters a URL, a log line, or
- * an error message. Rate limiting (HTTP 429/503 with `Retry-After`) is
+ * Zotero Web API client: a connection probe, the collection list, a full-text
+ * item search, a single-item read, BibTeX export, and the two write calls the
+ * collection push-back needs (#151). JSON payloads are parsed with plain
+ * defensive handling (the API's item shape is broad; only the fields the panel
+ * needs are read). The API key rides the `Zotero-API-Key` header — it never
+ * enters a URL, a log line, or an error message. Rate limiting (HTTP 429/503 with `Retry-After`) is
  * honored with exactly one delayed retry; the caller owns the abort/timeout
  * signal. Pure network in, structured data out — no fs, no wiki types.
  * @module dsh-mimir/src/tools/zotero
  */
+
+/** Write token generator: one per write call, reused across the retry. */
+import { randomUUID } from 'node:crypto'
 
 /** Credentials of one Zotero user library (group libraries are out of scope). */
 export interface ZoteroClientConfig {
@@ -63,6 +66,37 @@ export interface ZoteroClient {
   readonly getItem: (key: string, signal: AbortSignal) => Promise<ZoteroItem>
   /** Export items as BibTeX text (paginated for collections). */
   readonly getItemsBibTeX: (request: ZoteroBibRequest, signal: AbortSignal) => Promise<string>
+  /**
+   * Find or create the collection with this exact name (the write-back half of
+   * #151). An existing collection is reused rather than duplicated, so pushing
+   * twice does not leave two collections behind.
+   */
+  readonly ensureCollection: (name: string, signal: AbortSignal) => Promise<EnsuredCollection>
+  /** Create items in the library; per-item rejections come back, not thrown. */
+  readonly createItems: (payloads: readonly ZoteroItemPayload[], signal: AbortSignal) => Promise<CreatedItems>
+}
+
+/** One Zotero item body as the write endpoint accepts it. */
+export type ZoteroItemPayload = Readonly<Record<string, unknown>>
+
+/** Outcome of {@link ZoteroClient.ensureCollection}. */
+export interface EnsuredCollection {
+  readonly key: string
+  /** False when a collection with that name already existed. */
+  readonly created: boolean
+}
+
+/** Outcome of {@link ZoteroClient.createItems}: the new keys plus per-item failures. */
+export interface CreatedItems {
+  readonly keys: readonly string[]
+  readonly failures: readonly ZoteroWriteFailure[]
+}
+
+/** One rejected item inside a write response. */
+export interface ZoteroWriteFailure {
+  /** Index into the submitted payload array. */
+  readonly index: number
+  readonly message: string
 }
 
 /** API base URL (a safety invariant, not a tunable). */
@@ -125,8 +159,20 @@ async function request(
   apiKey: string,
   url: string,
   signal: AbortSignal,
+  write?: { readonly body: string; readonly token: string },
 ): Promise<Response> {
-  const init: RequestInit = { headers: { 'Zotero-API-Key': apiKey }, signal }
+  const headers: Record<string, string> = { 'Zotero-API-Key': apiKey }
+  const init: RequestInit = { headers, signal }
+  if (write !== undefined) {
+    headers['Content-Type'] = 'application/json'
+    // The write token makes the rate-limit retry safe: Zotero collapses two
+    // POSTs carrying the same token, so the retry below cannot create a second
+    // copy of the item it already created. Without it, "honor 429 by retrying"
+    // and "do not duplicate items" would be mutually exclusive.
+    headers['Zotero-Write-Token'] = write.token
+    init.body = write.body
+    init.method = 'POST'
+  }
   let response = await fetchImpl(url, init)
   if (response.status === 429 || response.status === 503) {
     await sleep(retryDelayMs(response), signal)
@@ -228,6 +274,44 @@ function parseCollections(body: string): ZoteroCollection[] {
   return collections
 }
 
+/** Parse one write response's `successful` map into the created item keys. */
+function parseCreatedKeys(body: string): string[] {
+  const parsed: unknown = safeJson(body)
+  if (typeof parsed !== 'object' || parsed === null) return []
+  const successful = (parsed as Record<string, unknown>).successful
+  if (typeof successful !== 'object' || successful === null) return []
+  return Object.values(successful as Record<string, unknown>).flatMap(entry => {
+    if (typeof entry !== 'object' || entry === null) return []
+    const key = stringField(entry as Record<string, unknown>, 'key')
+    return key === '' ? [] : [key]
+  })
+}
+
+/** Parse one write response's `failed` map into indexed failures. */
+function parseWriteFailures(body: string): ZoteroWriteFailure[] {
+  const parsed: unknown = safeJson(body)
+  if (typeof parsed !== 'object' || parsed === null) return []
+  const failed = (parsed as Record<string, unknown>).failed
+  if (typeof failed !== 'object' || failed === null) return []
+  return Object.entries(failed as Record<string, unknown>).map(([index, entry]) => {
+    const record = typeof entry === 'object' && entry !== null ? entry as Record<string, unknown> : {}
+    const message = stringField(record, 'message')
+    return {
+      index: Number(index),
+      message: message === '' ? 'zotero rejected the item' : message,
+    }
+  })
+}
+
+/** JSON.parse that yields undefined instead of throwing. */
+function safeJson(body: string): unknown {
+  try {
+    return JSON.parse(body)
+  } catch {
+    return undefined
+  }
+}
+
 /**
  * Build the read-only Zotero Web API client for one configured user library.
  * @param config - API key and user id (from the plugin config).
@@ -256,6 +340,34 @@ export function createZoteroClient(config: ZoteroClientConfig, fetchImpl?: Zoter
       const [item] = parseItems(`[${body}]`)
       if (item === undefined) throw new Error(`zotero item '${key}' is not a reference item`)
       return item
+    },
+    async ensureCollection(name, signal) {
+      const trimmed = name.trim()
+      const existing = parseCollections(await (await call(`${base}/collections?limit=100`, signal)).text())
+      const match = existing.find(collection => collection.name === trimmed)
+      if (match !== undefined) return { key: match.key, created: false }
+      const url = `${base}/collections`
+      const response = await request(fetchImpl ?? globalThis.fetch, config.apiKey, url, signal, {
+        body: JSON.stringify([{ name: trimmed, parentCollection: false }]),
+        token: randomUUID(),
+      })
+      const body = await response.text()
+      const [key] = parseCreatedKeys(body)
+      if (key === undefined) {
+        const [failure] = parseWriteFailures(body)
+        throw new Error(failure === undefined ? 'zotero did not create the collection' : failure.message)
+      }
+      return { key, created: true }
+    },
+    async createItems(payloads, signal) {
+      if (payloads.length === 0) return { keys: [], failures: [] }
+      const url = `${base}/items`
+      const response = await request(fetchImpl ?? globalThis.fetch, config.apiKey, url, signal, {
+        body: JSON.stringify(payloads),
+        token: randomUUID(),
+      })
+      const body = await response.text()
+      return { keys: parseCreatedKeys(body), failures: parseWriteFailures(body) }
     },
     async getItemsBibTeX(bibRequest, signal) {
       if (bibRequest.itemKeys !== undefined) {

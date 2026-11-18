@@ -119,7 +119,10 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
     const coldReport: ResearchReportView = { status: 'idle', markdown: '', generatedAt: null, eventCount: null, failure: null }
     const coldBrief: ResearchBriefView = {
       status: 'idle', markdown: '', generatedAt: null, eventCount: null,
-      derivationVersion: null, recalibrated: false, questions: [], failure: null,
+      derivationVersion: null, recalibrated: false, questions: [],
+      // The brief grew a line strip (I6) and a moment roll-up; a cold brief
+      // carries empty ones, and the type now says so.
+      lines: [], transitions: [], openLoops: [], moments: [], failure: null,
     }
     const coldMoments: ResearchMomentsSlice = { status: 'cold', view: null, failure: null }
     const coldEvidence: ResearchEvidenceGraphSlice = { status: 'cold', view: null, failure: null }
@@ -138,6 +141,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
         evidence={coldEvidence}
         eureka={coldEureka}
         digest={coldDigest}
+        locale="en"
         selectedProjectId={null}
         loadLedger={() => {}}
         generateReport={async () => null}

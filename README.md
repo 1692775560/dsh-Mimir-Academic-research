@@ -74,6 +74,7 @@ All keys are optional; set them in the profile's `cordis.patch.yml` (full commen
 | `workspaceDir` | `.research` | Research workspace root (artifacts, backups) |
 | `latex.engine` | `auto` | `latexmk` / `tectonic` probe, or absolute binary path |
 | `search.command` | `auto` | Web search: `auto` uses `dg` from PATH or the bundled copy |
+| `search.maxResults` | `10` | Default result cap of one web search (1–50, its own knob — not `arxiv.maxResults`) |
 | `reviewer.maxRounds` | `3` | Per-project review-round budget |
 | `backup.enabled` / `intervalMinutes` / `keep` | `true` / `60` / `24` | Scheduled wiki snapshots |
 | `skills.enabled` | `true` | Register the eleven bundled research skills |

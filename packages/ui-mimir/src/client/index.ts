@@ -318,6 +318,8 @@ function panelApply(ctx: ClientContext): void {
       requestVenueFormat: prompt => sendPromptToCurrentSession(prompt, 'toast.venueFormatSent', 'toast.venueFormatSendFailed'),
       editSource: (content) => { controller.edit(content) },
       reloadSource: () => { controller.reloadSource() },
+      loadSlice: (slice, trigger) => { controller.loadSlice(slice, trigger) },
+      setSelectedProjectId: (projectId) => { controller.setSelectedProjectId(projectId) },
       ensurePapers: () => { controller.ensurePapers() },
       refreshPapers: () => { controller.refreshPapers() },
       ensureSubscriptions: () => { controller.ensureSubscriptions() },
@@ -412,7 +414,10 @@ function panelApply(ctx: ClientContext): void {
       loadEvidenceGraph: (request) => { controller.loadEvidenceGraph(request) },
       refreshEvidenceGraph: () => { controller.refreshEvidenceGraph() },
       retractEvidence: (dedupKey, reason) => controller.retractEvidence(dedupKey, reason),
-      ensureDigest: () => { controller.ensureDigest() },
+      // The first-open digest follows the UI locale, not a fixed 'zh'
+      // (#142 item 3): an English panel opening the ledger for the first
+      // time used to get a Chinese digest.
+      ensureDigest: (lang) => { controller.ensureDigest(lang ?? (chromeSnapshot.locale === 'en' ? 'en' : 'zh')) },
       refreshDigest: () => { controller.refreshDigest() },
       ensureEureka: () => { controller.ensureEureka() },
       generateDigest: (tier, lang) => controller.generateDigest(tier, lang),

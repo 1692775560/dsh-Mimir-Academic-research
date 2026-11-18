@@ -9,7 +9,9 @@
  * @module dsh-client-ui-mimir/client/controller
  */
 
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type { RemoteResult, TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
+// Type-only: the generated `research` namespace members (#226).
+import 'dsh-mimir/remote'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ResearchKey } from './locales.ts'
 import { figureBlockOf, findFigureReferenceLine, insertFigureBlock, isSvgFigure, svgConvertedRelPaths } from './figure-insert.ts'
@@ -22,10 +24,6 @@ import type { EvidenceGraphRequest } from './evidence-graph-view.ts'
 import type {
   ArxivEntry,
   ResearchEvidenceGraphView,
-  ResearchGetEvidenceGraphResult,
-  ResearchGetProtocolVersionResult,
-  ResearchRetractEvidenceEdgeResult,
-  RetractEvidenceEdgeRequest,
   ArxivSubscriptionView,
   BibEntry,
   EventRecord,
@@ -36,20 +34,9 @@ import type {
   OutlineNode,
   PaperRecord,
   PaperSnapshotView,
-  ResearchArtifactResult,
-  ResearchArxivSubscriptionsResult,
-  ResearchAddJournalEntryResult,
-  ResearchCloseIdeaResult,
-  ResearchAdoptIdeaResult,
-  ResearchGetForagingResult,
-  ResearchGetWorktreeResult,
-  ResearchGetMomentIndexResult,
-  ResearchGetEurekaViewResult,
   ResearchMomentIndexView,
   ResearchEurekaView,
   ResearchForagingView,
-  ResearchSetIdeaParentResult,
-  ResearchSetMainlineResult,
   ResearchWorktreeView,
   ResearchBriefLine,
   ResearchBriefMoment,
@@ -57,98 +44,27 @@ import type {
   ResearchBriefQuestion,
   ResearchBriefTransition,
   ResearchBackupStatusView,
-  ResearchBibliographyResult,
-  ResearchCheckArxivSubscriptionsResult,
-  ResearchCheckServerResult,
-  ResearchCheckZoteroResult,
-  ResearchCompileResult,
-  ResearchCompileStatusResult,
+  ResearchCapability,
   ResearchCompileStatusView,
-  ResearchConvertFigureResult,
-  ResearchCreateProjectResult,
-  ResearchDeleteArxivSubscriptionResult,
-  ResearchDeleteExperimentResult,
-  ResearchDeleteFigureResult,
-  ResearchDeleteJobResult,
-  ResearchDeleteProjectResult,
-  ResearchDeleteServerResult,
   ResearchEventFilter,
-  ResearchExperimentsResult,
-  ResearchExportWikiResult,
   ResearchFailure,
   ResearchResult,
-  ResearchFetchPaperPdfResult,
-  ResearchFiguresResult,
   ResearchGenerateBriefOptions,
-  ResearchGenerateBriefResult,
-  ResearchGenerateDigestResult,
   ResearchDigestView,
   ResearchDigestTier,
-  ResearchSetEurekaResult,
-  ResearchPinMomentResult,
   ResearchJournalQuestionRef,
-  ResearchImportBibResult,
-  ResearchImportPaperResult,
-  ResearchImportProjectRequest,
-  ResearchImportProjectResult,
   ResearchImportedProject,
   ResearchImportWikiMode,
-  ResearchImportWikiResult,
-  ResearchListBackupsResult,
-  ResearchListEventsResult,
-  ResearchListJobsResult,
-  ResearchListProjectsResult,
-  ResearchListServersResult,
   MetricDirection,
   ResearchScheduledTaskView,
-  ResearchTaskHealthResult,
-  ResearchVenueTemplatesResult,
-  ResearchApplyVenueResult,
-  ResearchClearVenueResult,
-  ResearchDeleteMeetingDeckResult,
-  ResearchGenerateMeetingResult,
-  ResearchGetImageGenConfigResult,
-  ResearchGetDigdigConfigResult,
-  ResearchMeetingDecksResult,
   MeetingDeckView,
   MeetingInclude,
   VenueTemplateView,
-  ResearchOutlineResult,
-  ResearchPaperSnapshotResult,
-  ResearchPaperSnapshotsResult,
-  ResearchPaperSourceResult,
-  ResearchPapersResult,
   ResearchProjectView,
   ResearchProgressReportOptions,
-  ResearchProgressReportResult,
-  ResearchRemovePaperResult,
-  ResearchRenameFigureResult,
-  ResearchRenameProjectResult,
-  ResearchRevertPaperSnapshotResult,
-  ResearchSaveArxivSubscriptionResult,
-  ResearchSaveBibliographyResult,
-  ResearchSaveExperimentResult,
-  ResearchSavePaperSourceResult,
-  ResearchSaveFigureResult,
-  ResearchSaveServerResult,
-  ResearchSearchArxivResult,
-  ResearchSearchWebResult,
-  ResearchSetImageGenConfigResult,
-  ResearchSetDigdigConfigResult,
-  ResearchSubmitJobResult,
-  ResearchUpdateExperimentResult,
-  ResearchUpdateFigureResult,
-  ResearchUpdatePaperResult,
-  ResearchRefreshVenueDeadlinesResult,
-  ResearchSetVenueWatchResult,
-  ResearchVenueDeadlinesResult,
   ResearchWikiSnapshot,
   VenueDeadlineView,
   VenueJournalView,
-  ResearchZoteroCollectionsResult,
-  ResearchZoteroExportResult,
-  ResearchZoteroImportResult,
-  ResearchZoteroSearchResult,
   SectionMove,
   SectionOutlineTitles,
   ServerInput,
@@ -167,6 +83,13 @@ import {
   type LiveSlice,
   type WikiChangeAggregator,
 } from './live-refresh.ts'
+import {
+  sliceAction,
+  type LazySlice,
+  type LoadTrigger,
+  type SliceAction,
+  type SliceStatus,
+} from './slice-policy.ts'
 
 // Re-exported so view components (DigestView) can import these model types
 // from the controller module rather than reaching into the package directly.
@@ -183,259 +106,14 @@ export type {
  * `actorKind`/`order` as widened `string` (the generated face elides the
  * literal unions across the boundary).
  */
-export interface ResearchRemote {
-  /** The wire handshake (#250): the host's protocol version. */
-  getProtocolVersion: () => Promise<RemoteResult<ResearchGetProtocolVersionResult>>
-  listProjects: () => Promise<RemoteResult<ResearchListProjectsResult>>
-  importProject: (request: ResearchImportProjectRequest) => Promise<RemoteResult<ResearchImportProjectResult>>
-  createProject: (request: { title: string }) => Promise<RemoteResult<ResearchCreateProjectResult>>
-  renameProject: (request: { projectId: string; title: string }) => Promise<RemoteResult<ResearchRenameProjectResult>>
-  deleteProject: (request: { projectId: string; confirm: true }) => Promise<RemoteResult<ResearchDeleteProjectResult>>
-  getPaperOutline: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchOutlineResult>>
-  compile: (request: { projectId?: string; dir?: string | undefined }, signal?: AbortSignal) => Promise<RemoteResult<ResearchCompileResult>>
-  getCompileStatus: (request: { projectId?: string }) => Promise<RemoteResult<ResearchCompileStatusResult>>
-  getPaperSource: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchPaperSourceResult>>
-  savePaperSource: (request: {
-    projectId: string
-    content: string
-    baseMtimeMs: number
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSavePaperSourceResult>>
-  listPapers: () => Promise<RemoteResult<ResearchPapersResult>>
-  searchArxiv: (request: { query: string; maxResults?: number }) => Promise<RemoteResult<ResearchSearchArxivResult>>
-  searchWeb: (request: {
-    query: string
-    maxResults?: number
-    categories?: string | undefined
-    lang?: string | undefined
-  }) => Promise<RemoteResult<ResearchSearchWebResult>>
-  importPaper: (request: { entry: ArxivEntry; projectId?: string | undefined }) => Promise<RemoteResult<ResearchImportPaperResult>>
-  removePaper: (request: { arxivId: string }) => Promise<RemoteResult<ResearchRemovePaperResult>>
-  updatePaper: (request: {
-    arxivId: string
-    tags?: string[] | undefined
-    projectIds?: string[] | undefined
-    notes?: string | undefined
-  }) => Promise<RemoteResult<ResearchUpdatePaperResult>>
-  fetchPaperPdf: (request: { arxivId: string }) => Promise<RemoteResult<ResearchFetchPaperPdfResult>>
-  checkZotero: () => Promise<RemoteResult<ResearchCheckZoteroResult>>
-  listZoteroCollections: () => Promise<RemoteResult<ResearchZoteroCollectionsResult>>
-  searchZotero: (request: { query: string; maxResults?: number }) => Promise<RemoteResult<ResearchZoteroSearchResult>>
-  importZoteroItem: (request: { key: string; projectId?: string | undefined }) => Promise<RemoteResult<ResearchZoteroImportResult>>
-  exportZoteroCollectionToBib: (request: {
-    projectId: string
-    collectionKey: string
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchZoteroExportResult>>
-  listArxivSubscriptions: () => Promise<RemoteResult<ResearchArxivSubscriptionsResult>>
-  saveArxivSubscription: (request: { query: string }) => Promise<RemoteResult<ResearchSaveArxivSubscriptionResult>>
-  deleteArxivSubscription: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteArxivSubscriptionResult>>
-  checkArxivSubscriptions: () => Promise<RemoteResult<ResearchCheckArxivSubscriptionsResult>>
-  listExperiments: (request: { projectId?: string }) => Promise<RemoteResult<ResearchExperimentsResult>>
-  deleteExperiment: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteExperimentResult>>
-  updateExperiment: (request: {
-    id: string
-    serverId?: string | null | undefined
-  }) => Promise<RemoteResult<ResearchUpdateExperimentResult>>
-  saveExperiment: (request: { experiment: ExperimentInput }) => Promise<RemoteResult<ResearchSaveExperimentResult>>
-  readArtifact: (request: { projectId: string; name: string }) => Promise<RemoteResult<ResearchArtifactResult>>
-  listFigures: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchFiguresResult>>
-  deleteFigure: (request: { projectId: string; relPath: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchDeleteFigureResult>>
-  renameFigure: (request: {
-    projectId: string
-    relPath: string
-    newName: string
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchRenameFigureResult>>
-  updateFigure: (request: {
-    projectId: string
-    relPath: string
-    caption: string
-  }) => Promise<RemoteResult<ResearchUpdateFigureResult>>
-  convertFigure: (request: { projectId: string; relPath: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchConvertFigureResult>>
-  saveFigure: (request: {
-    projectId: string
-    name: string
-    content: string
-    caption?: string | undefined
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSaveFigureResult>>
-  listServers: () => Promise<RemoteResult<ResearchListServersResult>>
-  listVenueTemplates: () => Promise<RemoteResult<ResearchVenueTemplatesResult>>
-  applyVenueTemplate: (request: {
-    projectId: string
-    dir?: string | undefined
-    templateId?: string | undefined
-    customName?: string | undefined
-  }) => Promise<RemoteResult<ResearchApplyVenueResult>>
-  clearVenueTemplate: (request: { projectId: string }) => Promise<RemoteResult<ResearchClearVenueResult>>
-  listVenueDeadlines: (request: { projectId?: string | undefined }) => Promise<RemoteResult<ResearchVenueDeadlinesResult>>
-  setVenueWatch: (request: {
-    projectId: string
-    series: string
-    watched: boolean
-  }) => Promise<RemoteResult<ResearchSetVenueWatchResult>>
-  refreshVenueDeadlines: () => Promise<RemoteResult<ResearchRefreshVenueDeadlinesResult>>
-  generateMeetingDeck: (request: {
-    projectId: string
-    title?: string | undefined
-    presenter?: string | undefined
-    date?: string | undefined
-    paperIds?: readonly string[] | undefined
-    figureRelPaths?: readonly string[] | undefined
-    include?: Partial<MeetingInclude> | undefined
-    aiIllustrations?: boolean | undefined
-  }) => Promise<RemoteResult<ResearchGenerateMeetingResult>>
-  listMeetingDecks: (request: { projectId: string }) => Promise<RemoteResult<ResearchMeetingDecksResult>>
-  deleteMeetingDeck: (request: { projectId: string; file: string }) => Promise<RemoteResult<ResearchDeleteMeetingDeckResult>>
-  getImageGenConfig: () => Promise<RemoteResult<ResearchGetImageGenConfigResult>>
-  setImageGenConfig: (request: {
-    baseUrl?: string | undefined
-    apiKey?: string | undefined
-    model?: string | undefined
-    size?: string | undefined
-  }) => Promise<RemoteResult<ResearchSetImageGenConfigResult>>
-  getDigdigConfig: () => Promise<RemoteResult<ResearchGetDigdigConfigResult>>
-  setDigdigConfig: (request: {
-    baseUrl?: string | undefined
-    defaultEngine?: string | undefined
-    allowedEngines?: readonly string[] | undefined
-    defaultLimit?: number | undefined
-    defaultFormat?: 'md' | 'json' | undefined
-    useProxy?: boolean | undefined
-    proxyUrl?: string | undefined
-    timeout?: number | undefined
-    ollamaApiKey?: string | undefined
-    redundancyThreshold?: number | undefined
-    redundancyBigramThreshold?: number | undefined
-  }) => Promise<RemoteResult<ResearchSetDigdigConfigResult>>
-  saveServer: (request: { server: ServerInput }) => Promise<RemoteResult<ResearchSaveServerResult>>
-  deleteServer: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteServerResult>>
-  checkServer: (request: { id: string }) => Promise<RemoteResult<ResearchCheckServerResult>>
-  submitJob: (request: {
-    serverId: string
-    command: string
-    experimentId?: string | undefined
-  }) => Promise<RemoteResult<ResearchSubmitJobResult>>
-  listJobs: (request: { serverId?: string }) => Promise<RemoteResult<ResearchListJobsResult>>
-  deleteJob: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteJobResult>>
-  getBibliography: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchBibliographyResult>>
-  saveBibliography: (request: {
-    projectId: string
-    entries: BibEntry[]
-    baseMtimeMs: number | null
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSaveBibliographyResult>>
-  importPapersToBib: (request: {
-    projectId: string
-    arxivIds: string[]
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchImportBibResult>>
-  reorderPaperSections: (request: {
-    projectId: string
-    moves: SectionMove[]
-    baseOutline: string[]
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSavePaperSourceResult>>
-  reorderPaperSubsections: (request: {
-    projectId: string
-    moves: SubsectionMove[]
-    baseOutline: SectionOutlineTitles[]
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSavePaperSourceResult>>
-  listPaperSnapshots: (request: { projectId: string }) => Promise<RemoteResult<ResearchPaperSnapshotsResult>>
-  getPaperSnapshot: (request: { projectId: string; id: string }) => Promise<RemoteResult<ResearchPaperSnapshotResult>>
-  revertPaperSnapshot: (request: {
-    projectId: string
-    id: string
-    baseMtimeMs: number
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchRevertPaperSnapshotResult>>
-  exportWiki: () => Promise<RemoteResult<ResearchExportWikiResult>>
-  importWiki: (request: {
-    snapshot: ResearchWikiSnapshot
-    mode: ResearchImportWikiMode
-    confirmReplace?: boolean
-  }) => Promise<RemoteResult<ResearchImportWikiResult>>
-  listBackups: () => Promise<RemoteResult<ResearchListBackupsResult>>
-  getTaskHealth: () => Promise<RemoteResult<ResearchTaskHealthResult>>
-  listEvents: (request: {
-    projectId?: string | undefined
-    actorKind?: string | undefined
-    actionPrefix?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-    limit?: number | undefined
-    order?: string | undefined
-  }) => Promise<RemoteResult<ResearchListEventsResult>>
-  generateProgressReport: (request: {
-    projectId?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-  }) => Promise<RemoteResult<ResearchProgressReportResult>>
-  generateBrief: (request: {
-    projectId?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-  }) => Promise<RemoteResult<ResearchGenerateBriefResult>>
-  addJournalEntry: (request: {
-    text: string
-    projectId?: string | undefined
-    ideaId?: string | undefined
-    valence?: number | undefined
-    arousal?: number | undefined
-    question?: ResearchJournalQuestionRef | undefined
-  }) => Promise<RemoteResult<ResearchAddJournalEntryResult>>
-  getForaging: () => Promise<RemoteResult<ResearchGetForagingResult>>
-  getWorktree: () => Promise<RemoteResult<ResearchGetWorktreeResult>>
-  setMainline: (request: {
-    ideaId?: string | undefined
-    projectId?: string | undefined
-  }) => Promise<RemoteResult<ResearchSetMainlineResult>>
-  setIdeaParent: (request: {
-    ideaId: string
-    parentIdeaId: string | null
-  }) => Promise<RemoteResult<ResearchSetIdeaParentResult>>
-  adoptIdea: (request: { ideaId: string }) => Promise<RemoteResult<ResearchAdoptIdeaResult>>
-  closeIdea: (request: {
-    ideaId: string
-    reason: string
-  }) => Promise<RemoteResult<ResearchCloseIdeaResult>>
-  /** Assemble one digest (weekly / monthly / project) as a pure fold, rendered as MMS. */
-  generateDigest: (request: {
-    tier?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-    lang?: string | undefined
-  }) => Promise<RemoteResult<ResearchGenerateDigestResult>>
-  /** Declare one Eureka — the researcher's own named milestone (never system-declared). */
-  setEureka: (request: {
-    ideaId?: string | undefined
-    projectId?: string | undefined
-    title: string
-  }) => Promise<RemoteResult<ResearchSetEurekaResult>>
-  /** Pin (or unpin/decline) one moment — the explicit bookmark of a curated instant. */
-  pinMoment: (request: {
-    targetEventId: string
-    note?: string | undefined
-    pinned?: boolean | undefined
-  }) => Promise<RemoteResult<ResearchPinMomentResult>>
-  /** Read the unified moment timeline (S9b): pull-only, five sources, zero verbs. */
-  getMomentIndex: (request: {
-    since?: string | undefined
-    until?: string | undefined
-  }) => Promise<RemoteResult<ResearchGetMomentIndexResult>>
-  /** Read the retrospective eureka view (S8c): declarations × measured roads. */
-  getEurekaView: () => Promise<RemoteResult<ResearchGetEurekaViewResult>>
-  /** Read the evidence graph (v1): one pure fold over one ledger window (L1). */
-  getEvidenceGraph: (request: {
-    projectId?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-  }) => Promise<RemoteResult<ResearchGetEvidenceGraphResult>>
-  /** Retract one evidence edge by dedupKey (panel: any edge — human final say). */
-  retractEvidenceEdge: (request: RetractEvidenceEdgeRequest) => Promise<RemoteResult<ResearchRetractEvidenceEdgeResult>>
-}
+/**
+ * The Remote calls this controller needs, taken from the generated Host face
+ * rather than mirrored by hand (#226). `TypertRemoteNamespaceMap` is merged by
+ * the generated `dsh-mimir/remote` module (loaded in `index.ts`), so this alias
+ * IS the wire surface: a method the host stops exposing fails to compile here
+ * instead of drifting into a mirror nobody re-reads.
+ */
+export type ResearchRemote = TypertRemoteNamespaceMap['research']
 
 /** Quiet period after the last keystroke before the draft autosaves. */
 export const AUTOSAVE_DEBOUNCE_MS = 800
@@ -556,6 +234,12 @@ export interface ResearchArxivSearchView {
   readonly status: 'loading' | 'ready' | 'error'
   readonly list: readonly ArxivEntry[]
   readonly failure: ResearchFailureView | null
+  /**
+   * The superseded outcome while this one is still in flight (#208); null
+   * otherwise. A new query no longer blanks the panel: the old rows stay
+   * visible under a loading marker and are swapped out when the reply lands.
+   */
+  readonly previous: { readonly query: string; readonly list: readonly ArxivEntry[] } | null
 }
 
 /** The web search panel: the last query's outcome (null before any search). */
@@ -564,6 +248,8 @@ export interface ResearchWebSearchView {
   readonly status: 'loading' | 'ready' | 'error'
   readonly list: readonly WebSearchEntry[]
   readonly failure: ResearchFailureView | null
+  /** The superseded outcome while this one is in flight (#208); see the arXiv slice. */
+  readonly previous: { readonly query: string; readonly list: readonly WebSearchEntry[] } | null
 }
 
 /** The papers view's Zotero section: connection status plus the collection list. */
@@ -584,6 +270,8 @@ export interface ResearchZoteroSearchView {
   readonly status: 'loading' | 'ready' | 'error'
   readonly list: readonly ZoteroItemView[]
   readonly failure: ResearchFailureView | null
+  /** The superseded outcome while this one is in flight (#208); see the arXiv slice. */
+  readonly previous: { readonly query: string; readonly list: readonly ZoteroItemView[] } | null
 }
 
 /** The arXiv subscription bar of the papers view. */
@@ -800,10 +488,24 @@ export interface ResearchSnapshotDetailView {
   readonly failure: ResearchFailureView | null
 }
 
+/**
+ * The capability layers the panel may render (#242), or null while unknown.
+ * A view whose layer is disabled is absent from the rail entirely — the issue
+ * is about not exposing a switched-off capability, so a greyed-out tab would
+ * miss the point.
+ */
+export type ResearchCapabilitySet = ReadonlySet<ResearchCapability> | null
+
 /** Immutable view published to the panel. */
 export interface ResearchView {
   /** The host/client protocol handshake (#250); `checking` until it settles. */
   readonly protocol: ResearchProtocolState
+  /**
+   * Capability layers the host enabled (#242); null until `getCapabilities`
+   * answers. A null set means "not known yet" and renders the full rail — the
+   * panel must not hide a view because a request is still in flight.
+   */
+  readonly capabilities: ResearchCapabilitySet
   readonly projects: readonly ResearchProjectView[]
   readonly projectsStatus: ResearchLoadStatus
   readonly projectsFailure: ResearchFailureView | null
@@ -874,6 +576,7 @@ export interface ResearchView {
 }
 
 const INITIAL_VIEW: ResearchView = Object.freeze({
+  capabilities: null,
   protocol: Object.freeze({ status: 'checking' }),
   projects: Object.freeze([]),
   projectsStatus: 'cold',
@@ -979,6 +682,26 @@ export type ResearchProtocolState =
     readonly verdict: 'host-ahead' | 'client-ahead' | 'unknown'
   }
 
+/**
+ * The slices the pushed wiki stream already re-reads on reconnect (see
+ * {@link ResearchController.resyncLiveSlices}): asking for them a second time
+ * would race the aggregate flush, and the second ask would be dropped anyway.
+ */
+const LIVE_TABLE_SLICES: ReadonlySet<LazySlice> = new Set<LazySlice>(['papers', 'jobs', 'figures'])
+
+/** The artifact the experiments view reads (its log). Owned here so the
+ * slice runner can name it without the panel's constant. */
+const EXPERIMENT_ARTIFACT_NAME = 'EXPERIMENT_LOG.md'
+
+/**
+ * The slices a reconnect re-reads (#222). The project list is excluded: it is
+ * the dependency every other slice waits on, so {@link ResearchController.resync}
+ * reads it first rather than here.
+ */
+const RECONNECT_SLICES: readonly LazySlice[] = Object.freeze([
+  'projects', 'papers', 'subscriptions', 'zotero', 'jobs', 'venues', 'figures', 'artifact',
+])
+
 /** Whether two evidence window requests name the same fold window (single-flight). */
 function sameEvidenceRequest(left: EvidenceGraphRequest | null, right: EvidenceGraphRequest): boolean {
   if (left === null) return false
@@ -1080,6 +803,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   )
   /** The filter of the last ledger load, replayed by the live refresh. */
   private ledgerFilter: ResearchEventFilter | null = null
+  /** The project the views are looking at; drives the project-scoped slices. */
+  private selectedProjectId: string | null = null
   private disposed = false
   private toastSeq = 0
   private paperJumpSeq = 0
@@ -1098,12 +823,120 @@ export class ResearchController implements HostObservable<ResearchView> {
     return () => { this.listeners.delete(listener) }
   }
 
-  /** Load the project list once; a failed load stays retryable. */
+  /**
+   * Tell the controller which project the views are looking at, so a slice
+   * whose loader needs it (venues, figures, the experiment artifact) can be
+   * driven by {@link loadSlice} alone rather than by every call site passing
+   * the id again. The panel already tracks the selection; this mirrors it.
+   * @param projectId - the selected project, or null when none is.
+   */
+  setSelectedProjectId(projectId: string | null): void {
+    this.selectedProjectId = projectId
+  }
+
+  /**
+   * The single entry every lazy slice loads through (#222). The panel's
+   * effects no longer decide freshness themselves — they name a slice and say
+   * WHY it is wanted, and {@link sliceAction} answers "load, refresh, or
+   * leave it alone" from one table. That is what makes a failed load retryable
+   * from the first-open, revisit, reconnect, and project-switch paths alike:
+   * before, each `ensure*` method carried its own `status === 'ready'` guard
+   * and an `'error'` slice was skipped forever.
+   * @param slice - the lazy slice to consider.
+   * @param trigger - why it is being asked for (drives the policy table).
+   */
+  loadSlice(slice: LazySlice, trigger: LoadTrigger): void {
+    const action = sliceAction(this.sliceStatus(slice), this.sliceInFlight(slice), trigger)
+    if (action === 'skip') return
+    this.runSlice(slice, action)
+  }
+
+  /**
+   * Load the project list (the panel's first open, the retry entry, and the
+   * reconnect resync). Kept as a named method because the overview's
+   * informational reads ride along with it.
+   */
   ensure(): void {
-    if (this.view.projectsStatus === 'ready' || this.loadPromise !== null) return
-    this.loadPromise = this.loadProjects().finally(() => { this.loadPromise = null })
+    void this.loadCapabilities()
+    this.loadSlice('projects', 'first-open')
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
     this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
+  }
+
+  /** The status one lazy slice currently reports. */
+  private sliceStatus(slice: LazySlice): SliceStatus {
+    switch (slice) {
+      case 'projects': return this.view.projectsStatus
+      case 'papers': return this.view.papers.status
+      case 'subscriptions': return this.view.arxivSubscriptions.status
+      case 'zotero': return this.view.zotero.status
+      case 'jobs': return this.view.jobs.status
+      case 'venues': return this.view.venues.status
+      case 'figures': return this.view.figures?.status ?? 'cold'
+      case 'artifact': return this.view.artifact?.status ?? 'cold'
+    }
+  }
+
+  /** Whether one lazy slice already has a load running. */
+  private sliceInFlight(slice: LazySlice): boolean {
+    switch (slice) {
+      case 'projects': return this.loadPromise !== null
+      case 'papers': return this.papersPromise !== null
+      case 'subscriptions': return this.subscriptionsPromise !== null
+      case 'zotero': return this.zoteroPromise !== null
+      case 'jobs': return this.jobsPromise !== null
+      case 'venues': return this.venuesInFlight
+      // These two own their in-flight bookkeeping inside the loader, which
+      // also queues a superseding request; asking twice would race it.
+      case 'figures': return this.figuresInFlight
+      case 'artifact': return false
+    }
+  }
+
+  /** Run one decided action for a slice. */
+  private runSlice(slice: LazySlice, action: SliceAction): void {
+    const quiet = action === 'refresh'
+    switch (slice) {
+      case 'projects': {
+        this.loadPromise ??= this.loadProjects().finally(() => { this.loadPromise = null })
+        return
+      }
+      case 'papers': {
+        this.papersPromise ??= this.loadPapers(quiet).finally(() => { this.papersPromise = null })
+        return
+      }
+      case 'subscriptions': {
+        this.subscriptionsPromise ??= this.loadSubscriptions()
+          .then(() => {
+            const { list, checking } = this.view.arxivSubscriptions
+            if (!checking && anySubscriptionDue(list, Date.now())) void this.checkArxivSubscriptions()
+          })
+          .finally(() => { this.subscriptionsPromise = null })
+        return
+      }
+      case 'zotero': {
+        this.zoteroPromise ??= this.loadZotero().finally(() => { this.zoteroPromise = null })
+        return
+      }
+      case 'jobs': {
+        this.jobsPromise ??= this.loadJobs().finally(() => { this.jobsPromise = null })
+        return
+      }
+      case 'venues': {
+        this.ensureVenues(this.selectedProjectId, quiet)
+        return
+      }
+      case 'figures': {
+        const projectId = this.selectedProjectId
+        if (projectId !== null) this.loadFigures(projectId, true, quiet)
+        return
+      }
+      case 'artifact': {
+        const projectId = this.selectedProjectId
+        if (projectId !== null) this.loadArtifact(projectId, EXPERIMENT_ARTIFACT_NAME, true)
+        return
+      }
+    }
   }
 
   /**
@@ -1151,13 +984,18 @@ export class ResearchController implements HostObservable<ResearchView> {
     })()
   }
 
-  /** Re-read the project list (the retry entry and the reconnect resync). */
+  /**
+   * Re-read the project list and every other warm slice (#222's reconnect
+   * path). A reconnect may follow a host upgrade or an outage, so both the
+   * handshake and the data are re-read: a failed slice gets another chance
+   * instead of sitting on its error card until someone presses a button.
+   */
   resync(): void {
     // A reconnect may follow a host upgrade: re-run the handshake even when
     // the panel is cold, so a version change never goes unnoticed.
     this.checkProtocol()
     if (this.view.projectsStatus === 'cold') return
-    this.loadPromise ??= this.loadProjects().finally(() => { this.loadPromise = null })
+    for (const slice of RECONNECT_SLICES) this.loadSlice(slice, 'reconnect')
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
     this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
   }
@@ -1500,10 +1338,18 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
   }
 
-  /** Load the digest once, on the ledger view's first open (active push). */
-  ensureDigest(): void {
+  /**
+   * Load the digest once, on the ledger view's first open (active push).
+   *
+   * The first push follows the UI locale (#142 item 3): it used to be pinned to
+   * `'zh'`, so an English panel opened the ledger and got a Chinese digest with
+   * no way to tell why. The default stays `'zh'` for callers that genuinely do
+   * not know a locale — the panel never relies on it.
+   * @param lang - the digest language for the first push.
+   */
+  ensureDigest(lang: 'zh' | 'en' = 'zh'): void {
     if (this.view.digest.status !== 'idle' || this.digestPromise !== null) return
-    this.digestPromise = this.generateDigest('weekly', 'zh').finally(() => { this.digestPromise = null })
+    this.digestPromise = this.generateDigest('weekly', lang).finally(() => { this.digestPromise = null })
   }
 
   /** Re-fetch the digest at its current tier/lang (the card's refresh button). */
@@ -1952,10 +1798,12 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
   }
 
-  /** Load the literature list once, on the papers view's first open. */
+  /**
+   * Load the literature list if it is not settled yet (the papers view's
+   * first open and its retry control).
+   */
   ensurePapers(): void {
-    if (this.view.papers.status === 'ready' || this.papersPromise !== null) return
-    this.papersPromise = this.loadPapers().finally(() => { this.papersPromise = null })
+    this.loadSlice('papers', 'first-open')
   }
 
   /**
@@ -1973,13 +1821,7 @@ export class ResearchController implements HostObservable<ResearchView> {
    * scheduled daily check is the steady-state path, this only freshens.
    */
   ensureSubscriptions(): void {
-    if (this.view.arxivSubscriptions.status === 'ready' || this.subscriptionsPromise !== null) return
-    this.subscriptionsPromise = this.loadSubscriptions()
-      .then(() => {
-        const { list, checking } = this.view.arxivSubscriptions
-        if (!checking && anySubscriptionDue(list, Date.now())) void this.checkArxivSubscriptions()
-      })
-      .finally(() => { this.subscriptionsPromise = null })
+    this.loadSlice('subscriptions', 'first-open')
   }
 
   /**
@@ -2566,17 +2408,20 @@ export class ResearchController implements HostObservable<ResearchView> {
    * flags ride the catalog read).
    * @param projectId - the project whose watch list rides along, or null.
    */
-  ensureVenues(projectId: string | null): void {
+  ensureVenues(projectId: string | null, quiet = false): void {
     if (this.venuesInFlight) {
       // Queue the newest request behind the in-flight one and stale-mark that
       // one's reply: publishing it would flash another project's watch list.
       this.venuesGeneration += 1
-      this.venuesPending = { projectId, quiet: false }
+      this.venuesPending = { projectId, quiet }
       return
     }
     const current = this.view.venues
-    if (current.status === 'ready' && current.watchedProjectId === projectId) return
-    void this.loadVenueDeadlines(projectId, false)
+    // A ready catalog for the SAME project is fresh; a ready catalog for a
+    // different project is stale (the watched flags ride the catalog read),
+    // and a failed one is retryable — both fall through to the reload.
+    if (!quiet && current.status === 'ready' && current.watchedProjectId === projectId) return
+    void this.loadVenueDeadlines(projectId, quiet)
   }
 
   /**
@@ -3055,8 +2900,14 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (trimmed === '') return
     this.arxivGeneration += 1
     const generation = this.arxivGeneration
+    // #208: keep the superseded rows visible while this query is in flight —
+    // blanking the panel reads as "no results", which is a different answer.
+    const settled = this.view.arxivSearch
+    const previous = settled === null || settled.list.length === 0
+      ? null
+      : Object.freeze({ query: settled.query, list: settled.list })
     this.publish({
-      arxivSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null }),
+      arxivSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null, previous }),
     })
     void (async (): Promise<void> => {
       const publishSearch = (view: ResearchArxivSearchView): void => {
@@ -3067,12 +2918,12 @@ export class ResearchController implements HostObservable<ResearchView> {
         const carried = await this.remote.searchArxiv({ query: trimmed })
         const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure, previous: null })
           return
         }
-        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
+        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null, previous: null })
       } catch (error) {
-        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error) })
+        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error), previous: null })
       }
     })()
   }
@@ -3089,8 +2940,14 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (trimmed === '') return
     this.webGeneration += 1
     const generation = this.webGeneration
+    // #208: keep the superseded rows visible while this query is in flight —
+    // blanking the panel reads as "no results", which is a different answer.
+    const settled = this.view.webSearch
+    const previous = settled === null || settled.list.length === 0
+      ? null
+      : Object.freeze({ query: settled.query, list: settled.list })
     this.publish({
-      webSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null }),
+      webSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null, previous }),
     })
     void (async (): Promise<void> => {
       const publishSearch = (view: ResearchWebSearchView): void => {
@@ -3101,12 +2958,12 @@ export class ResearchController implements HostObservable<ResearchView> {
         const carried = await this.remote.searchWeb({ query: trimmed })
         const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure, previous: null })
           return
         }
-        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
+        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null, previous: null })
       } catch (error) {
-        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error) })
+        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error), previous: null })
       }
     })()
   }
@@ -3291,8 +3148,7 @@ export class ResearchController implements HostObservable<ResearchView> {
    * probe stays retryable through {@link recheckZotero}.
    */
   ensureZotero(): void {
-    if (this.view.zotero.status === 'ready' || this.zoteroPromise !== null) return
-    this.zoteroPromise = this.loadZotero().finally(() => { this.zoteroPromise = null })
+    this.loadSlice('zotero', 'first-open')
   }
 
   /** Re-probe the Zotero connection (the section's retry entry). */
@@ -3351,8 +3207,14 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (trimmed === '') return
     this.zoteroGeneration += 1
     const generation = this.zoteroGeneration
+    // #208: keep the superseded rows visible while this query is in flight —
+    // blanking the panel reads as "no results", which is a different answer.
+    const settled = this.view.zoteroSearch
+    const previous = settled === null || settled.list.length === 0
+      ? null
+      : Object.freeze({ query: settled.query, list: settled.list })
     this.publish({
-      zoteroSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null }),
+      zoteroSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null, previous }),
     })
     void (async (): Promise<void> => {
       const publishSearch = (view: ResearchZoteroSearchView): void => {
@@ -3363,12 +3225,12 @@ export class ResearchController implements HostObservable<ResearchView> {
         const carried = await this.remote.searchZotero({ query: trimmed })
         const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure, previous: null })
           return
         }
-        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
+        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null, previous: null })
       } catch (error) {
-        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error) })
+        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error), previous: null })
       }
     })()
   }
@@ -3837,10 +3699,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
   }
 
-  /** Load the job list once, on the servers view's jobs section first open. */
+  /** Load the job list if it is not settled yet (the jobs section's first open). */
   ensureJobs(): void {
-    if (this.view.jobs.status === 'ready' || this.jobsPromise !== null) return
-    this.jobsPromise = this.loadJobs().finally(() => { this.jobsPromise = null })
+    this.loadSlice('jobs', 'first-open')
   }
 
   /**
@@ -4149,7 +4010,9 @@ export class ResearchController implements HostObservable<ResearchView> {
    * landed while it was down are unknown. Re-read every warm slice at once —
    * one pseudo change per mappable table rides the normal aggregation path,
    * and the cold-slice gates in {@link applyLiveSlices} keep untouched views
-   * untouched.
+   * untouched. The lazy slices the wiki stream does not track (papers list,
+   * subscriptions, the Zotero probe, the venue catalog) go through the same
+   * trigger #222 defines for a reconnect.
    */
   private resyncLiveSlices(): void {
     if (this.disposed) return
@@ -4157,6 +4020,13 @@ export class ResearchController implements HostObservable<ResearchView> {
       this.liveAggregator.push({ table, key: '', operation: 'put' })
     }
     this.liveAggregator.flushNow()
+    // The wiki-stream tables above do not carry the papers list, the
+    // subscriptions, the Zotero probe, or the venue catalog: drive those
+    // explicitly, or an outage that broke exactly one of them never recovers.
+    for (const slice of RECONNECT_SLICES) {
+      if (slice === 'projects' || LIVE_TABLE_SLICES.has(slice)) continue
+      this.loadSlice(slice, 'reconnect')
+    }
   }
 
   /** Close the events stream and drop any pending live refresh. */
@@ -4272,6 +4142,31 @@ export class ResearchController implements HostObservable<ResearchView> {
 
   /** Fetch the project list and publish it. */
   /** Fetch the project list and publish it. A refresh over a ready list keeps the list on screen (no sidebar flash); only the first load shows the loading state. */
+  /**
+   * Ask the host which capability layers it enabled (#242). Cheap and cached:
+   * the answer cannot change while the plugin is applied, so it is requested
+   * once and a failure simply leaves the rail complete (the panel never hides
+   * a view because a request failed).
+   */
+  private capabilitiesPromise: Promise<void> | null = null
+
+  /** Load the capability set once; a failed load leaves every view visible. */
+  private async loadCapabilities(): Promise<void> {
+    if (this.view.capabilities !== null) return
+    this.capabilitiesPromise ??= (async () => {
+      try {
+        const carried = await this.remote.getCapabilities()
+        if (this.disposed) return
+        const result = unwrapRemote(carried)
+        if (!result.ok) return
+        this.publish({ capabilities: new Set(result.value.enabled) })
+      } catch {
+        // A transport failure is not a reason to hide a capability.
+      }
+    })().finally(() => { this.capabilitiesPromise = null })
+    return this.capabilitiesPromise
+  }
+
   private async loadProjects(): Promise<void> {
     const refreshing = this.view.projectsStatus === 'ready'
     if (!refreshing) this.publish({ projectsStatus: 'loading', projectsFailure: null })

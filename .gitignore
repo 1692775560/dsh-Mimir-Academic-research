@@ -27,3 +27,8 @@ ci_log.txt
 /test-*.log
 /vitest-*.log
 
+# The default research workspace, created by any local run of the suite
+# (including the self-hosted E2E instance). Empty again after a clean boot,
+# but it is still per-machine state, never source.
+/.research/
+

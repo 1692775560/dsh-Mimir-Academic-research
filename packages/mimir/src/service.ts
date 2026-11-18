@@ -3,7 +3,9 @@
  * This file is a thin facade — it keeps the class, the `super(ctx,
  * 'research')` registration, the config type, the Context augmentation, and
  * all 65 `@Remote` signatures intact, and forwards every method body to a
- * pure-function domain module under `./services`. It owns no domain logic:
+ * pure-function domain module under `./services`. The config it receives is
+ * assembled in exactly one place, {@link buildDeps} (#231); the constructor
+ * checks its own invariants and keeps the result. It owns no domain logic:
  * the mutable instance state (`compileStatus` map, the id counters) rides a
  * single {@link ServiceState} object created here, so every
  * `new ResearchService` gets its own copy.
@@ -13,6 +15,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ResearchWikiDomain } from './store.ts'
+import { buildDeps } from './services/wiring.ts'
 import type { SvgConversionDeps } from './svg-convert.ts'
 import type { LatexToolOptions } from './tools/latex.ts'
 import type {
@@ -39,6 +42,7 @@ import type {
   ResearchGetEurekaViewResult,
   ResearchGenerateDigestResult,
   ResearchBibliographyResult,
+  ResearchDraftRelatedWorkResult,
   ResearchCheckArxivSubscriptionsResult,
   ResearchCheckServerResult,
   ResearchCompileResult,
@@ -63,6 +67,9 @@ import type {
   ResearchImportProjectResult,
   ResearchImportWikiMode,
   ResearchImportWikiResult,
+  ResearchCapabilitiesView,
+  ResearchCapability,
+  ResearchGetCapabilitiesResult,
   ResearchListBackupsResult,
   ResearchListEventsResult,
   ResearchListJobsResult,
@@ -107,11 +114,13 @@ import type {
   ResearchCheckZoteroResult,
   ResearchZoteroCollectionsResult,
   ResearchZoteroExportResult,
+  ResearchZoteroPushResult,
   ResearchZoteroImportResult,
   ResearchZoteroSearchResult,
   SectionMove,
   SectionOutlineTitles,
   ServerInput,
+  ServerRecord,
   SubsectionMove,
   ResearchTaskHealthResult,
   ResearchWikiChangeEvent,
@@ -151,6 +160,11 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** Everything the service needs from the plugin's apply scope. */
+/** Every capability layer, in declaration order (#242). */
+const ALL_CAPABILITIES: readonly ResearchCapability[] = Object.freeze([
+  'core', 'automation', 'compute', 'insights', 'presentation',
+])
+
 export interface ResearchServiceConfig {
   /** Absolute research workspace root (already resolved by the plugin). */
   readonly workspaceDir: string
@@ -175,6 +189,8 @@ export interface ResearchServiceConfig {
   readonly search?: {
     readonly command: string
     readonly timeoutMs: number
+    /** Deployment default result cap of one web search (#232); never the arXiv knob. */
+    readonly maxResults: number
     /** Test hook replacing the real child process. */
     readonly run?: (command: string, args: readonly string[], timeoutMs: number) => Promise<string>
   }
@@ -227,6 +243,20 @@ export interface ResearchServiceConfig {
     readonly timeoutMs?: number | undefined
     readonly maxBufferBytes?: number | undefined
   } | undefined
+  /**
+   * The capability layers this composition enabled (#242). Absent in tests
+   * and direct constructions, where every layer is on: the panel then shows
+   * its full rail, which is what a bare service has always done.
+   */
+  readonly capabilities?: ResearchCapabilitiesView
+  /**
+   * Metrics read behind the automatic experiment capture (#152); absent, the
+   * settle path reads `<workdir>/metrics.jsonl` over ssh. Tests inject here so
+   * the three cases the issue names need no remote at all.
+   */
+  readonly metrics?: {
+    readonly read: (server: ServerRecord, workdir: string) => Promise<string | undefined>
+  } | undefined
 }
 
 /**
@@ -249,20 +279,27 @@ export class ResearchService extends TypertRemoteService {
     if (config.workspaceDir.trim().length === 0) {
       throw new TypeError('research: workspaceDir must be a non-empty absolute path')
     }
-    this.deps = {
+    // One assembly point (#231): the same `buildDeps` the plugin entry calls.
+    // The constructor only checks its own invariants; it does not re-map the
+    // shape, because a second mapping is a second place to forget a field.
+    this.deps = buildDeps({
       workspaceDir: config.workspaceDir,
       domain: config.domain,
-      latex: config.latex,
-      ...(config.backup === undefined ? {} : { backup: config.backup }),
-      ...(config.search === undefined ? {} : { search: config.search }),
-      ...(config.arxiv === undefined ? {} : { arxiv: config.arxiv }),
-      ...(config.svg === undefined ? {} : { svg: config.svg }),
-      ...(config.zotero === undefined ? {} : { zotero: config.zotero }),
-      ...(config.meetings === undefined ? {} : { meetings: config.meetings }),
-      ...(config.notifyWikiChange === undefined ? {} : { notifyWikiChange: config.notifyWikiChange }),
-      ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
-      ...(config.jobs === undefined ? {} : { jobs: config.jobs }),
-    }
+      config: {
+        latex: config.latex,
+        ...(config.backup === undefined ? {} : { backup: config.backup }),
+        ...(config.search === undefined ? {} : { search: config.search }),
+        ...(config.arxiv === undefined ? {} : { arxiv: config.arxiv }),
+        ...(config.svg === undefined ? {} : { svg: config.svg }),
+        ...(config.zotero === undefined ? {} : { zotero: config.zotero }),
+        ...(config.meetings === undefined ? {} : { meetings: config.meetings }),
+        ...(config.notifyWikiChange === undefined ? {} : { notifyWikiChange: config.notifyWikiChange }),
+        ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
+        ...(config.jobs === undefined ? {} : { jobs: config.jobs }),
+        ...(config.capabilities === undefined ? {} : { capabilities: config.capabilities }),
+        ...(config.metrics === undefined ? {} : { metrics: config.metrics }),
+      },
+    })
     this.state = {
       compileStatus: new Map(),
       jobSeq: 0,
@@ -406,6 +443,18 @@ export class ResearchService extends TypertRemoteService {
     return zotero.exportZoteroCollectionToBib(this.deps, request)
   }
 
+  /**
+   * Push the project's linked papers back into a Zotero collection (#151).
+   * Idempotent: entries the library already holds are skipped, not rewritten.
+   */
+  @Remote('pushZoteroCollection')
+  pushZoteroCollection(request: {
+    projectId: string
+    collectionName?: string | undefined
+  }): Promise<ResearchZoteroPushResult> {
+    return zotero.pushZoteroCollection(this.deps, request)
+  }
+
   // subscription domain: arXiv new-paper checks (pure filesystem storage)
   @Remote('listArxivSubscriptions')
   listArxivSubscriptions(): Promise<ResearchArxivSubscriptionsResult> {
@@ -506,6 +555,19 @@ export class ResearchService extends TypertRemoteService {
   @Remote('getBibliography')
   getBibliography(request: { projectId: string; dir?: string | undefined }): Promise<ResearchBibliographyResult> {
     return paper.getBibliography(this.deps, request)
+  }
+
+  /**
+   * Assemble a related-work draft from library papers (#153). Returns text
+   * only: the draft never reaches `main.tex` from here.
+   */
+  @Remote('draftRelatedWork')
+  draftRelatedWork(request: {
+    projectId: string
+    arxivIds: readonly string[]
+    hint?: string | undefined
+  }): Promise<ResearchDraftRelatedWorkResult> {
+    return paper.draftRelatedWork(this.deps, request)
   }
 
   @Remote('saveBibliography')
@@ -741,6 +803,8 @@ export class ResearchService extends TypertRemoteService {
     serverId: string
     command: string
     experimentId?: string | undefined
+    projectId?: string | undefined
+    workdir?: string | undefined
   }): Promise<ResearchSubmitJobResult> {
     return server.submitJob(this.deps, this.state, request)
   }
@@ -773,6 +837,22 @@ export class ResearchService extends TypertRemoteService {
   @Remote('listBackups')
   listBackups(): Promise<ResearchListBackupsResult> {
     return wikiAdmin.listBackups(this.deps)
+  }
+
+  /**
+   * The enabled capability layers (#242). The panel renders its navigation
+   * from this, so a layer switched off in Config is absent from the rail
+   * rather than present-but-dead.
+   */
+  @Remote('getCapabilities')
+  getCapabilities(): Promise<ResearchGetCapabilitiesResult> {
+    // An unwired service (tests, direct construction) reports every layer on:
+    // the panel then renders its full rail, which is what a bare service has
+    // always done.
+    return Promise.resolve(success(this.deps.capabilities ?? {
+      enabled: ALL_CAPABILITIES,
+      disabled: Object.freeze([]),
+    }))
   }
 
   /**

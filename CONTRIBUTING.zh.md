@@ -5,9 +5,15 @@
 感谢一起共创 Mimir！本文档说明协作流程、每个改动必须过的检查、以及之前踩过的坑。
 代码层面的约定在 [CODE_STYLE.zh.md](CODE_STYLE.zh.md)——提第一个 PR 前请先读它。
 
-> **硬性门禁**：PR 必须通过 `node scripts/check-style.mjs`（CI 强制执行）
-> 且符合 CODE_STYLE，否则不予合并。修不到点子上、缺测试、或夹带无关
-> 重排的 PR 会收到 review 意见而不是合并。
+> **硬性门禁**：PR 必须通过 `node scripts/check-style.mjs` 和 `pnpm run lint`
+> （两者都由 CI 强制执行）且符合 CODE_STYLE，否则不予合并。修不到点子上、
+> 缺测试、或夹带无关重排的 PR 会收到 review 意见而不是合并。
+
+两道门禁回答的是不同问题。`check-style.mjs` 判的是逐行可见的规则（裸
+`var(--x)`、`console.log`、被跳过的测试）；`pnpm run lint` 判的是需要类型
+检查器的规则——最主要是「这个 Promise 有没有被 await」，所以漏写 `void` 或
+漏 `.catch` 会在构建期失败，而不是运行时静默死掉。确需豁免的规则写行内
+`eslint-disable-next-line` 并给理由，与 `style-gate: allow` 同一规矩。
 
 ## 环境搭建
 

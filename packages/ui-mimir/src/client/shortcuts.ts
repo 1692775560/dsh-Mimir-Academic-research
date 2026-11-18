@@ -30,6 +30,25 @@ export interface ShortcutInput {
   editable: boolean
   /** Whether a paper-view pane currently holds fullscreen (Esc exits it before closing). */
   fullscreen: boolean
+  /** The rail on screen, for the digit mapping (#242); absent means the full list. */
+  rail?: readonly ResearchTab[]
+}
+
+/**
+ * Map a digit to a rail position: `1`–`n` index the tabs actually on screen.
+ *
+ * #242 removes capability-gated views from the rail, so the digit order must
+ * follow the visible rail rather than the static list — otherwise `7` would
+ * jump to a view the user cannot see. The caller passes the rail it rendered;
+ * omitting it keeps the historical full-list order for tests and callers that
+ * have no capability set yet.
+ * @param key - the raw `KeyboardEvent.key`.
+ * @param rail - the tabs on screen, in order.
+ * @returns the tab that digit selects, or null when the key is not a position.
+ */
+export function tabForDigit(key: string, rail: readonly ResearchTab[] = TABS): ResearchTab | null {
+  if (key.length !== 1 || key < '1' || key > String(rail.length)) return null
+  return rail[Number(key) - 1] ?? null
 }
 
 /** What one keydown asks the workbench to do. */
@@ -56,10 +75,8 @@ export function shortcutFor(input: ShortcutInput): ShortcutAction | null {
     return input.key === 'Enter' ? { type: 'compile' } : null
   }
   if (input.key === 'Escape') return input.fullscreen ? { type: 'exit-fullscreen' } : { type: 'close' }
-  if (input.key.length === 1 && input.key >= '1' && input.key <= String(TABS.length)) {
-    const tab = TABS[Number(input.key) - 1]
-    if (tab !== undefined) return { type: 'tab', tab }
-  }
+  const digitTab = tabForDigit(input.key, input.rail ?? TABS)
+  if (digitTab !== null) return { type: 'tab', tab: digitTab }
   return null
 }
 

@@ -1,0 +1,35 @@
+{
+  // Type-check gate for the ui-mimir TEST tree (#143 item 1).
+  //
+  // `tsconfig.json` includes only `src`, so `pnpm run typecheck` never looks at
+  // `tests/**` — vitest transpiles those away without a type check, and every
+  // fixture that drifted behind a widened view type stayed invisible until a
+  // runtime assertion happened to catch it. This config closes that hole: it
+  // compiles the specs against the SAME source they import, in noEmit mode.
+  //
+  // Three deliberate deviations from the package config:
+  //  - `rootDir` is the repo root (the specs live outside `src`, and the
+  //    vendored protocol sources outside the package), and nothing is emitted
+  //    — this is a gate, not a build artifact.
+  //  - the tests also reach the vendored `typert-protocol` sources through the
+  //    root `paths` map, so that project is pulled into the file list instead
+  //    of being rejected as "not listed" (TS6307).
+  //  - `composite` is off: a project reference would demand declarations for
+  //    the test tree, which nothing consumes.
+  "extends": "../../tsconfig.base.client.json",
+  "compilerOptions": {
+    "composite": false,
+    "incremental": false,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "noEmit": true,
+    "rootDir": "../..",
+    "types": []
+  },
+  "include": [
+    "src/**/*",
+    "tests/**/*",
+    "../typert-protocol/src/**/*"
+  ]
+}

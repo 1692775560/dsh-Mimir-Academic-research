@@ -36,6 +36,11 @@ export interface LibraryDeps {
   readonly search?: {
     readonly command: string
     readonly timeoutMs: number
+    /**
+     * Deployment default result cap (#232): its own knob, never the arXiv
+     * one — a caller that omits `maxResults` gets this, not `arxiv.maxResults`.
+     */
+    readonly maxResults: number
     /** Test hook replacing the real child process. */
     readonly run?: WebSearchRunner
   }
@@ -55,6 +60,13 @@ const PAPER_PDF_DIR = 'papers'
 const ARXIV_SEARCH_DEFAULT_MAX_RESULTS = 10
 /** Hard result cap of one panel-driven arXiv search. */
 const ARXIV_SEARCH_MAX_RESULTS = 50
+/**
+ * Hard result cap of one panel-driven web search (SearXNG's own ceiling).
+ * The *default* lives in the config layer as `search.maxResults` (#232):
+ * it used to ride on `arxiv.maxResults`, so tuning arXiv silently resized
+ * every web search.
+ */
+const WEB_SEARCH_MAX_RESULTS = 50
 
 /** Atomically replace one binary file through a unique same-directory sibling. */
 async function writeBytesAtomic(filePath: string, bytes: Uint8Array): Promise<void> {
@@ -198,9 +210,9 @@ export async function searchWeb(
   }
   const query = request.query.trim()
   if (query === '') return rejected({ code: 'invalid-input', message: 'query must be non-empty' })
-  const maxResults = request.maxResults ?? ARXIV_SEARCH_DEFAULT_MAX_RESULTS
-  if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > ARXIV_SEARCH_MAX_RESULTS) {
-    return rejected({ code: 'invalid-input', message: `maxResults must be an integer between 1 and ${ARXIV_SEARCH_MAX_RESULTS}` })
+  const maxResults = request.maxResults ?? search.maxResults
+  if (!Number.isSafeInteger(maxResults) || maxResults < 1 || maxResults > WEB_SEARCH_MAX_RESULTS) {
+    return rejected({ code: 'invalid-input', message: `maxResults must be an integer between 1 and ${WEB_SEARCH_MAX_RESULTS}` })
   }
   try {
     const results = await fetchWebSearch(query, {

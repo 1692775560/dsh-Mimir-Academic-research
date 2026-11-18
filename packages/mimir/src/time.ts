@@ -37,13 +37,46 @@ export function tsToMs(ts: string): number | null {
 }
 
 /**
- * Sort a copy into the canonical (ts, id) order every fold uses. Two events at
- * the same instant are ordered by id so the sequence is deterministic.
+ * The event id's sequence half, as a NUMBER (#229).
+ *
+ * Ids are `ev-<time36>-<seq36>`. Comparing them as strings was the bug: base-36
+ * packs 36 values per digit, so a burst crossing a digit boundary sorts
+ * `'10'` before `'9'` and the whole same-millisecond run comes back scrambled —
+ * exactly the ≥80-in-one-millisecond replay the ledger promises to get right.
+ *
+ * Ids that do not follow the minted shape (rows written before the convention,
+ * or by hand) fall back to `null` so the caller keeps a deterministic string
+ * tiebreak for them instead of inventing a sequence.
+ * @param id - one event id.
+ * @returns the sequence number, or null when the id has no parseable suffix.
+ */
+function sequenceOf(id: string): number | null {
+  const match = /^ev-[0-9a-z]+-([0-9a-z]+)$/.exec(id)
+  if (match === null) return null
+  const parsed = Number.parseInt(match[1] as string, 36)
+  return Number.isSafeInteger(parsed) ? parsed : null
+}
+
+/**
+ * Sort a copy into the canonical order every fold uses: by timestamp, then by
+ * the id's sequence number, then by the raw id for rows outside the minted
+ * shape. The sequence is compared numerically (#229) — a string compare of a
+ * base-36 counter is not a total order over time once a burst crosses a digit
+ * boundary.
  * @param events - ledger events, any order.
  * @returns a new sorted array (the input is not mutated).
  */
 export function orderedEvents(events: readonly EventRecord[]): EventRecord[] {
-  return [...events].sort((a, b) => a.ts.localeCompare(b.ts) || a.id.localeCompare(b.id))
+  return [...events].sort((a, b) => {
+    const byTime = a.ts.localeCompare(b.ts)
+    if (byTime !== 0) return byTime
+    const left = sequenceOf(a.id)
+    const right = sequenceOf(b.id)
+    if (left !== null && right !== null && left !== right) return left - right
+    if (left !== null && right === null) return -1
+    if (left === null && right !== null) return 1
+    return a.id.localeCompare(b.id)
+  })
 }
 
 /**

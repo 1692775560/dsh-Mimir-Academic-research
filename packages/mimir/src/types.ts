@@ -218,10 +218,30 @@ export interface ExperimentRecord {
   /** Remembered server the run executed on, when linked. */
   readonly serverId?: string | undefined
   /**
-   * Outcome of the most recently settled linked remote job; absent until a
-   * linked job settles (records predating the field read as absent).
+   * The linked job whose settle currently OWNS this record's state (#224):
+   * set when that job is submitted, moved when a newer one is submitted, and
+   * cleared when it settles. Absent when nothing is in flight — and always
+   * absent on records written before the field existed.
+   *
+   * This is the explicit answer to "which run is this experiment about". The
+   * write-back used to infer it from `createdAt`/id ordering, which confuses
+   * "newest submitted" with "finished last".
+   */
+  readonly activeJobId?: string | undefined
+  /**
+   * Outcome of the most recently SETTLED linked remote job (by completion, not
+   * by submission — #224); absent until a linked job settles (records
+   * predating the field read as absent).
    */
   readonly lastJob?: ExperimentJobOutcome | undefined
+  /**
+   * Whether this record is an automatic draft captured from a run's
+   * `metrics.jsonl` instead of typed by the user (#152). A draft is a real
+   * record — it carries the metrics and the guessed preference directions —
+   * but the panel marks it so nobody mistakes a machine's guess for a
+   * reviewed result. Absent reads as `false` (every record predating #152).
+   */
+  readonly draft?: boolean | undefined
   /** ISO-8601 timestamp of the last write. */
   readonly updatedAt: string
 }
@@ -244,6 +264,18 @@ export interface JobRecord {
   readonly status: JobStatus
   /** Experiment record the job is linked to, when given at submit time. */
   readonly experimentId?: string | undefined
+  /**
+   * Wiki project the job's captured metrics belong to (#152). Absent means the
+   * job cannot seed an experiment draft: a draft with no project would be
+   * orphaned from every view that lists experiments.
+   */
+  readonly projectId?: string | undefined
+  /**
+   * Directory the remote command runs in, absolute on the server (#152).
+   * Metrics are read from `<workdir>/metrics.jsonl` when the job succeeds;
+   * absent means the job opts out of automatic capture.
+   */
+  readonly workdir?: string | undefined
   /** Remote exit code; null until the job settles (and on a spawn/timeout failure). */
   readonly exitCode: number | null
   /** The last chunk of the job's stdout (empty until the job settles). */
@@ -926,11 +958,28 @@ export type ResearchListJobsResult = ResearchResult<{ readonly jobs: readonly Jo
 /** `deleteJob` result: the deleted record's id. */
 export type ResearchDeleteJobResult = ResearchResult<{ readonly id: string }>
 
+/**
+ * `draftRelatedWork` result (#153): the LaTeX related-work draft assembled
+ * from the selected papers, the citation keys it cites, and the keys whose
+ * `references.bib` entry is missing (add those before compiling).
+ */
+export interface ResearchDraftRelatedWorkView {
+  /** The draft text, draft marker first; never written to `main.tex`. */
+  readonly text: string
+  /** Citation keys the draft cites, in the order they appear. */
+  readonly keys: readonly string[]
+  /** Keys the project bibliography does not carry yet. */
+  readonly missingBibKeys: readonly string[]
+}
+
 /** `getBibliography` result: the parsed `references.bib` entries plus the file mtime (null when absent). */
 export type ResearchBibliographyResult = ResearchResult<{
   readonly entries: readonly BibEntry[]
   readonly mtimeMs: number | null
 }>
+
+/** `draftRelatedWork` result (#153). */
+export type ResearchDraftRelatedWorkResult = ResearchResult<ResearchDraftRelatedWorkView>
 
 /** `saveBibliography` result: the committed mtime (a conflict rejects with its mtime). */
 export type ResearchSaveBibliographyResult = ResearchResult<{ readonly mtimeMs: number }>
@@ -1002,6 +1051,34 @@ export type ResearchZoteroExportResult = ResearchResult<{
   readonly added: readonly string[]
   readonly skipped: readonly string[]
 }>
+
+/**
+ * One entry the push could not create, with the papers-table id it came from so
+ * the panel can point at the row instead of a batch index (#151).
+ */
+export interface ZoteroPushFailure {
+  readonly paperId: string
+  readonly message: string
+}
+
+/**
+ * `pushZoteroCollection` result: what the write-back did, per entry (#151).
+ *
+ * `collectionKey` is null when the project has no linked papers — nothing was
+ * pushed, so no collection was created either. `skipped` counts entries the
+ * library already held: the push never rewrites an item the user may have
+ * curated in Zotero, so "already there" is a success, not a failure.
+ */
+export interface ResearchZoteroPushView {
+  readonly collectionKey: string | null
+  readonly collectionName: string
+  readonly created: number
+  readonly skipped: number
+  readonly failures: readonly ZoteroPushFailure[]
+}
+
+/** `pushZoteroCollection` result. */
+export type ResearchZoteroPushResult = ResearchResult<ResearchZoteroPushView>
 
 /**
  * The research-wiki tables carried by an export snapshot, in domain order
@@ -1080,7 +1157,55 @@ export interface ResearchBackupStatusView {
   readonly count: number
   /** Newest backup's filename; null while none exists. */
   readonly latestName: string | null
+  // The loop's health book (#227). Counting files answers "is there a backup
+  // at all"; these answer "is the thing that makes backups still working" —
+  // which the count cannot, because a loop that broke eight hours ago leaves
+  // its older files sitting there looking healthy.
+  /** ISO instant of the last backup pass that succeeded; null while none has. */
+  readonly lastSuccessAt: string | null
+  /** ISO instant of the last backup pass that failed; null while none has. */
+  readonly lastFailureAt: string | null
+  /** Live failure streak; 0 while healthy. */
+  readonly consecutiveFailures: number
+  /** Short summary of the last failure; null while healthy. */
+  readonly lastError: string | null
 }
+
+/**
+ * The plugin's capability layers (#242). A capability is a product domain the
+ * composition can switch off without losing the rest: the panel keeps its
+ * Core views, and the disabled layer's views, tools and Remote surface stop
+ * being advertised.
+ *
+ * The layering exists because one plugin now carries five product domains
+ * (research, literature automation, remote compute, insight, presentation),
+ * and every new feature used to touch Config, Remote, controller and the
+ * navigation at once. Naming the layers gives a new feature a place to land
+ * that is not "the core path".
+ */
+export type ResearchCapability =
+  | 'core'
+  | 'automation'
+  | 'compute'
+  | 'insights'
+  | 'presentation'
+
+/**
+ * `getCapabilities` view: which capability layers this composition enabled.
+ *
+ * The panel renders navigation from this rather than from a static tab list,
+ * so a layer switched off in Config is absent from the rail — not greyed out,
+ * absent. `core` is always present: it is the layer that has no switch.
+ */
+export interface ResearchCapabilitiesView {
+  /** Enabled layers, in declaration order; always starts with `core`. */
+  readonly enabled: readonly ResearchCapability[]
+  /** Layers named in Config but switched off for this composition. */
+  readonly disabled: readonly ResearchCapability[]
+}
+
+/** `getCapabilities` result: the enabled capability layers. */
+export type ResearchGetCapabilitiesResult = ResearchResult<ResearchCapabilitiesView>
 
 /** `listBackups` result: the backup status line for the overview. */
 export type ResearchListBackupsResult = ResearchResult<{ readonly backup: ResearchBackupStatusView }>

@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { emitEvent, PANEL_ACTOR, SERVICE_ACTOR } from '../ledger.ts'
 import { isActiveJobStatus } from '../job-lifecycle.ts'
+import { summarizeMetrics } from '../metrics-summary.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type {
   ExperimentJobOutcome,
@@ -30,6 +31,7 @@ import type {
   ResearchListServersResult,
   ResearchSaveServerResult,
   ResearchSubmitJobResult,
+  ExperimentRecord,
   ServerGpuView,
   ServerInput,
   ServerRecord,
@@ -53,6 +55,16 @@ export interface ServerDeps {
     readonly timeoutMs?: number | undefined
     readonly maxBufferBytes?: number | undefined
   } | undefined
+  /**
+   * Metrics read behind #152's automatic capture; absent, the settle path
+   * runs {@link readMetricsOverSsh}. The seam exists because the capture is
+   * the only part of the settle path that needs a second ssh round-trip, and
+   * the three cases the issue asks for (a normal run, a file the server does
+   * not have, a corrupt file) are all text-in cases the parser owns.
+   */
+  readonly metrics?: {
+    readonly read: (server: ServerRecord, workdir: string) => Promise<string | undefined>
+  } | undefined
 }
 
 /** TCP reachability probe timeout; part of the checkServer probe contract. */
@@ -66,6 +78,16 @@ const NVIDIA_SMI_QUERY = 'nvidia-smi --query-gpu=name,utilization.gpu,memory.use
 
 /** Hard cap of one submitted command line (the durable record stores it verbatim). */
 const JOB_COMMAND_MAX_CHARS = 4000
+/** File a training run writes its per-step metrics to (#152). */
+const METRICS_FILE_NAME = 'metrics.jsonl'
+/** Hard cap of one remote `cat` — a summary is not a transcript. */
+const METRICS_MAX_CHARS = 1_000_000
+/** Timeout of the metrics read; a settle must never hang on it. */
+const METRICS_READ_TIMEOUT_MS = 15_000
+/** Longest remote workdir accepted at submit time. */
+const WORKDIR_MAX_CHARS = 1024
+/** Characters an absolute remote workdir may use; no shell metacharacters survive this. */
+const WORKDIR_RE = /^\/(?:[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)?$/
 /**
  * Kill timeout of one remote job's ssh session. Hitting it settles the job
  * `unknown` (#225): the session is dropped, so the remote outcome — including
@@ -197,6 +219,22 @@ async function sshInvocation(server: ServerRecord, remoteCommand: string): Promi
  * @returns the parsed GPU rows, or the failure stage (`ssh` session vs `gpu`
  * readout) plus the failure message.
  */
+/**
+ * One numeric `nvidia-smi` CSV field, or null when the field is empty or not a
+ * finite number (#236).
+ *
+ * `Number('')` is `0`, which is how a missing measurement used to become a
+ * real-looking 0% bar; `Number('N/A')` is `NaN`, and a NaN bar is not
+ * renderable. Both mean "no reading", so both skip the row.
+ * @param field - one trimmed CSV field.
+ * @returns the value, or null when there is no usable measurement.
+ */
+function parseNumericField(field: string | undefined): number | null {
+  if (field === undefined || field === '') return null
+  const value = Number(field)
+  return Number.isFinite(value) ? value : null
+}
+
 async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
   const invocation = await sshInvocation(record, NVIDIA_SMI_QUERY)
   try {
@@ -209,12 +247,13 @@ async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
       const trimmed = line.trim()
       if (trimmed === '') continue
       const [name, utilizationPct, memoryUsedMb, memoryTotalMb] = trimmed.split(',').map(field => field.trim())
-      const utilization = Number(utilizationPct)
-      const usedMb = Number(memoryUsedMb)
-      const totalMb = Number(memoryTotalMb)
-      // #236: a malformed nvidia-smi row (NaN/Infinity) is skipped outright,
-      // never stored as a NaN bar.
-      if (!Number.isFinite(utilization) || !Number.isFinite(usedMb) || !Number.isFinite(totalMb)) continue
+      // #236: `Number('')` is `0`, so an empty field (`gpu0, , ,`) used to store
+      // a plausible-looking 0% / 0 MiB card. A field that is not a number at
+      // all has nothing to show, so the row is skipped rather than guessed.
+      const utilization = parseNumericField(utilizationPct)
+      const usedMb = parseNumericField(memoryUsedMb)
+      const totalMb = parseNumericField(memoryTotalMb)
+      if (utilization === null || usedMb === null || totalMb === null) continue
       gpus.push({
         name: name ?? '',
         utilizationPct: utilization,
@@ -249,6 +288,19 @@ async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
  */
 const SSH_TOKEN_RE = /^[a-zA-Z0-9._:-]+$/
 const SSH_USERNAME_RE = /^[a-zA-Z0-9._-]+$/
+/**
+ * #236: a token made only of separators (`..`, `::`, `-`, `._`) passes the
+ * character whitelist and names nothing. ssh then reports "could not resolve
+ * hostname", one layer below where the user can fix it.
+ */
+const SEPARATOR_ONLY_RE = /^[.:_-]+$/
+/**
+ * `user@host:port` is ssh's own target grammar, so a colon inside the stored
+ * host silently redirects the port. The whitelist allows colons for IPv6
+ * literals, which are always bracketed-free and contain hex digits — so the
+ * separator-only check above plus this one covers the ambiguity.
+ */
+const HOST_COLON_WITH_DIGITS_RE = /^[^:]*:\d+$/
 
 /**
  * Password bounds (#263): the cap exists only so a pathological payload
@@ -261,15 +313,25 @@ const SSH_USERNAME_RE = /^[a-zA-Z0-9._-]+$/
 const SERVER_PASSWORD_MAX_CHARS = 256
 const SERVER_PASSWORD_CONTROL_RE = /[\x00-\x1f\x7f]/
 
-/** First invalid-input message for one server upsert payload, or null when valid. */
-function validateServerInput(input: ServerInput): string | null {
+/**
+ * First invalid-input message for one server upsert payload, or null when valid.
+ *
+ * Exported for the tests (#236): these checks are a contract about which stored
+ * records may exist, and the cheapest place to state that contract is where it
+ * can be read — not behind a tool call that has to reach ssh first.
+ * @param input - the payload as the panel or the tool handed it over.
+ * @returns the first violation, or null when the payload is acceptable.
+ */
+export function validateServerInput(input: ServerInput): string | null {
   if (input.name.trim().length === 0) return 'name must be non-empty'
   if (input.host.trim().length === 0) return 'host must be non-empty'
-  if (input.host.startsWith('-') || !SSH_TOKEN_RE.test(input.host)) {
+  if (input.host.startsWith('-') || !SSH_TOKEN_RE.test(input.host)
+    || SEPARATOR_ONLY_RE.test(input.host) || HOST_COLON_WITH_DIGITS_RE.test(input.host)) {
     return 'host must be a plain hostname or IP (letters, digits, dots, dashes, colons)'
   }
   if (input.username !== undefined && input.username.trim() !== ''
-    && (input.username.startsWith('-') || !SSH_USERNAME_RE.test(input.username))) {
+    && (input.username.startsWith('-') || !SSH_USERNAME_RE.test(input.username)
+      || SEPARATOR_ONLY_RE.test(input.username))) {
     return 'username must be a plain ssh login user (letters, digits, dots, dashes, underscores)'
   }
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
@@ -491,7 +553,9 @@ export async function recoverInterruptedJobs(deps: ServerDeps): Promise<void> {
       finishedAt: now,
     }
     await jobs.put(job.id, recovered)
-    if (job.experimentId === undefined || hasNewerLinkedJob(deps, job)) continue
+    // #224: the same ownership rule as the live path, asked after THIS job was
+    // marked interrupted — a sibling still running keeps the experiment.
+    if (job.experimentId === undefined || hasRunningSiblingJob(jobs, job)) continue
     const experiment = experiments.get(job.experimentId)
     if (experiment?.status === 'running') {
       await experiments.put(experiment.id, { ...experiment, status: 'failed', updatedAt: now })
@@ -524,6 +588,10 @@ export async function submitJob(
     serverId: string
     command: string
     experimentId?: string | undefined
+    /** Wiki project the captured metrics belong to (#152); absent opts out. */
+    projectId?: string | undefined
+    /** Absolute remote directory the command runs in (#152); absent opts out. */
+    workdir?: string | undefined
   },
 ): Promise<ResearchSubmitJobResult> {
   const server = deps.domain.table('servers').get(request.serverId)
@@ -542,6 +610,14 @@ export async function submitJob(
     && deps.domain.table('experiments').get(request.experimentId) === undefined) {
     return rejected({ code: 'experiment-not-found', id: request.experimentId })
   }
+  if (request.projectId !== undefined
+    && deps.domain.table('projects').get(request.projectId) === undefined) {
+    return rejected({ code: 'project-not-found', projectId: request.projectId })
+  }
+  if (request.workdir !== undefined) {
+    const problem = workdirProblem(request.workdir)
+    if (problem !== null) return rejected({ code: 'invalid-input', message: problem })
+  }
   state.jobSeq += 1
   const job: JobRecord = {
     id: `job-${Date.now().toString(36)}-${String(state.jobSeq)}`,
@@ -551,6 +627,8 @@ export async function submitJob(
     // Absent, never `undefined`: an explicit undefined key would pollute the
     // stored record and trip the gateway's JSON boundary validation.
     ...(request.experimentId === undefined ? {} : { experimentId: request.experimentId }),
+    ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
+    ...(request.workdir === undefined ? {} : { workdir: request.workdir }),
     exitCode: null,
     stdoutTail: '',
     stderrTail: '',
@@ -558,7 +636,11 @@ export async function submitJob(
   }
   await deps.domain.table('jobs').put(job.id, job)
   if (request.experimentId !== undefined) {
-    await markExperiment(deps, request.experimentId, 'running', server.id)
+    // #224: claim ownership only when nothing else holds it. A second submit on
+    // an experiment that already has a live owner must not steal the pointer —
+    // the record names the run whose settle is still outstanding, and the
+    // write-back resolves the collision on completion order.
+    await markExperiment(deps, request.experimentId, 'running', server.id, job.id, true)
   }
   await emitEvent(deps.domain, {
     actor: PANEL_ACTOR,
@@ -836,6 +918,10 @@ async function finishJob(deps: ServerDeps, state: ServiceState, settled: JobReco
       },
     })
     await writeBackExperiment(deps, settled)
+    // #152: a successful run can seed an experiment record from its
+    // metrics.jsonl. Best-effort and last: capture must never delay or break
+    // the settle itself.
+    await captureMetricsDraft(deps, state, settled).catch(() => {})
   } finally {
     state.jobAborts.delete(settled.id)
     state.jobStopStatus.delete(settled.id)
@@ -885,11 +971,20 @@ async function settleCrashedJob(deps: ServerDeps, state: ServiceState, id: strin
  * the run produced no usable result — the job record keeps the precise
  * cause.
  *
- * Stale-settle guard: when a NEWER job is linked to the same experiment
- * (submitted after this one, in any status), that job owns the
- * experiment's state, so this late settle leaves the record untouched and
- * only lands in the log — otherwise an old job finishing last would flip
- * the status back over the newer job's write-back.
+ * Who owns the record (#224): the settle of the run that finished LAST wins,
+ * not the run that was submitted last. Two questions, and only one of them is
+ * about `lastJob` — an experiment's current outcome is a statement about
+ * completion. So:
+ *
+ *  - a still-active linked job keeps ownership, and this settle only lands in
+ *    the log (something is genuinely in flight; the record must not claim a
+ *    terminal status);
+ *  - otherwise the later `(finishedAt, id)` write-back stands. An older job
+ *    whose remote machine answered after a newer one therefore owns the
+ *    record, which is what "the latest run" means.
+ *
+ * `activeJobId` names the owner while it runs and is cleared by its own
+ * settle, so the field is a live pointer rather than a history log.
  * @param deps - open wiki domain plus workspace root.
  * @param job - the settled job record.
  */
@@ -911,18 +1006,223 @@ async function writeBackExperiment(deps: ServerDeps, job: JobRecord): Promise<vo
     finishedAt,
     summary: jobSummaryOf(job),
   }
-  if (hasNewerLinkedJob(deps, job)) {
+  const superseded = hasActiveSiblingJob(deps, job)
+    || isOlderThanRecordedOutcome(existing, outcome)
+  if (superseded) {
     await appendExperimentLog(deps, existing.name, outcome).catch(() => {})
     return
   }
+  // The record is now terminal, and this settle is what made it terminal by
+  // finishing last — so nothing owns it any more. Clearing unconditionally
+  // (not just our own claim) matters for the out-of-order case: the OTHER job
+  // cleared its own claim when it settled first, leaving the record pointing
+  // at a job that is itself already terminal (#224).
   await table.put(existing.id, {
     ...existing,
     status: outcome.status === 'succeeded' ? 'success' : 'failed',
     lastJob: outcome,
+    activeJobId: undefined,
     updatedAt: new Date().toISOString(),
   })
   // Best-effort: a read-only workspace must not break the settle.
   await appendExperimentLog(deps, existing.name, outcome).catch(() => {})
+}
+
+/**
+ * Whether another job linked to the same experiment is still queued or
+ * running (#224). While one is, that run owns the experiment's state and this
+ * settle must not claim a terminal status for it.
+ * @param deps - open wiki domain.
+ * @param job - the settled job record.
+ * @returns true when an in-flight sibling supersedes this settle.
+ */
+function hasActiveSiblingJob(deps: ServerDeps, job: JobRecord): boolean {
+  for (const [, other] of deps.domain.table('jobs').entries()) {
+    if (other.id === job.id || other.experimentId !== job.experimentId) continue
+    if (isActiveJobStatus(other.status)) return true
+  }
+  return false
+}
+
+/**
+ * Recovery-time sibling check (#224): after `recoverInterruptedJobs` has marked
+ * the row `interrupted`, is another job on the same experiment still live? If
+ * so the experiment is not orphaned and must keep its `running` status.
+ * @param jobs - the jobs table, read AFTER the interruption marks.
+ * @param job - the job that was just recovered.
+ * @returns true when a live sibling still owns the experiment.
+ */
+function hasRunningSiblingJob(jobs: { entries(): Iterable<[string, JobRecord]> }, job: JobRecord): boolean {
+  for (const [, other] of jobs.entries()) {
+    if (other.id === job.id || other.experimentId !== job.experimentId) continue
+    if (isActiveJobStatus(other.status)) return true
+  }
+  return false
+}
+
+/**
+ * Whether the record already holds an outcome that completed AFTER this one
+ * (#224). Ordering is on `(finishedAt, job id)` — id only breaks the tie when
+ * two settles share a millisecond, and it is a total order because ids are
+ * unique. A record with no `lastJob` never refuses.
+ * @param existing - the experiment record as stored.
+ * @param outcome - the settle being written back.
+ * @returns true when the stored outcome is the later one.
+ */
+function isOlderThanRecordedOutcome(existing: ExperimentRecord, outcome: ExperimentJobOutcome): boolean {
+  const recorded = existing.lastJob
+  if (recorded === undefined) return false
+  if (recorded.finishedAt !== outcome.finishedAt) return recorded.finishedAt > outcome.finishedAt
+  return recorded.jobId > outcome.jobId
+}
+
+/**
+ * First invalid-input message for one remote workdir, or null when it is
+ * usable (#152).
+ *
+ * The workdir is the only submit-time field that ends up inside a remote
+ * command line, so it is held to a whitelist rather than escaped: letters,
+ * digits, dot, dash, underscore and slash, absolute, no `..` segment. A
+ * directory whose name needs a space or a quote simply does not get automatic
+ * capture — the alternative is a quoting bug in exchange for a nicer path.
+ * @param workdir - the candidate directory, as the caller wrote it.
+ * @returns the rejection message, or null when valid.
+ */
+function workdirProblem(workdir: string): string | null {
+  if (!workdir.startsWith('/')) return 'workdir must be an absolute path'
+  if (workdir.length > WORKDIR_MAX_CHARS) return `workdir must be at most ${String(WORKDIR_MAX_CHARS)} characters`
+  if (workdir.split('/').includes('..')) return 'workdir must not contain a `..` segment'
+  if (!WORKDIR_RE.test(workdir)) {
+    return 'workdir may only use letters, digits, dot, dash, underscore and slash'
+  }
+  return null
+}
+
+/**
+ * Quote one string for a POSIX shell (#152). Single quotes make every byte
+ * literal; the only character they cannot hold is a single quote itself, which
+ * closes the run, escapes, and reopens.
+ * @param value - the raw string.
+ * @returns a single-quoted shell word.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+/**
+ * Read `<workdir>/metrics.jsonl` off the server over ssh (#152).
+ *
+ * Best-effort by contract: a missing file, an unreadable directory, or a dead
+ * session all read as `undefined`, because the capture must never turn a
+ * successful run into a failed one. The file is a convention, and on any given
+ * server the convention simply may not be followed.
+ * @param server - the server the job ran on.
+ * @param workdir - the job's absolute remote directory.
+ * @returns the file's text, or undefined when there is nothing to read.
+ */
+async function readMetricsOverSsh(server: ServerRecord, workdir: string): Promise<string | undefined> {
+  const remotePath = workdir.endsWith('/') ? `${workdir}${METRICS_FILE_NAME}` : `${workdir}/${METRICS_FILE_NAME}`
+  const invocation = await sshInvocation(server, `cat -- ${shellQuote(remotePath)}`)
+  try {
+    const { stdout } = await execFileAsync('ssh', [...invocation.args], {
+      timeout: METRICS_READ_TIMEOUT_MS,
+      maxBuffer: METRICS_MAX_CHARS * 4,
+      ...(invocation.env === undefined ? {} : { env: invocation.env }),
+    })
+    return stdout.slice(0, METRICS_MAX_CHARS)
+  } catch {
+    return undefined
+  } finally {
+    await invocation.cleanup?.()
+  }
+}
+
+/** Longest command excerpt kept in a captured draft's name (#152). */
+const DRAFT_NAME_MAX_CHARS = 80
+
+/**
+ * Name a captured draft after the command that produced it (#152).
+ *
+ * The command is the only thing at hand that says what the run was; its first
+ * line, trimmed, is a better name than `job-abc-3`, which says nothing.
+ * @param job - the settled job record.
+ * @returns a non-empty, length-capped name.
+ */
+function draftNameOf(job: JobRecord): string {
+  const firstLine = job.command.split('\n')[0]?.trim() ?? ''
+  const name = firstLine === '' ? job.id : firstLine
+  return name.length > DRAFT_NAME_MAX_CHARS ? `${name.slice(0, DRAFT_NAME_MAX_CHARS - 1)}…` : name
+}
+
+/**
+ * Turn a settled job's `metrics.jsonl` into an experiment record (#152,
+ * first phase).
+ *
+ * Runs after a **successful** settle and only when the job declared both a
+ * `workdir` and a `projectId` — a draft needs a project to live in, and a
+ * workdir is the only place the file can be found. When the job already names
+ * an experiment, the metrics are merged into that record instead of creating a
+ * second one: the user who linked the job already said where the numbers
+ * belong.
+ *
+ * Everything here is fail-open. A read failure, an empty file, a file with no
+ * usable row, a write the store rejects — each returns quietly and the settle
+ * proceeds as if capture did not exist.
+ * @param deps - open wiki domain plus the metrics read seam.
+ * @param state - owning service state (supplies the record-id counter).
+ * @param job - the settled job record.
+ */
+async function captureMetricsDraft(deps: ServerDeps, state: ServiceState, job: JobRecord): Promise<void> {
+  if (job.status !== 'succeeded') return
+  if (job.workdir === undefined || job.projectId === undefined) return
+  // The project is re-checked at settle time, not trusted from submit: a
+  // project deleted while the job ran must not gain an orphaned draft.
+  if (deps.domain.table('projects').get(job.projectId) === undefined) return
+  const server = deps.domain.table('servers').get(job.serverId)
+  if (server === undefined) return
+  const read = deps.metrics?.read ?? readMetricsOverSsh
+  const text = await read(server, job.workdir).catch(() => undefined)
+  if (text === undefined) return
+  const summary = summarizeMetrics(text)
+  if (summary === undefined) return
+  const table = deps.domain.table('experiments')
+  const now = new Date().toISOString()
+  const linked = job.experimentId === undefined ? undefined : table.get(job.experimentId)
+  if (linked !== undefined) {
+    await table.put(linked.id, {
+      ...linked,
+      metrics: { ...linked.metrics, ...summary.last },
+      metricDirections: { ...linked.metricDirections, ...summary.directions },
+      updatedAt: now,
+    }).catch(() => {})
+    return
+  }
+  const id = nextRecordId(state, 'exp')
+  await table.put(id, {
+    id,
+    projectId: job.projectId,
+    name: draftNameOf(job),
+    status: 'success',
+    metrics: { ...summary.last },
+    metricDirections: { ...summary.directions },
+    serverId: job.serverId,
+    lastJob: {
+      jobId: job.id,
+      status: 'succeeded',
+      exitCode: job.exitCode,
+      durationMs: null,
+      finishedAt: job.finishedAt ?? now,
+      summary: jobSummaryOf(job),
+    },
+    draft: true,
+    updatedAt: now,
+  }).catch(() => {})
+  await emitEvent(deps.domain, {
+    actor: SERVICE_ACTOR,
+    action: 'compute.metrics.drafted',
+    refs: { jobId: job.id, experimentId: id, projectId: job.projectId, serverId: job.serverId },
+    payload: { rows: summary.rows, lastStep: summary.lastStep, metrics: Object.keys(summary.last).length },
+  }).catch(() => {})
 }
 
 /**
@@ -931,27 +1231,6 @@ async function writeBackExperiment(deps: ServerDeps, job: JobRecord): Promise<vo
  * submits within the same millisecond share a `createdAt`). A deleted
  * newer record is invisible here; its documented contract is already
  * "the outcome is written nowhere".
- * @param deps - open wiki domain.
- * @param job - the settled job record.
- * @returns true when a newer linked job supersedes this settle.
- */
-function hasNewerLinkedJob(deps: ServerDeps, job: JobRecord): boolean {
-  for (const [, other] of deps.domain.table('jobs').entries()) {
-    if (other.id === job.id || other.experimentId !== job.experimentId) continue
-    if (other.createdAt !== job.createdAt) {
-      if (other.createdAt > job.createdAt) return true
-    } else if (jobSeqOf(other.id) > jobSeqOf(job.id)) {
-      return true
-    }
-  }
-  return false
-}
-
-/** Numeric sequence suffix of one job id (`job-<ms>-<seq>`); 0 when absent. */
-function jobSeqOf(id: string): number {
-  const match = /-(\d+)$/.exec(id)
-  return match === null ? 0 : Number(match[1])
-}
 
 /** Non-empty lines kept of one settled job's log summary written back to the experiment. */
 const JOB_SUMMARY_LINES = 5
@@ -1009,14 +1288,22 @@ async function markExperiment(
   experimentId: string,
   status: ExperimentStatus,
   serverId?: string,
+  activeJobId?: string,
+  keepExistingOwner = false,
 ): Promise<void> {
   const table = deps.domain.table('experiments')
   const existing = table.get(experimentId)
   if (existing === undefined) return
+  const claim = activeJobId === undefined || (keepExistingOwner && existing.activeJobId !== undefined)
+    ? {}
+    : { activeJobId }
   await table.put(experimentId, {
     ...existing,
     status,
     serverId: serverId ?? existing.serverId,
+    // #224: the experiment names the run that owns its state. A legacy record
+    // gains the field the moment a job is submitted against it.
+    ...claim,
     updatedAt: new Date().toISOString(),
   })
 }

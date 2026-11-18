@@ -28,6 +28,7 @@ import type { EvidenceGraphRequest } from './evidence-graph-view.ts'
 import type { ResearchSessionListView } from './project-form.ts'
 import type { MetricChartRow } from './view-common.ts'
 import type { WorkbenchChrome } from './shortcuts.ts'
+import type { LazySlice, LoadTrigger } from './slice-policy.ts'
 import type { createResearchPanelStore } from './store.ts'
 
 /** Store handle type shared by both registrations. */
@@ -132,6 +133,21 @@ export interface ResearchPanelInjected {
   editSource: (content: string) => void
   /** Discard the draft and re-read the file (the conflict recovery path). */
   reloadSource: () => void
+  /**
+   * Load one lazy slice through the #222 freshness matrix: the panel names a
+   * slice and a trigger, the controller decides whether to load, refresh, or
+   * leave it alone. This is the only entry the tabs use to warm a slice.
+   * @param slice - the lazy slice to consider.
+   * @param trigger - why it is wanted (first-open, revisit, reconnect, …).
+   */
+  loadSlice: (slice: LazySlice, trigger: LoadTrigger) => void
+  /**
+   * Mirror the panel's selected project onto the controller, so project-scoped
+   * slices (venues, figures, the experiment artifact) can be loaded by
+   * {@link loadSlice} without every call site passing the id again.
+   * @param projectId - the selected project, or null when none is.
+   */
+  setSelectedProjectId: (projectId: string | null) => void
   /** Load the literature list once, on the papers view's first open. */
   ensurePapers: () => void
   /**
@@ -672,7 +688,7 @@ export interface ResearchPanelInjected {
   /**
    * Load the digest (B–F) once, on the ledger view's first open (active push).
    */
-  ensureDigest: () => void
+  ensureDigest: (lang?: 'zh' | 'en') => void
   /** Re-fetch the digest at its current tier/lang (the card's refresh button). */
   refreshDigest: () => void
   /**

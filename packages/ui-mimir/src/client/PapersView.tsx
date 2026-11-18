@@ -21,6 +21,7 @@
  */
 
 import { useEffect, useRef, useState } from 'react'
+import type { ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArxivEntry, PaperRecord, ResearchProjectView, WebSearchEntry } from 'dsh-mimir/types'
 import type {
@@ -415,8 +416,27 @@ function WebSearchPanel({
     <section className={css.papersSearchPanel}>
       <h3 className={css.sectionTitle}>
         {t('papers.webSearchResults')}：{webSearch.query}
+        {webSearch.status === 'loading' && (
+          <span className={css.searchPending} role="status">{t('papers.searching')}</span>
+        )}
       </h3>
-      {webSearch.status === 'loading' ? (
+      {webSearch.status === 'loading' && webSearch.previous !== null ? (
+        <ResultList
+          label={t('papers.searchStale')}
+          query={webSearch.previous.query}
+          rows={webSearch.previous.list}
+          render={entry => (
+            <WebResultCard
+              key={entry.url}
+              entry={entry}
+              imported={importedIds.has(arxivIdFromUrl(entry.url) ?? '')}
+              importing={importing === arxivIdFromUrl(entry.url)}
+              importEntry={importEntry}
+              t={t}
+            />
+          )}
+        />
+      ) : webSearch.status === 'loading' ? (
         <p className={css.hint}>{t('papers.searching')}</p>
       ) : webSearch.status === 'error' ? (
         <p className={css.failure} role="alert">
@@ -442,6 +462,69 @@ function WebSearchPanel({
         </div>
       )}
     </section>
+  )
+}
+
+/** One arXiv result row: title link, import button, authors/year, summary. */
+function ArxivResultCard({ entry, imported, importing, importEntry, t }: {
+  readonly entry: ArxivEntry
+  readonly imported: boolean
+  readonly importing: string | null
+  readonly importEntry: (entry: ArxivEntry) => void
+  readonly t: ResearchT
+}) {
+  return (
+    <article className={css.paperResult}>
+      <div className={css.paperResultHead}>
+        <h3 className={css.paperCardTitle}>
+          <a href={entry.url} target="_blank" rel="noreferrer">
+            {entry.title}
+          </a>
+        </h3>
+        {imported ? (
+          <button type="button" className={css.btn} disabled>
+            {t('papers.imported')}
+          </button>
+        ) : (
+          <button
+            type="button"
+            className={css.btnPrimary}
+            disabled={importing !== null}
+            onClick={() => { importEntry(entry) }}
+          >
+            {importing === entry.id ? t('papers.importing') : t('papers.import')}
+          </button>
+        )}
+      </div>
+      <p className={css.paperCardMeta}>
+        {entry.authors.length > 0 && `${entry.authors.join('，')} · `}
+        {entry.published.slice(0, 4)}
+      </p>
+      <p className={css.paperSummary} data-static>{entry.summary}</p>
+    </article>
+  )
+}
+
+/**
+ * The superseded result list a panel keeps on screen while a new query is in
+ * flight (#208). Labelled with the query it came from, so nobody reads stale
+ * rows as the answer to what they just typed.
+ */
+function ResultList<T>({ label, query, rows, render }: {
+  readonly label: string
+  readonly query: string
+  readonly rows: readonly T[]
+  readonly render: (row: T) => ReactElement
+}) {
+  return (
+    <>
+      <p className={css.searchStaleNote} role="note">
+        {label}：{query}
+      </p>
+      <div className={css.papersResults} data-stale="true">
+        {rows.map(render)}
+      </div>
+    </>
   )
 }
 
@@ -797,8 +880,29 @@ export function PapersView({
         <section className={css.papersSearchPanel}>
           <h3 className={css.sectionTitle}>
             {t('papers.searchResults')}：{arxivSearch.query}
+            {arxivSearch.status === 'loading' && (
+              <span className={css.searchPending} role="status">{t('papers.searching')}</span>
+            )}
           </h3>
-          {arxivSearch.status === 'loading' ? (
+          {arxivSearch.status === 'loading' && arxivSearch.previous !== null ? (
+            // #208: the superseded rows stay on screen while the new query is
+            // in flight — an empty panel reads as "no results".
+            <ResultList
+              label={t('papers.searchStale')}
+              query={arxivSearch.previous.query}
+              rows={arxivSearch.previous.list}
+              render={entry => (
+                <ArxivResultCard
+                  key={entry.id}
+                  entry={entry}
+                  imported={importedIds.has(entry.id)}
+                  importing={importing}
+                  importEntry={importEntry}
+                  t={t}
+                />
+              )}
+            />
+          ) : arxivSearch.status === 'loading' ? (
             <p className={css.hint}>{t('papers.searching')}</p>
           ) : arxivSearch.status === 'error' ? (
             <p className={css.failure} role="alert">
@@ -812,34 +916,14 @@ export function PapersView({
           ) : (
             <div className={css.papersResults}>
               {arxivSearch.list.map(entry => (
-                <article key={entry.id} className={css.paperResult}>
-                  <div className={css.paperResultHead}>
-                    <h3 className={css.paperCardTitle}>
-                      <a href={entry.url} target="_blank" rel="noreferrer">
-                        {entry.title}
-                      </a>
-                    </h3>
-                    {importedIds.has(entry.id) ? (
-                      <button type="button" className={css.btn} disabled>
-                        {t('papers.imported')}
-                      </button>
-                    ) : (
-                      <button
-                        type="button"
-                        className={css.btnPrimary}
-                        disabled={importing !== null}
-                        onClick={() => { importEntry(entry) }}
-                      >
-                        {importing === entry.id ? t('papers.importing') : t('papers.import')}
-                      </button>
-                    )}
-                  </div>
-                  <p className={css.paperCardMeta}>
-                    {entry.authors.length > 0 && `${entry.authors.join('，')} · `}
-                    {entry.published.slice(0, 4)}
-                  </p>
-                  <p className={css.paperSummary} data-static>{entry.summary}</p>
-                </article>
+                <ArxivResultCard
+                  key={entry.id}
+                  entry={entry}
+                  imported={importedIds.has(entry.id)}
+                  importing={importing}
+                  importEntry={importEntry}
+                  t={t}
+                />
               ))}
             </div>
           )}

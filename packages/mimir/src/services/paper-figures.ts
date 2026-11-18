@@ -22,6 +22,7 @@ import {
   type PaperFigureAsset,
 } from './meeting.ts'
 import { isValidArxivId, paperPdfFileName } from '../tools/arxiv.ts'
+import { checkExternalTool, readToolProvenance, writeToolProvenance } from './tool-integrity.ts'
 
 /** Upstream skill repo providing the extract pipeline (cloned on demand). */
 export const GROUP_MEETING_SKILLS_REPO = 'https://github.com/mlxbc12138/academic-Group-meeting-skills'
@@ -58,12 +59,25 @@ for i in range(n):
 doc.close()
 `
 
-/** Injectable process runner; defaults to a timed, cancellable execFile. */
-export type ExtractRunner = (executable: string, args: readonly string[], timeoutMs: number, signal?: AbortSignal) => Promise<void>
+/**
+ * Injectable process runner; defaults to a timed, cancellable execFile.
+ *
+ * `sink`, when given, collects stdout. Only the provenance probe uses it — the
+ * extraction run discards its output — so the fourth positional argument keeps
+ * its meaning and existing stubs stay valid.
+ */
+export type ExtractRunner = (
+  executable: string,
+  args: readonly string[],
+  timeoutMs: number,
+  signal?: AbortSignal,
+  sink?: string[],
+) => Promise<void>
 
-function runProcess(executable: string, args: readonly string[], timeoutMs: number, signal?: AbortSignal): Promise<void> {
+function runProcess(executable: string, args: readonly string[], timeoutMs: number, signal?: AbortSignal, sink?: string[]): Promise<void> {
   return new Promise((resolve, reject) => {
-    execFile(executable, [...args], { timeout: timeoutMs, signal, maxBuffer: 4 * 1024 * 1024 }, (error, _stdout, stderr) => {
+    execFile(executable, [...args], { timeout: timeoutMs, signal, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+      if (sink !== undefined && typeof stdout === 'string') sink.push(stdout)
       if (error === null) {
         resolve()
         return
@@ -92,6 +106,29 @@ export interface PaperFigureExtractDeps {
 
 const CLONE_TIMEOUT_MS = 120_000
 const EXTRACT_TIMEOUT_MS = 300_000
+
+/**
+ * Record which commit the clone sits at (#237), so a later reader can tell a
+ * stale tool from a current one. Best-effort by design: a repository whose
+ * `rev-parse` fails still works, and the provenance is not worth failing a
+ * extraction over — it is written as 'unknown' rather than skipped so the
+ * record's presence still means "this clone was checked".
+ * @param run - the process runner (injectable seam).
+ * @param dir - the clone's root.
+ * @param signal - caller cancellation.
+ */
+async function recordProvenance(run: ExtractRunner, dir: string, signal?: AbortSignal): Promise<void> {
+  let commit = 'unknown'
+  try {
+    const captured: string[] = []
+    await run('git', ['-C', dir, 'rev-parse', 'HEAD'], 15_000, signal, captured)
+    const head = captured.join('').trim()
+    if (head !== '') commit = head
+  } catch {
+    // A clone without readable history still works; the record says 'unknown'.
+  }
+  await writeToolProvenance(dir, { source: GROUP_MEETING_SKILLS_REPO, commit }).catch(() => undefined)
+}
 
 /**
  * Locate the cached arXiv PDF for a paper: `papers/<paperPdfFileName(arxivId)>`
@@ -173,9 +210,22 @@ export async function extractPaperFigures(
 
   try {
     deps.signal?.throwIfAborted()
-    if ((await stat(script).catch(() => undefined))?.isFile() !== true) {
+    // A present-but-empty script is what an interrupted clone leaves behind, and
+    // it is indistinguishable from a healthy one by mere existence (#237). The
+    // gate re-clones on either failure, so the recovery is the same act.
+    const gate = await checkExternalTool(script)
+    if (!gate.ok) {
       await mkdir(skillsDir, { recursive: true })
       await run('git', ['clone', '--depth', '1', GROUP_MEETING_SKILLS_REPO, repoDir], CLONE_TIMEOUT_MS, deps.signal)
+      const afterClone = await checkExternalTool(script)
+      // The retried clone still did not produce a runnable script: say what
+      // was expected and how to get it, rather than failing inside `uv run`.
+      if (!afterClone.ok) throw new Error(afterClone.remedy)
+      await recordProvenance(run, repoDir, deps.signal)
+    } else if ((await readToolProvenance(repoDir)) === undefined) {
+      // A clone that predates the provenance record: fill it in once, so later
+      // readers can tell a stale tool from a current one.
+      await recordProvenance(run, repoDir, deps.signal)
     }
     if ((await stat(shim).catch(() => undefined))?.isFile() !== true) {
       await mkdir(skillsDir, { recursive: true })

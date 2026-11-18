@@ -74,6 +74,7 @@ dsh web                                          # 然后打开 http://127.0.0.1
 | `workspaceDir` | `.research` | 研究工作区根目录（工件、备份） |
 | `latex.engine` | `auto` | 依次探测 `latexmk` / `tectonic`，或填二进制绝对路径 |
 | `search.command` | `auto` | Web 搜索：`auto` 用 PATH 上的 `dg` 或随包副本 |
+| `search.maxResults` | `10` | 单次 Web 搜索的默认结果上限（1–50，独立旋钮，不再借用 `arxiv.maxResults`） |
 | `reviewer.maxRounds` | `3` | 每个项目的评审轮次预算 |
 | `backup.enabled` / `intervalMinutes` / `keep` | `true` / `60` / `24` | 定时 wiki 快照 |
 | `skills.enabled` | `true` | 注册十一个内置科研技能（含 `research-paper-deai` 去 AI 味） |

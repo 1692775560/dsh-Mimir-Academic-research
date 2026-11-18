@@ -6,13 +6,12 @@
  * @module dsh-mimir
  */
 
-import { createReadStream, existsSync } from 'node:fs'
+import { existsSync } from 'node:fs'
 import { execFile } from 'node:child_process'
-import { mkdir, realpath, stat, writeFile } from 'node:fs/promises'
-import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createRequire } from 'node:module'
-import { basename, dirname, extname, join, resolve, sep } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type { ResearchCapabilitiesView, ResearchCapability } from './types.ts'
 import z from '@deepseek-ai/schemastery'
 // Type-only: pulls the ctx.webServer Context merge for the PDF route below.
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -30,21 +29,26 @@ import { registerReviewCommand } from './commands/review.ts'
 import { registerPaperCommands } from './commands/paper.ts'
 import { registerSkillSyncCommand } from './commands/skill-sync.ts'
 import type { ResearchCommandDeps } from './commands/common.ts'
-import { realpathConfined, resolvePaperDirReal } from './paper-source.ts'
-import { isSameOriginWrite, isTrustedRead, projectPaperDir } from './http-write-boundary.ts'
 import type { ResearchServiceConfig } from './service.ts'
-import { isFigureFile } from './artifacts.ts'
-import { TEMPLATE_DIR_NAME } from './services/venue.ts'
-import { meetingDeckPath } from './services/meeting.ts'
 import { ResearchService } from './service.ts'
 import { recoverInterruptedJobs } from './services/server.ts'
 import { recoverPendingWikiImport } from './services/wiki-admin.ts'
+import { buildDeps } from './services/wiring.ts'
 import { registerResearchSkills } from './skills.ts'
 import { registerDigdigSkill } from './digdig-skill.ts'
 import { startWikiBackupLoop } from './backup.ts'
 import { startArxivSubscriptionLoop } from './arxiv-subscriptions.ts'
 import { TaskHealthRegistry } from './task-health.ts'
 import { createWikiChangeHub, createWikiEventsHandler } from './wiki-events.ts'
+import {
+  createFigureHandler,
+  createFigureUploadHandler,
+  createMeetingDeckHandler,
+  createPaperPdfHandler,
+  createPdfHandler,
+  createTemplateUploadHandler,
+} from './routes.ts'
+import { guardRoute } from './http-guard.ts'
 import { startVenueDeadlineLoop } from './services/venue-deadlines.ts'
 import { createVenueSearchTool } from './tools/venue.ts'
 
@@ -102,6 +106,9 @@ export type {
   ResearchImportProjectRequest,
   ResearchImportProjectResult,
   ResearchImportedProject,
+  ResearchGetCapabilitiesResult,
+  ResearchCapabilitiesView,
+  ResearchCapability,
   ResearchListBackupsResult,
   ResearchListJobsResult,
   ResearchListProjectsResult,
@@ -137,306 +144,11 @@ export type {
   ZoteroItemView,
   ZoteroStatusView,
 } from './types.ts'
+// `LatexIssue` is what the panel's compile-fix view reads, so it stays on the
+// root even though `parseLatexErrors` (its producer) moved to experimental.
+export type { LatexIssue } from './latex-log.ts'
 export { researchWikiDomainSpec } from './store.ts'
 export type { ResearchWikiDomain } from './store.ts'
-/**
- * The L0 primitives. These are the锅底 every fold is written against, and they
- * are exported so a consumer — or a twelfth fold — never has to re-declare
- * the canonical ordering, the window slice, the session cut, or the day and
- * minute units. A re-declared primitive is how two folds come to disagree.
- */
-export { MS_PER_DAY, MS_PER_MINUTE, orderedEvents, sessionize, sliceEvents, tsToMs } from './time.ts'
-/**
- * The two vocabulary names that are not already re-exported through
- * `./cognitive-map.ts` above. The constants themselves (`LINE_WEIGHTS`,
- * `TERMINAL_ACTIONS`, `CREATION_ACTIONS`, `CBE_SESSION_GAP_MINUTES`) and
- * `signedWeight` keep their original export path, so no existing import
- * breaks.
- */
-export { isDecisionEvent, lineOf } from './vocabulary.ts'
-export {
-  appendEvent,
-  buildProgressReport,
-  emitEvent,
-  listEvents,
-  newEvent,
-  truncatePayload,
-  PANEL_ACTOR,
-  REVIEWER_ACTOR,
-  SERVICE_ACTOR,
-  WIKI_AGENT_ACTOR,
-  EVENT_PAYLOAD_MAX_CHARS,
-  JOURNAL_TEXT_MAX_CHARS,
-  LIST_EVENTS_DEFAULT_LIMIT,
-  LIST_EVENTS_MAX_LIMIT,
-} from './ledger.ts'
-export type { LedgerEventInput } from './ledger.ts'
-export {
-  deriveLines,
-  detectMoments,
-  deriveTransitions,
-  deriveOpenLoops,
-  deriveQuestions,
-  deriveBrief,
-  deriveNarrative,
-  lineInferenceCard,
-  renderBriefMarkdown,
-  signedWeight,
-  claimsOf,
-  LINE_WEIGHTS,
-  TERMINAL_ACTIONS,
-  CREATION_ACTIONS,
-  JOURNAL_ACTION,
-  QUESTION_SHOWED_ACTION,
-  QUESTION_ANSWERED_ACTION,
-  CBE_HALF_LIFE_DAYS,
-  CBE_SESSION_GAP_MINUTES,
-  CBE_DOMINANT_DRIFT,
-  CBE_STALLED_DRIFT,
-  CBE_EXPLORE_EVENTS,
-  CBE_RETURN_SESSIONS,
-  CBE_FOCUS_DISPERSION,
-  CBE_LINE_EVIDENCE_CAP,
-  CBE_QUESTION_CAP,
-  CBE_DERIVATION_VERSION,
-  CBE_TIER_SILENT_LINE_EVENTS,
-  CBE_TIER_E1_LINE_EVENTS,
-  CBE_TIER_E1_USER_EVENTS,
-} from './cognitive-map.ts'
-export type {
-  CbeBrief,
-  CbeBriefWindow,
-  CbeBoundaryQuestion,
-  CbeEvidenceTier,
-  CbeLine,
-  CbeLineState,
-  CbeMoment,
-  CbeNarrative,
-  CbeOpenLoop,
-  CbeOpenLoopKind,
-  CbeQuestionKind,
-  CbeTransition,
-  CbeWikiSnapshot,
-  InferenceCard,
-} from './cognitive-map.ts'
-export { PARAMETER_REGISTRY } from './registry.ts'
-export type { CbeParameterEntry, CbeParameterTrack } from './registry.ts'
-export {
-  deriveWorktree,
-  ideaParentEdges,
-  MAINLINE_ACTION,
-  IDEA_PARENT_ACTION,
-  IDEA_CLOSE_REASON_MAX_CHARS,
-} from './worktree.ts'
-export type {
-  CbeWorktree,
-  CbeWorktreeLane,
-  CbeWorktreeLaneStatus,
-  CbeMainlineDeclaration,
-} from './worktree.ts'
-export {
-  evidenceModelAt,
-  evidenceProfileOf,
-  effectiveValue,
-  initialModel,
-  terminalOutcome,
-  isTerminalOutcome,
-  updateOnTerminal,
-  CBE_ENGINE_ALPHA,
-  CBE_ENGINE_KAPPA,
-  CBE_ENGINE_N_FLIP,
-  CBE_ENGINE_FOLD_WINDOW_DAYS,
-} from './cbe-engine.ts'
-export type {
-  CbeEvidenceModel,
-  CbeActionValue,
-  CbeEvidenceActionRow,
-} from './cbe-engine.ts'
-export {
-  deriveForaging,
-  deriveTerritories,
-  deriveGutBaseline,
-  CBE_GUT_BASELINE_MIN_DEPARTURES,
-} from './foraging.ts'
-export type {
-  CbeForaging,
-  CbeTerritory,
-  CbeGutBaseline,
-  CbeGutCard,
-} from './foraging.ts'
-export {
-  deriveLibraryThemes,
-  countThemes,
-  tagThemesOf,
-  themeTokens,
-  CBE_THEME_MIN_PAPERS,
-  CBE_THEME_KEYWORD_MIN_DOCS,
-  CBE_THEME_TOP_N,
-  CBE_THEME_FLAT_BAND,
-} from './library-themes.ts'
-export type {
-  CbeLibraryThemes,
-  CbeThemeCount,
-  CbeThemeDirection,
-  CbeThemeDriftRow,
-  CbeThemeSource,
-  CbeThemeWindow,
-} from './library-themes.ts'
-export {
-  deriveHabits,
-  deriveSessions,
-  CBE_HABIT_MIN_SESSIONS,
-  CBE_HABIT_MIN_EVENTS,
-} from './habits.ts'
-export type {
-  CbeHabitProfile,
-  CbeSession,
-  CbeHourBucket,
-  CbeWeekdayBucket,
-} from './habits.ts'
-export {
-  eurekaDeclarations,
-  eurekaFeatures,
-  eurekaModelAt,
-  eurekaProfileOf,
-  eurekaContextAt,
-  eurekaWindowBounds,
-  EUREKA_ACTION,
-  EUREKA_FEATURE_KEYS,
-  CBE_EUREKA_WINDOW_DAYS,
-  CBE_EUREKA_MIN_DECLARATIONS,
-} from './eureka.ts'
-export {
-  eurekaCriticalStateData,
-} from './eureka.ts'
-export type {
-  CbeEurekaDeclaration,
-  CbeEurekaFeatureKey,
-  CbeEurekaFeatureRow,
-  CbeEurekaFeatures,
-  CbeEurekaModel,
-  CbeEurekaProfile,
-  CbeCriticalStateSample,
-  CbeEurekaContextView,
-  EurekaWindowBounds,
-} from './eureka.ts'
-export {
-  windowFeatures,
-} from './window-features.ts'
-export type {
-  CbeWindowFeatures,
-} from './window-features.ts'
-export {
-  deriveCapsules,
-  formatCapsule,
-} from './report-capsules.ts'
-export type {
-  CbeCapsulePerspective,
-  CbeExperienceCapsule,
-  CbeCapsuleInput,
-  CapsuleLang,
-} from './report-capsules.ts'
-export {
-  assembleDigest,
-} from './report-tier.ts'
-export type {
-  CbeDigestReport,
-  CbeDigestTier,
-  CbeDigestStat,
-  CbeDigestRetrieval,
-  CbeDigestEurekaRow,
-  CbeDigestPerspectiveBlock,
-  DigestInput,
-} from './report-tier.ts'
-export {
-  renderDigest,
-} from './render-digest.ts'
-export {
-  actionSequence,
-  conditionalEntropy,
-  ewsOrder,
-  ewsReading,
-  surprisalSequence,
-  unigramEntropy,
-  CBE_EWS_MIN_EVENTS,
-  CBE_EWS_MAX_ORDER,
-} from './ledger-ews.ts'
-export type { CbeEwsReading } from './ledger-ews.ts'
-export {
-  deriveCuratedMoments,
-  momentPins,
-  MOMENT_PIN_ACTION,
-  CBE_MOMENT_BURST_MIN_EVENTS,
-} from './moment-index.ts'
-export type { CbeCuratedMoment, CbeMomentKind, CbeMomentPin } from './moment-index.ts'
-export {
-  deriveEvidenceGraph,
-  renderEvidenceGraphMarkdown,
-  EVIDENCE_EDGE_ADDED_ACTION,
-  EVIDENCE_EDGE_RETRACTED_ACTION,
-  EVIDENCE_EDGE_RELS,
-  EVIDENCE_GRAPH_DERIVATION_VERSION,
-  isEvidenceEdgeRel,
-} from './evidence-graph.ts'
-export type {
-  EvidenceAliasKeys,
-  EvidenceClaimHistory,
-  EvidenceConflict,
-  EvidenceEdgeRel,
-  EvidenceGraph,
-  EvidenceGraphEdge,
-  EvidenceGraphNode,
-  EvidenceGraphRel,
-  EvidenceGraphStats,
-  EvidenceGraphWindow,
-  EvidenceTimelineEntry,
-  EvidenceTimelineGroup,
-  EvidenceWikiSnapshot,
-} from './evidence-graph.ts'
-export {
-  nodeKeyOf,
-  isValidNodeKey,
-  nodeKindOf,
-  normalizeUrl,
-  normalizeDoi,
-  titleFingerprint,
-  isTitleFingerprint,
-  dedupKeyOf,
-  isDedupKey,
-  queryKeyOf,
-  evidenceScopeOf,
-  NODE_KEY_MAX_CHARS,
-  LABEL_MAX_CHARS,
-  ALIAS_MAX_CHARS,
-  NOTE_MAX_CHARS,
-} from './evidence-identity.ts'
-export {
-  deriveMomentCandidates,
-  kindOfBurst,
-  CBE_MOMENT_RETURN_GAP_DAYS,
-  CBE_MOMENT_CONVERGENCE_LINES,
-  CBE_MOMENT_LONG_SITTING_FACTOR,
-  CBE_MOMENT_LONG_SITTING_MIN_SESSIONS,
-  CBE_MOMENT_CLOSNESS_ENABLED,
-} from './moment-candidates.ts'
-export type {
-  CbeMomentSource,
-  CbeMomentStats,
-  CbeMomentCandidate,
-  CbeClosenessVotes,
-} from './moment-candidates.ts'
-export { renderJournalDraft } from './journal-draft.ts'
-export type { JournalDraftInput, JournalDraftKind, JournalDraftLang } from './journal-draft.ts'
-export { parseLatexErrors } from './latex-log.ts'
-export type { LatexIssue } from './latex-log.ts'
-export { parseTexOutline } from './outline.ts'
-export { readPaperSource, resolvePaperDir, savePaperSourceFile } from './paper-source.ts'
-export type { PaperSourceSnapshot, SavePaperOutcome } from './paper-source.ts'
-export { DEFAULT_PAPER_DIR } from './paper-source.ts'
-export { isArtifactName, isFigureFile, listPaperFigures, readWorkspaceArtifact, ARTIFACT_NAMES } from './artifacts.ts'
-export type { ArtifactName, FigureFile } from './artifacts.ts'
-export { convertSvgFigure, svgConverterNames, svgProductName, whichOnPath, SVG_CONVERTERS } from './svg-convert.ts'
-export type { SvgConversion, SvgConversionDeps, SvgConverterKind, SvgConverterSpec, SvgRunner } from './svg-convert.ts'
 export { ResearchService } from './service.ts'
 export type { ResearchServiceConfig } from './service.ts'
 export { BUNDLED_SKILLS, registerResearchSkills } from './skills.ts'
@@ -463,7 +175,7 @@ export type {
 } from './arxiv-subscriptions.ts'
 export { runReview, renderReviewRound } from './reviewer.ts'
 export type { ReviewerOptions, ReviewRequest, ReviewOutcome } from './reviewer.ts'
-export { compileLatex, renderLatexResult, createLatexCompileTool, resolveLatexEngine, parseTectonicErrors } from './tools/latex.ts'
+export { compileLatex, renderLatexResult, createLatexCompileTool, resolveLatexEngine, parseTectonicErrors, classifyProbeFailure } from './tools/latex.ts'
 export type { LatexCompileResult, LatexToolOptions, LatexEngineKind, ResolvedLatexEngine, LatexEngineProbe } from './tools/latex.ts'
 export { createArxivSearchTool, createPaperFetchTool, fetchArxivPdf, fetchArxivSearch, paperPdfFileName, parseArxivFeed, ARXIV_PDF_MAX_BYTES } from './tools/arxiv.ts'
 export type { ArxivEntry, ArxivSearchOptions } from './tools/arxiv.ts'
@@ -546,6 +258,12 @@ export interface Config {
     command?: string
     /** Search kill timeout in milliseconds (default 30000). */
     timeoutMs?: number
+    /**
+     * Default result cap of one web search (default 10, hard cap 50). Its
+     * own knob: it used to ride on `arxiv.maxResults`, so tuning arXiv
+     * silently resized every web search (#232).
+     */
+    maxResults?: number
   }
   /**
    * Zotero Web API credentials (read-only integration; both absent disables
@@ -602,90 +320,147 @@ export interface Config {
   }
 }
 
+/** The layer set, in the order the panel reports it (#242). */
+const ALL_CAPABILITIES: readonly ResearchCapability[] = Object.freeze([
+  'core', 'automation', 'compute', 'insights', 'presentation',
+])
+
 /** Schemastery configuration for the research suite. */
+/**
+ * One default per knob (#218).
+ *
+ * These constants are the single source: the schema below applies them, and
+ * `resolveConfig` reads the same objects when it normalizes a config the
+ * Loader never touched. A default written twice is a default that can drift.
+ */
+export const DEFAULTS = {
+  workspaceDir: '.research',
+  reviewer: { provider: 'spawn', maxRounds: 3, timeoutMs: 600_000 },
+  latex: { engine: 'auto', timeoutMs: 120_000 },
+  arxiv: { maxResults: 10, timeoutMs: 30_000 },
+  search: { command: 'auto', timeoutMs: 30_000, maxResults: 10 },
+  zotero: { apiKey: '', userId: '' },
+  subscriptions: { enabled: true, intervalMinutes: 1440 },
+  backup: { enabled: true, intervalMinutes: 60, keep: 24, dir: 'backups' },
+  skills: { enabled: true },
+  serverTools: { enabled: true },
+} as const satisfies Record<string, unknown>
+
+/**
+ * Schemastery configuration for the research suite.
+ *
+ * Every `default(...)` below reads {@link DEFAULTS}; none of them restates a
+ * literal, so adding a knob means adding it to `Config`, to `DEFAULTS`, and
+ * to the schema — three edits in one file, and the type of `resolveConfig`'s
+ * result is inferred from the shape rather than declared a fourth time.
+ */
 export const Config: z<Config> = z.object({
-  workspaceDir: z.string().default('.research'),
+  workspaceDir: z.string().default(DEFAULTS.workspaceDir),
   reviewer: z.object({
-    provider: z.string().default('spawn'),
-    maxRounds: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(3),
-    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(600_000),
-  }).default({ provider: 'spawn', maxRounds: 3, timeoutMs: 600_000 }),
+    provider: z.string().default(DEFAULTS.reviewer.provider),
+    maxRounds: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.reviewer.maxRounds),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.reviewer.timeoutMs),
+  }).default(DEFAULTS.reviewer),
   latex: z.object({
-    engine: z.string().default('auto'),
-    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(120_000),
-  }).default({ engine: 'auto', timeoutMs: 120_000 }),
+    engine: z.string().default(DEFAULTS.latex.engine),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.latex.timeoutMs),
+  }).default(DEFAULTS.latex),
   arxiv: z.object({
-    maxResults: z.number().step(1).min(1).max(100).default(10),
-    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
-  }).default({ maxResults: 10, timeoutMs: 30_000 }),
+    maxResults: z.number().step(1).min(1).max(100).default(DEFAULTS.arxiv.maxResults),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.arxiv.timeoutMs),
+  }).default(DEFAULTS.arxiv),
   search: z.object({
-    command: z.string().default('auto'),
-    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
-  }).default({ command: 'auto', timeoutMs: 30_000 }),
+    command: z.string().default(DEFAULTS.search.command),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.search.timeoutMs),
+    maxResults: z.number().step(1).min(1).max(50).default(DEFAULTS.search.maxResults),
+  }).default(DEFAULTS.search),
   zotero: z.object({
-    apiKey: z.string().default(''),
-    userId: z.string().default(''),
-  }).default({ apiKey: '', userId: '' }),
+    apiKey: z.string().default(DEFAULTS.zotero.apiKey),
+    userId: z.string().default(DEFAULTS.zotero.userId),
+  }).default(DEFAULTS.zotero),
   subscriptions: z.object({
-    enabled: z.boolean().default(true),
-    intervalMinutes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(1440),
-  }).default({ enabled: true, intervalMinutes: 1440 }),
+    enabled: z.boolean().default(DEFAULTS.subscriptions.enabled),
+    intervalMinutes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.subscriptions.intervalMinutes),
+  }).default(DEFAULTS.subscriptions),
   backup: z.object({
-    enabled: z.boolean().default(true),
-    intervalMinutes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(60),
-    keep: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(24),
-    dir: z.string().default('backups'),
-  }).default({ enabled: true, intervalMinutes: 60, keep: 24, dir: 'backups' }),
+    enabled: z.boolean().default(DEFAULTS.backup.enabled),
+    intervalMinutes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.backup.intervalMinutes),
+    keep: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.backup.keep),
+    dir: z.string().default(DEFAULTS.backup.dir),
+  }).default(DEFAULTS.backup),
   skills: z.object({
-    enabled: z.boolean().default(true),
-  }).default({ enabled: true }),
+    enabled: z.boolean().default(DEFAULTS.skills.enabled),
+  }).default(DEFAULTS.skills),
   serverTools: z.object({
-    enabled: z.boolean().default(true),
-  }).default({ enabled: true }),
+    enabled: z.boolean().default(DEFAULTS.serverTools.enabled),
+  }).default(DEFAULTS.serverTools),
 })
 
-/** Fully defaulted config view used by tools and commands. */
-interface ResolvedConfig {
-  readonly workspaceDir: string
-  readonly reviewer: { readonly provider: string; readonly maxRounds: number; readonly timeoutMs: number }
-  readonly latex: { readonly engine: string; readonly timeoutMs: number }
-  readonly arxiv: { readonly maxResults: number; readonly timeoutMs: number }
-  readonly search: { readonly command: string; readonly timeoutMs: number }
-  readonly zotero: { readonly apiKey: string; readonly userId: string }
-  readonly subscriptions: {
-    readonly enabled: boolean
-    readonly intervalMinutes: number
-  }
-  readonly backup: {
-    readonly enabled: boolean
-    readonly intervalMinutes: number
-    readonly keep: number
-    readonly dir: string
-  }
-  readonly skills: { readonly enabled: boolean }
-  readonly serverTools: { readonly enabled: boolean }
-}
+/**
+ * Fully defaulted config view used by tools and commands (#218).
+ *
+ * The shape is {@link DEFAULTS} made concrete: the schema applies those same
+ * objects, so a knob added to `DEFAULTS` reaches this type without a second
+ * declaration — which is exactly the drift this issue was about. (`Config`'s
+ * schema parameter only carries the input type, so the output cannot be
+ * recovered from the schema value; `DEFAULTS` is the part that can.)
+ * `capabilities` is derived, never defaulted (#242), so it is intersected on
+ * top of the widened shape.
+ */
+type Widen<T> = T extends string ? string
+  : T extends number ? number
+  : T extends boolean ? boolean
+  : T extends object ? { readonly [K in keyof T]: Widen<T[K]> }
+  : T
 
-/** Validate defaults even when a caller invokes apply() without Loader normalization. */
-function resolveConfig(config: Config): ResolvedConfig {
-  const workspaceDir = config.workspaceDir ?? '.research'
-  const reviewer = { provider: config.reviewer?.provider ?? 'spawn', maxRounds: config.reviewer?.maxRounds ?? 3, timeoutMs: config.reviewer?.timeoutMs ?? 600_000 }
-  const latex = { engine: config.latex?.engine ?? 'auto', timeoutMs: config.latex?.timeoutMs ?? 120_000 }
-  const arxiv = { maxResults: config.arxiv?.maxResults ?? 10, timeoutMs: config.arxiv?.timeoutMs ?? 30_000 }
-  const search = { command: config.search?.command ?? 'auto', timeoutMs: config.search?.timeoutMs ?? 30_000 }
-  const zotero = { apiKey: config.zotero?.apiKey ?? '', userId: config.zotero?.userId ?? '' }
+type ResolvedConfig = Widen<typeof DEFAULTS> & { readonly capabilities: ResearchCapabilitiesView }
+
+/**
+ * Fill in every default and derive what is derived (#218, #242). Exported for
+ * the config tests: this is the seam every knob is checked at. Validates the
+ * defaults even when a caller invokes apply() without Loader normalization.
+ * @param config - the raw Loader config.
+ * @returns the normalized config the plugin applies.
+ */
+export function resolveConfig(config: Config): ResolvedConfig {
+  // Every fallback reads DEFAULTS — the same objects the schema applies, so a
+  // caller that bypasses Loader normalization and one that does not end up
+  // with one set of numbers (#218).
+  const workspaceDir = config.workspaceDir ?? DEFAULTS.workspaceDir
+  const reviewer = {
+    provider: config.reviewer?.provider ?? DEFAULTS.reviewer.provider,
+    maxRounds: config.reviewer?.maxRounds ?? DEFAULTS.reviewer.maxRounds,
+    timeoutMs: config.reviewer?.timeoutMs ?? DEFAULTS.reviewer.timeoutMs,
+  }
+  const latex = {
+    engine: config.latex?.engine ?? DEFAULTS.latex.engine,
+    timeoutMs: config.latex?.timeoutMs ?? DEFAULTS.latex.timeoutMs,
+  }
+  const arxiv = {
+    maxResults: config.arxiv?.maxResults ?? DEFAULTS.arxiv.maxResults,
+    timeoutMs: config.arxiv?.timeoutMs ?? DEFAULTS.arxiv.timeoutMs,
+  }
+  const search = {
+    command: config.search?.command ?? DEFAULTS.search.command,
+    timeoutMs: config.search?.timeoutMs ?? DEFAULTS.search.timeoutMs,
+    maxResults: config.search?.maxResults ?? DEFAULTS.search.maxResults,
+  }
+  const zotero = {
+    apiKey: config.zotero?.apiKey ?? DEFAULTS.zotero.apiKey,
+    userId: config.zotero?.userId ?? DEFAULTS.zotero.userId,
+  }
   const subscriptions = {
-    enabled: config.subscriptions?.enabled ?? true,
-    intervalMinutes: config.subscriptions?.intervalMinutes ?? 1440,
+    enabled: config.subscriptions?.enabled ?? DEFAULTS.subscriptions.enabled,
+    intervalMinutes: config.subscriptions?.intervalMinutes ?? DEFAULTS.subscriptions.intervalMinutes,
   }
   const backup = {
-    enabled: config.backup?.enabled ?? true,
-    intervalMinutes: config.backup?.intervalMinutes ?? 60,
-    keep: config.backup?.keep ?? 24,
-    dir: config.backup?.dir ?? 'backups',
+    enabled: config.backup?.enabled ?? DEFAULTS.backup.enabled,
+    intervalMinutes: config.backup?.intervalMinutes ?? DEFAULTS.backup.intervalMinutes,
+    keep: config.backup?.keep ?? DEFAULTS.backup.keep,
+    dir: config.backup?.dir ?? DEFAULTS.backup.dir,
   }
-  const skills = { enabled: config.skills?.enabled ?? true }
-  const serverTools = { enabled: config.serverTools?.enabled ?? true }
+  const skills = { enabled: config.skills?.enabled ?? DEFAULTS.skills.enabled }
+  const serverTools = { enabled: config.serverTools?.enabled ?? DEFAULTS.serverTools.enabled }
   if (workspaceDir.trim().length === 0) throw new TypeError('workspaceDir must be a non-empty path')
   if (reviewer.provider.trim().length === 0) throw new TypeError('reviewer.provider must be a non-empty provider name')
   if (!Number.isSafeInteger(reviewer.maxRounds) || reviewer.maxRounds < 1) throw new TypeError('reviewer.maxRounds must be a positive safe integer')
@@ -696,194 +471,28 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(arxiv.timeoutMs) || arxiv.timeoutMs < 1) throw new TypeError('arxiv.timeoutMs must be a positive safe integer')
   if (search.command.trim().length === 0) throw new TypeError('search.command must be a non-empty command name')
   if (!Number.isSafeInteger(search.timeoutMs) || search.timeoutMs < 1) throw new TypeError('search.timeoutMs must be a positive safe integer')
+  if (!Number.isSafeInteger(search.maxResults) || search.maxResults < 1) throw new TypeError('search.maxResults must be a positive safe integer')
   if (!Number.isSafeInteger(subscriptions.intervalMinutes) || subscriptions.intervalMinutes < 1) throw new TypeError('subscriptions.intervalMinutes must be a positive safe integer')
   if (!Number.isSafeInteger(backup.intervalMinutes) || backup.intervalMinutes < 1) throw new TypeError('backup.intervalMinutes must be a positive safe integer')
   if (!Number.isSafeInteger(backup.keep) || backup.keep < 1) throw new TypeError('backup.keep must be a positive safe integer')
   if (backup.dir.trim().length === 0) throw new TypeError('backup.dir must be a non-empty path')
-  return { workspaceDir, reviewer, latex, arxiv, search, zotero, subscriptions, backup, skills, serverTools }
+  // The capability layers are derived, never configured (#242): a second place
+  // to state which layer is on would be a second place to disagree with the
+  // switch that actually gates the feature.
+  const layers: readonly ResearchCapability[] = Object.freeze([
+    'core',
+    ...(subscriptions.enabled ? ['automation'] as const : []),
+    ...(serverTools.enabled ? ['compute'] as const : []),
+    ...(skills.enabled ? ['insights'] as const : []),
+    'presentation',
+  ])
+  const capabilities: ResearchCapabilitiesView = Object.freeze({
+    enabled: layers,
+    disabled: Object.freeze(ALL_CAPABILITIES.filter(layer => !layers.includes(layer))),
+  })
+  return { workspaceDir, reviewer, latex, arxiv, search, zotero, subscriptions, backup, skills, serverTools, capabilities }
 }
 
-/**
- * Stream the compiled paper PDF for one wiki project. The paper directory
- * resolves per request — a `?dir=` query override, else the project record's
- * `paperDir`, else `paper` — always confined inside the workspace (a
- * violating `dir` is a 400), so the project id only selects WHICH project's
- * panel may read it: an unknown id is a 404. Reads are loopback-panel-only
- * (`isTrustedRead`, #210).
- * @param deps - Shared command dependencies (workspace root and open domain).
- * @returns the route handler owning the full response lifecycle.
- */
-function createPdfHandler(
-  deps: ResearchCommandDeps,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const root = resolve(deps.workspaceDir)
-  return async (req, res) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405).end()
-      return
-    }
-    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
-      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
-      return
-    }
-    const url = new URL(req.url ?? '/', 'http://research.local')
-    const pathname = url.pathname
-    const prefix = '/research/pdf/'
-    if (!pathname.startsWith(prefix) || pathname.length === prefix.length) {
-      res.writeHead(404).end('expected /research/pdf/<project id>')
-      return
-    }
-    let projectId: string
-    try {
-      projectId = decodeURIComponent(pathname.slice(prefix.length))
-    } catch {
-      res.writeHead(400).end('invalid encoded project id')
-      return
-    }
-    const record = deps.domain.table('projects').get(projectId)
-    if (record === undefined) {
-      res.writeHead(404).end('unknown research project')
-      return
-    }
-    const requestDir = url.searchParams.get('dir') ?? undefined
-    // Realpath-backed (#213): a symlinked request dir must not smuggle the
-    // read outside the workspace's realpath.
-    const dir = await resolvePaperDirReal(root, requestDir, record.paperDir)
-    if (dir === undefined) {
-      res.writeHead(400).end('dir must be a relative path inside the research workspace')
-      return
-    }
-    const pdfPath = resolve(dir, 'main.pdf')
-    const stats = await stat(pdfPath).catch(() => undefined)
-    if (stats === undefined || !stats.isFile()) {
-      res.writeHead(404).end('paper pdf not found; compile first')
-      return
-    }
-    // The directory chain is realpath-clean, but the served file ITSELF could
-    // still be a symlink pointing outside: re-check its realpath against the
-    // directory's realpath before streaming.
-    const dirReal = await realpath(dir).catch(() => undefined)
-    if (dirReal === undefined || !(await realpathConfined(dirReal, pdfPath))) {
-      res.writeHead(400).end('paper pdf escapes the paper directory')
-      return
-    }
-    res.writeHead(200, {
-      'Content-Type': 'application/pdf',
-      'Content-Length': stats.size,
-      // The panel cache-busts with ?v=<pdfUpdatedAt>; a stale cached preview
-      // would otherwise survive a recompile under the same URL.
-      'Cache-Control': 'no-cache',
-      // No Content-Security-Policy (#257): browser-native PDF viewers run in
-      // their own isolated plugin/extension origin, so a document CSP buys
-      // nothing here — and it breaks them (`sandbox` disables Chrome's
-      // PDFium plugin for a black reader; WebKit's viewer needs the inline
-      // styles `default-src 'none'` blocks). `nosniff` stays so the browser
-      // never re-guesses the type of the workspace-local bytes.
-      'X-Content-Type-Options': 'nosniff',
-    })
-    if (req.method === 'HEAD') {
-      res.end()
-      return
-    }
-    createReadStream(pdfPath).pipe(res)
-  }
-}
-
-/**
- * Stream one remembered paper's fetched PDF (the literature workbench's
- * embedded reader). The arXiv id only selects WHICH paper's file may be read:
- * an unknown id is a 404, as is a paper whose PDF was never fetched. The
- * stored `pdfPath` is workspace-relative; a path escaping the workspace is a
- * 400 (the fetch writer only ever produces `papers/<id>.pdf`, so a violating
- * value means a hand-edited store). Reads are loopback-panel-only
- * (`isTrustedRead`, #210).
- * @param deps - Shared command dependencies (workspace root and open domain).
- * @returns the route handler owning the full response lifecycle.
- */
-function createPaperPdfHandler(
-  deps: ResearchCommandDeps,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const root = resolve(deps.workspaceDir)
-  return async (req, res) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405).end()
-      return
-    }
-    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
-      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
-      return
-    }
-    const url = new URL(req.url ?? '/', 'http://research.local')
-    const prefix = '/research/paper-pdf/'
-    if (!url.pathname.startsWith(prefix) || url.pathname.length === prefix.length) {
-      res.writeHead(404).end('expected /research/paper-pdf/<arxiv id>')
-      return
-    }
-    let arxivId: string
-    try {
-      arxivId = decodeURIComponent(url.pathname.slice(prefix.length))
-    } catch {
-      res.writeHead(400).end('invalid encoded arXiv id')
-      return
-    }
-    const record = deps.domain.table('papers').get(arxivId)
-    if (record === undefined) {
-      res.writeHead(404).end('unknown research paper')
-      return
-    }
-    if (record.pdfPath === undefined) {
-      res.writeHead(404).end('paper pdf not fetched yet')
-      return
-    }
-    const pdfPath = resolve(root, record.pdfPath)
-    if (!pdfPath.startsWith(root + sep)) {
-      res.writeHead(400).end('pdfPath escapes the research workspace')
-      return
-    }
-    const stats = await stat(pdfPath).catch(() => undefined)
-    if (stats === undefined || !stats.isFile()) {
-      res.writeHead(404).end('paper pdf file is gone; fetch it again')
-      return
-    }
-    // Lexical confinement is not enough: the stored path (or an intermediate
-    // directory) could be a symlink pointing outside the workspace — re-check
-    // the realpath before streaming.
-    const rootReal = await realpath(root).catch(() => undefined)
-    if (rootReal === undefined || !(await realpathConfined(rootReal, pdfPath))) {
-      res.writeHead(400).end('pdfPath escapes the research workspace')
-      return
-    }
-    res.writeHead(200, {
-      'Content-Type': 'application/pdf',
-      'Content-Length': stats.size,
-      // Same cache-bust rationale as the compiled-paper route: a refetch
-      // overwrites the same file, and the panel busts with ?v=<timestamp>.
-      'Cache-Control': 'no-cache',
-      // No Content-Security-Policy (#257): browser-native PDF viewers run in
-      // their own isolated plugin/extension origin, so a document CSP buys
-      // nothing here — and it breaks them (`sandbox` disables Chrome's
-      // PDFium plugin for a black reader; WebKit's viewer needs the inline
-      // styles `default-src 'none'` blocks). `nosniff` stays so the browser
-      // never re-guesses the type of the workspace-local bytes.
-      'X-Content-Type-Options': 'nosniff',
-    })
-    if (req.method === 'HEAD') {
-      res.end()
-      return
-    }
-    createReadStream(pdfPath).pipe(res)
-  }
-}
-/** Content-Type of one servable figure extension. */
-const FIGURE_CONTENT_TYPES: Record<string, string> = {
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.svg': 'image/svg+xml',
-  '.pdf': 'application/pdf',
-}
 
 /** The digdig CLI command (`dg`) the auto-detected web search resolves to. */
 const DIGDIG_COMMAND = 'dg'
@@ -918,322 +527,6 @@ function commandOnPath(command: string): Promise<boolean> {
       resolveProbe(!(error !== null && (error as { code?: unknown }).code === 'ENOENT'))
     })
   })
-}
-
-/**
- * Stream one figure file of a wiki project's paper directory. The paper
- * directory resolves like the PDF route (`?dir=` override, record
- * `paperDir`, default); `?path=` is relative to it — an absolute path, a
- * `..` escape, or a non-figure extension is a 400, a missing file a 404.
- * Reads are loopback-panel-only (`isTrustedRead`, #210).
- * @param deps - Shared command dependencies (workspace root and open domain).
- * @returns the route handler owning the full response lifecycle.
- */
-function createFigureHandler(
-  deps: ResearchCommandDeps,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const root = resolve(deps.workspaceDir)
-  return async (req, res) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405).end()
-      return
-    }
-    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
-      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
-      return
-    }
-    const url = new URL(req.url ?? '/', 'http://research.local')
-    const prefix = '/research/figure/'
-    if (!url.pathname.startsWith(prefix) || url.pathname.length === prefix.length) {
-      res.writeHead(404).end('expected /research/figure/<project id>')
-      return
-    }
-    let projectId: string
-    try {
-      projectId = decodeURIComponent(url.pathname.slice(prefix.length))
-    } catch {
-      res.writeHead(400).end('invalid encoded project id')
-      return
-    }
-    const record = deps.domain.table('projects').get(projectId)
-    if (record === undefined) {
-      res.writeHead(404).end('unknown research project')
-      return
-    }
-    const relPath = url.searchParams.get('path')
-    if (relPath === null || relPath.length === 0 || !isFigureFile(relPath)) {
-      res.writeHead(400).end('path must name a figure file (.png/.jpg/.jpeg/.svg/.pdf)')
-      return
-    }
-    // Realpath-backed (#213): a symlinked request dir must not smuggle the
-    // read outside the workspace's realpath.
-    const dir = await resolvePaperDirReal(root, url.searchParams.get('dir') ?? undefined, record.paperDir)
-    if (dir === undefined) {
-      res.writeHead(400).end('dir must be a relative path inside the research workspace')
-      return
-    }
-    const figurePath = resolve(dir, relPath)
-    if (!figurePath.startsWith(dir + sep)) {
-      res.writeHead(400).end('path escapes the paper directory')
-      return
-    }
-    const stats = await stat(figurePath).catch(() => undefined)
-    if (stats === undefined || !stats.isFile()) {
-      res.writeHead(404).end('figure not found')
-      return
-    }
-    // The directory chain is realpath-clean, but the served file ITSELF could
-    // still be a symlink pointing outside: re-check its realpath against the
-    // directory's realpath before streaming.
-    const dirReal = await realpath(dir).catch(() => undefined)
-    if (dirReal === undefined || !(await realpathConfined(dirReal, figurePath))) {
-      res.writeHead(400).end('figure escapes the paper directory')
-      return
-    }
-    res.writeHead(200, {
-      'Content-Type': FIGURE_CONTENT_TYPES[extname(relPath).toLowerCase()] ?? 'application/octet-stream',
-      'Content-Length': stats.size,
-      // Same cache-bust rationale as the PDF route; figures are immutable per
-      // mtime from the panel's point of view.
-      'Cache-Control': 'no-cache',
-      // Defense-in-depth: a `.svg` is served as `image/svg+xml` from our
-      // origin, and SVG can carry scripts. Pin the type (no sniff) and drop
-      // all privileges (sandbox + default-src 'none') so a served figure
-      // can never act as our page.
-      'X-Content-Type-Options': 'nosniff',
-      'Content-Security-Policy': "default-src 'none'; sandbox",
-    })
-    if (req.method === 'HEAD') {
-      res.end()
-      return
-    }
-    createReadStream(figurePath).pipe(res)
-  }
-}
-
-/** Raw-body cap of the figure upload route (a security invariant, not a tunable). */
-const FIGURE_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024
-
-/**
- * Receive one uploaded figure for a wiki project's paper directory. The query
- * carries `?project=` (an unknown id is a 404), `?name=` (reduced to its
- * basename, so no traversal is expressible; a non-figure extension is a 400).
- * The route requires an exact same-origin `Origin` header and always resolves
- * the destination from the project record's `paperDir`; callers cannot select
- * a different workspace directory. The raw body lands at `figures/<name>` under the paper directory (created on demand,
- * same-name overwrite); a body over {@link FIGURE_UPLOAD_LIMIT_BYTES} is a
- * 413, any method but POST a 405.
- * @param deps - Shared command dependencies (workspace root and open domain).
- * @returns the route handler owning the full response lifecycle.
- */
-function createFigureUploadHandler(
-  deps: ResearchCommandDeps,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const root = resolve(deps.workspaceDir)
-  return async (req, res) => {
-    if (req.method !== 'POST') {
-      res.writeHead(405).end()
-      return
-    }
-    if (!isSameOriginWrite(req.headers)) {
-      res.writeHead(403).end('cross-origin uploads are not allowed')
-      return
-    }
-    const url = new URL(req.url ?? '/', 'http://research.local')
-    const projectId = url.searchParams.get('project')
-    if (projectId === null || projectId.length === 0) {
-      res.writeHead(400).end('expected ?project=<project id>')
-      return
-    }
-    const record = deps.domain.table('projects').get(projectId)
-    if (record === undefined) {
-      res.writeHead(404).end('unknown research project')
-      return
-    }
-    const name = basename(url.searchParams.get('name') ?? '')
-    if (name === '' || !isFigureFile(name)) {
-      res.writeHead(400).end('name must name a figure file (.png/.jpg/.jpeg/.svg/.pdf)')
-      return
-    }
-    const dir = await projectPaperDir(root, record.paperDir)
-    if (dir === undefined) {
-      res.writeHead(400).end('dir must be a relative path inside the research workspace')
-      return
-    }
-    const rootReal = await realpath(root).catch(() => undefined)
-    if (rootReal === undefined) {
-      res.writeHead(400).end('dir must be a relative path inside the research workspace')
-      return
-    }
-    const chunks: Buffer[] = []
-    let sizeBytes = 0
-    for await (const chunk of req) {
-      sizeBytes += (chunk as Buffer).length
-      if (sizeBytes > FIGURE_UPLOAD_LIMIT_BYTES) {
-        res.writeHead(413).end('figure exceeds the 50MB limit')
-        req.destroy()
-        return
-      }
-      chunks.push(chunk as Buffer)
-    }
-    const figuresDir = join(dir, 'figures')
-    await mkdir(figuresDir, { recursive: true })
-    // A pre-existing `figures/` symlink (or a symlinked same-name target)
-    // must not smuggle the write outside the workspace: re-check realpaths.
-    const target = join(figuresDir, name)
-    if (!(await realpathConfined(rootReal, figuresDir)) || !(await realpathConfined(rootReal, target))) {
-      res.writeHead(400).end('figure destination escapes the research workspace')
-      return
-    }
-    await writeFile(target, Buffer.concat(chunks))
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ relPath: `figures/${name}` }))
-  }
-}
-
-/** Raw-body cap of the template upload route (a security invariant, not a tunable). */
-const TEMPLATE_UPLOAD_LIMIT_BYTES = 50 * 1024 * 1024
-
-/** Extensions a venue-kit upload accepts (plain LaTeX kit files; no archives). */
-const TEMPLATE_UPLOAD_EXTENSIONS = new Set(['.cls', '.sty', '.tex', '.bst', '.bbx', '.cbx', '.clo', '.def', '.cfg', '.md', '.txt', '.pdf'])
-
-/**
- * Receive one uploaded venue-kit file for a wiki project's paper directory.
- * The query carries `?project=` (an unknown id is a 404) and `?name=`
- * (reduced to its basename; an extension outside
- * {@link TEMPLATE_UPLOAD_EXTENSIONS} is a 400). The route requires an exact
- * same-origin `Origin` header and always resolves the destination from the
- * project record's `paperDir`; callers cannot select a different workspace
- * directory. The raw body lands at
- * `template/<name>` under the paper directory (created on demand, same-name
- * overwrite); a body over {@link TEMPLATE_UPLOAD_LIMIT_BYTES} is a 413, any
- * method but POST a 405.
- * @param deps - Shared command dependencies (workspace root and open domain).
- * @returns the route handler owning the full response lifecycle.
- */
-function createTemplateUploadHandler(
-  deps: ResearchCommandDeps,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const root = resolve(deps.workspaceDir)
-  return async (req, res) => {
-    if (req.method !== 'POST') {
-      res.writeHead(405).end()
-      return
-    }
-    if (!isSameOriginWrite(req.headers)) {
-      res.writeHead(403).end('cross-origin uploads are not allowed')
-      return
-    }
-    const url = new URL(req.url ?? '/', 'http://research.local')
-    const projectId = url.searchParams.get('project')
-    if (projectId === null || projectId.length === 0) {
-      res.writeHead(400).end('expected ?project=<project id>')
-      return
-    }
-    const record = deps.domain.table('projects').get(projectId)
-    if (record === undefined) {
-      res.writeHead(404).end('unknown research project')
-      return
-    }
-    const name = basename(url.searchParams.get('name') ?? '')
-    if (name === '' || !TEMPLATE_UPLOAD_EXTENSIONS.has(extname(name).toLowerCase())) {
-      res.writeHead(400).end('name must name a LaTeX kit file (.cls/.sty/.tex/.bst/...)')
-      return
-    }
-    const dir = await projectPaperDir(root, record.paperDir)
-    if (dir === undefined) {
-      res.writeHead(400).end('dir must be a relative path inside the research workspace')
-      return
-    }
-    const rootReal = await realpath(root).catch(() => undefined)
-    if (rootReal === undefined) {
-      res.writeHead(400).end('dir must be a relative path inside the research workspace')
-      return
-    }
-    const chunks: Buffer[] = []
-    let sizeBytes = 0
-    for await (const chunk of req) {
-      sizeBytes += (chunk as Buffer).length
-      if (sizeBytes > TEMPLATE_UPLOAD_LIMIT_BYTES) {
-        res.writeHead(413).end('template file exceeds the 50MB limit')
-        req.destroy()
-        return
-      }
-      chunks.push(chunk as Buffer)
-    }
-    const templateDir = join(dir, TEMPLATE_DIR_NAME)
-    await mkdir(templateDir, { recursive: true })
-    // A pre-existing `template/` symlink (or a symlinked same-name target)
-    // must not smuggle the write outside the workspace: re-check realpaths.
-    const target = join(templateDir, name)
-    if (!(await realpathConfined(rootReal, templateDir)) || !(await realpathConfined(rootReal, target))) {
-      res.writeHead(400).end('template destination escapes the research workspace')
-      return
-    }
-    await writeFile(target, Buffer.concat(chunks))
-    res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ relPath: `${TEMPLATE_DIR_NAME}/${name}` }))
-  }
-}
-
-/**
- * Download one generated group-meeting deck. The query carries `?project=`
- * (an unknown id is a 404) and `?file=` (reduced to its basename and confined
- * to `meetings/<projectId>/` by {@link meetingDeckPath}, so no traversal is
- * expressible; a non-.pptx name is a 400). Streams the pptx as an attachment,
- * so the panel's `<a href>` forces a download. Reads are loopback-panel-only
- * (`isTrustedRead`, #210).
- * @param deps - Shared command dependencies (workspace root and open domain).
- * @returns the route handler owning the full response lifecycle.
- */
-function createMeetingDeckHandler(
-  deps: ResearchCommandDeps,
-): (req: IncomingMessage, res: ServerResponse) => Promise<void> {
-  const root = resolve(deps.workspaceDir)
-  return async (req, res) => {
-    if (req.method !== 'GET' && req.method !== 'HEAD') {
-      res.writeHead(405).end()
-      return
-    }
-    // Loopback-panel-only reads (#210): see http-write-boundary for the model.
-    if (!isTrustedRead(req.headers, req.socket.remoteAddress)) {
-      res.writeHead(403).end('workspace downloads are served to the loopback panel only')
-      return
-    }
-    const url = new URL(req.url ?? '/', 'http://research.local')
-    const projectId = url.searchParams.get('project')
-    const file = url.searchParams.get('file')
-    if (projectId === null || file === null) {
-      res.writeHead(400).end('expected ?project=<project id>&file=<deck file>')
-      return
-    }
-    if (deps.domain.table('projects').get(projectId) === undefined) {
-      res.writeHead(404).end('unknown research project')
-      return
-    }
-    const deckPath = meetingDeckPath(root, projectId, file)
-    if (deckPath === undefined) {
-      res.writeHead(400).end('file must name a .pptx deck')
-      return
-    }
-    const stats = await stat(deckPath).catch(() => undefined)
-    if (stats === undefined || !stats.isFile()) {
-      res.writeHead(404).end('meeting deck not found')
-      return
-    }
-    res.writeHead(200, {
-      'Content-Type': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      'Content-Length': stats.size,
-      'Content-Disposition': `attachment; filename="${basename(deckPath)}"`,
-      'Cache-Control': 'no-cache',
-    })
-    if (req.method === 'HEAD') {
-      res.end()
-      return
-    }
-    createReadStream(deckPath).pipe(res)
-  }
 }
 
 /**
@@ -1290,12 +583,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     : resolved.search.command
   const searchConfig = searchCommand === undefined
     ? undefined
-    : { command: searchCommand, timeoutMs: resolved.search.timeoutMs }
+    : { command: searchCommand, timeoutMs: resolved.search.timeoutMs, maxResults: resolved.search.maxResults }
   if (searchCommand !== undefined) {
     ctx.tools.register(createWebSearchTool({
       command: searchCommand,
       timeoutMs: resolved.search.timeoutMs,
-      maxResults: resolved.arxiv.maxResults,
+      maxResults: resolved.search.maxResults,
     }))
   }
   // The panel's Servers view and the model-callable server_* tools share the
@@ -1320,17 +613,24 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // every pass here; the service exposes the snapshot via `getTaskHealth`.
   const taskHealth = new TaskHealthRegistry()
 
-  const serviceConfig: ResearchServiceConfig = {
+  // One assembly point (#231): the config is built here, never re-mapped by
+  // the service constructor — `buildDeps` is the single description of what a
+  // service config IS, so a knob added to one side cannot go missing on the
+  // other.
+  const serviceConfig: ResearchServiceConfig = buildDeps({
     workspaceDir: deps.workspaceDir,
     domain,
-    latex: resolved.latex,
-    backup: { ...resolved.backup, dir: backupDir },
-    ...(searchConfig === undefined ? {} : { search: searchConfig }),
-    arxiv: { timeoutMs: resolved.arxiv.timeoutMs },
-    zotero: resolved.zotero,
-    taskHealth,
-    notifyWikiChange: event => wikiChangeHub.publish(event),
-  }
+    config: {
+      latex: resolved.latex,
+      backup: { ...resolved.backup, dir: backupDir },
+      ...(searchConfig === undefined ? {} : { search: searchConfig }),
+      arxiv: { timeoutMs: resolved.arxiv.timeoutMs },
+      ...(resolved.zotero === undefined ? {} : { zotero: resolved.zotero }),
+      taskHealth,
+      notifyWikiChange: event => wikiChangeHub.publish(event),
+      capabilities: resolved.capabilities,
+    },
+  })
 
   registerIdeaCommand(ctx, deps)
   registerPlanCommand(ctx, deps)
@@ -1406,7 +706,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/events',
-      handler: createWikiEventsHandler(wikiChangeHub),
+      handler: guardRoute(createWikiEventsHandler(wikiChangeHub)),
     }),
     'mimir.wikiEventsRoute',
   )
@@ -1414,7 +714,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/pdf',
-      handler: createPdfHandler(deps),
+      handler: guardRoute(createPdfHandler(deps)),
     }),
     'mimir.pdfRoute',
   )
@@ -1422,7 +722,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/paper-pdf',
-      handler: createPaperPdfHandler(deps),
+      handler: guardRoute(createPaperPdfHandler(deps)),
     }),
     'mimir.paperPdfRoute',
   )
@@ -1430,7 +730,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/figure',
-      handler: createFigureHandler(deps),
+      handler: guardRoute(createFigureHandler(deps)),
     }),
     'mimir.figureRoute',
   )
@@ -1438,7 +738,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/figure-upload',
-      handler: createFigureUploadHandler(deps),
+      handler: guardRoute(createFigureUploadHandler(deps)),
     }),
     'mimir.figureUploadRoute',
   )
@@ -1446,7 +746,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/template-upload',
-      handler: createTemplateUploadHandler(deps),
+      handler: guardRoute(createTemplateUploadHandler(deps)),
     }),
     'mimir.templateUploadRoute',
   )
@@ -1454,7 +754,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/meeting',
-      handler: createMeetingDeckHandler(deps),
+      handler: guardRoute(createMeetingDeckHandler(deps)),
     }),
     'mimir.meetingDeckRoute',
   )

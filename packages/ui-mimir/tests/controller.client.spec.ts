@@ -864,9 +864,14 @@ describe('ResearchController servers and figure deletion', () => {
     await Promise.resolve()
   }
 
+  /**
+   * The panel-facing view (record minus `password`, plus `hasPassword`): the
+   * save round-trip returns a `ServerView`, so the fixture has to be one.
+   */
   const SERVER = {
     id: 'srv-1', name: 'gpu01', host: '10.0.0.8', port: 22,
-    username: 'ops', note: '', tags: [], createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    username: 'ops', note: '', tags: [], hasPassword: false,
+    createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
   }
 
   it('loads the server list once on ensureServers', async () => {
@@ -1222,6 +1227,79 @@ describe('ResearchController arXiv search and paper import', () => {
     slow.resolve(carried<ResearchSearchWebResult>({ ok: true, value: { results: [] } }))
     await settle()
     expect(controller.getSnapshot().webSearch).toMatchObject({ query: 'fast', status: 'error' })
+  })
+
+  // #208: a new query must not blank the panel. The superseded rows ride along
+  // on the loading slice so the view can keep painting them behind a marker.
+  it('keeps the superseded arXiv rows visible while the next query is in flight', async () => {
+    const next = deferred<RemoteResult<ResearchSearchArxivResult>>()
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      searchArxiv: () => {
+        calls += 1
+        return calls === 1
+          ? Promise.resolve(carried<ResearchSearchArxivResult>({ ok: true, value: { results: [ENTRY] } }))
+          : next.promise
+      },
+    }))
+    controller.searchArxiv('first')
+    await settle()
+    expect(controller.getSnapshot().arxivSearch?.list).toHaveLength(1)
+
+    controller.searchArxiv('second')
+    const inFlight = controller.getSnapshot().arxivSearch
+    expect(inFlight).toMatchObject({ query: 'second', status: 'loading' })
+    // The old rows are still there — as the previous outcome, not as this one.
+    expect(inFlight?.list).toHaveLength(0)
+    expect(inFlight?.previous).toMatchObject({ query: 'first' })
+    expect(inFlight?.previous?.list[0]?.id).toBe(ENTRY.id)
+
+    next.resolve(carried<ResearchSearchArxivResult>({ ok: true, value: { results: [ENTRY] } }))
+    await settle()
+    expect(controller.getSnapshot().arxivSearch).toMatchObject({ query: 'second', status: 'ready' })
+    expect(controller.getSnapshot().arxivSearch?.previous).toBeNull()
+  })
+
+  it('carries no stale rows when the previous search found nothing', async () => {
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      searchArxiv: () => {
+        calls += 1
+        return calls === 1
+          ? Promise.resolve(carried<ResearchSearchArxivResult>({ ok: true, value: { results: [] } }))
+          : new Promise(() => {})
+      },
+    }))
+    controller.searchArxiv('empty')
+    await settle()
+    controller.searchArxiv('next')
+    expect(controller.getSnapshot().arxivSearch?.previous).toBeNull()
+  })
+
+  it('keeps the superseded web rows visible while the next query is in flight', async () => {
+    const next = deferred<RemoteResult<ResearchSearchWebResult>>()
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      searchWeb: () => {
+        calls += 1
+        return calls === 1
+          ? Promise.resolve(carried<ResearchSearchWebResult>({
+              ok: true,
+              value: { results: [{ title: 'Old page', url: 'https://example.com/old', content: 'Snippet.', engine: 'brave', category: 'general', publishedDate: '' }] },
+            }))
+          : next.promise
+      },
+    }))
+    controller.searchWeb('first')
+    await settle()
+    controller.searchWeb('second')
+    const inFlight = controller.getSnapshot().webSearch
+    expect(inFlight).toMatchObject({ query: 'second', status: 'loading' })
+    expect(inFlight?.previous?.query).toBe('first')
+    expect(inFlight?.previous?.list[0]?.url).toBe('https://example.com/old')
+    next.resolve(carried<ResearchSearchWebResult>({ ok: true, value: { results: [] } }))
+    await settle()
+    expect(controller.getSnapshot().webSearch?.previous).toBeNull()
   })
 
   it('refreshes the literature list after a successful import and returns failures otherwise', async () => {
@@ -2111,6 +2189,12 @@ describe('ResearchController cognitive brief (CBE)', () => {
           eventCount: 4,
           derivationVersion: 2,
           questions: [{ kind: 'pending-claim', lineId: 'c9', label: 'delta transfers' }],
+          // The brief carries a line strip and a moment roll-up (I6); the
+          // generate result is the source of truth, so the fixture needs them.
+          lines: [],
+          transitions: [],
+          openLoops: [],
+          moments: [],
         },
       })),
     }))
@@ -2124,6 +2208,10 @@ describe('ResearchController cognitive brief (CBE)', () => {
       derivationVersion: 2,
       recalibrated: false,
       questions: [{ kind: 'pending-claim', lineId: 'c9', label: 'delta transfers' }],
+      lines: [],
+      transitions: [],
+      openLoops: [],
+      moments: [],
       failure: null,
     })
     expect(controller.getSnapshot().toasts).toHaveLength(1)
@@ -2753,6 +2841,7 @@ describe('loadEvidenceGraph window request', () => {
           duplicateEdges: 0,
           aliasMerges: 0,
           unnormalizable: 0,
+          cycleRejected: 0,
         },
       },
     },
@@ -2778,8 +2867,8 @@ describe('loadEvidenceGraph window request', () => {
   })
 
   it('ignores a stale response once a newer request supersedes it', async () => {
-    const slow = deferred<ResearchGetEvidenceGraphResult>()
-    const fast = deferred<ResearchGetEvidenceGraphResult>()
+    const slow = deferred<RemoteResult<ResearchGetEvidenceGraphResult>>()
+    const fast = deferred<RemoteResult<ResearchGetEvidenceGraphResult>>()
     const controller = new ResearchController(stubRemote({
       getEvidenceGraph: request => (request.projectId === 'p1' ? slow.promise : fast.promise),
     }))
@@ -2798,7 +2887,7 @@ describe('loadEvidenceGraph window request', () => {
 
   it('single-flights an identical in-flight request', async () => {
     let calls = 0
-    const run = deferred<ResearchGetEvidenceGraphResult>()
+    const run = deferred<RemoteResult<ResearchGetEvidenceGraphResult>>()
     const controller = new ResearchController(stubRemote({
       getEvidenceGraph: () => {
         calls += 1
@@ -2834,7 +2923,7 @@ describe('loadEvidenceGraph window request', () => {
 
   it('keeps the previous view while a refresh is loading', async () => {
     let call = 0
-    const slow = deferred<ResearchGetEvidenceGraphResult>()
+    const slow = deferred<RemoteResult<ResearchGetEvidenceGraphResult>>()
     const controller = new ResearchController(stubRemote({
       getEvidenceGraph: () => {
         call += 1

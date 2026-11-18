@@ -10,7 +10,7 @@ import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { quarantineUnsafePaperIds, researchWikiDomainSpec } from '../src/store.ts'
-import type { ExperimentRecord, IdeaRecord, PaperRecord, ServerRecord } from '../src/types.ts'
+import type { ExperimentRecord, IdeaRecord, JobRecord, PaperRecord, ServerRecord } from '../src/types.ts'
 
 /** Boot a context with the storage hub, one memory backend, and a domain facility over it. */
 async function harness(pool?: MemoryMediaPool) {
@@ -167,6 +167,65 @@ describe('researchWikiDomainSpec', () => {
     const stored = reopened.table('experiments').get(experiment.id)
     expect(stored).toEqual(experiment)
     expect(stored?.serverId).toBeUndefined()
+  })
+
+  it('keeps activeJobId on an experiment record across a simulated restart', async () => {
+    const experiment: ExperimentRecord = {
+      id: 'exp-1',
+      projectId: 'p1',
+      name: 'baseline',
+      status: 'running',
+      metrics: {},
+      serverId: 'srv-1',
+      activeJobId: 'job-1',
+      updatedAt: '2026-08-20T00:00:00.000Z',
+    }
+    const pool = new MemoryMediaPool()
+    {
+      const { facility } = await harness(pool)
+      await (await facility.open(researchWikiDomainSpec)).table('experiments').put(experiment.id, experiment)
+    }
+    const { facility } = await harness(pool)
+    const reopened = await facility.open(researchWikiDomainSpec)
+    expect(reopened.table('experiments').get(experiment.id)).toEqual(experiment)
+  })
+
+  it('keeps the #152 capture fields across a simulated restart', async () => {
+    // The metrics capture writes `draft` on the experiment and `projectId` /
+    // `workdir` on the job; a schema that forgets them strips them on load
+    // and the badge (and the capture trail) silently vanishes on restart.
+    const experiment: ExperimentRecord = {
+      id: 'exp-draft',
+      projectId: 'p1',
+      name: 'python train.py',
+      status: 'success',
+      metrics: { loss: 0.4 },
+      draft: true,
+      updatedAt: '2026-08-20T00:00:00.000Z',
+    }
+    const job: JobRecord = {
+      id: 'job-1',
+      serverId: 'srv-1',
+      command: 'python train.py',
+      status: 'succeeded',
+      projectId: 'p1',
+      workdir: '/home/ops/run-1',
+      exitCode: 0,
+      stdoutTail: '',
+      stderrTail: '',
+      createdAt: '2026-08-20T00:00:00.000Z',
+    }
+    const pool = new MemoryMediaPool()
+    {
+      const { facility } = await harness(pool)
+      const domain = await facility.open(researchWikiDomainSpec)
+      await domain.table('experiments').put(experiment.id, experiment)
+      await domain.table('jobs').put(job.id, job)
+    }
+    const { facility } = await harness(pool)
+    const reopened = await facility.open(researchWikiDomainSpec)
+    expect(reopened.table('experiments').get(experiment.id)).toEqual(experiment)
+    expect(reopened.table('jobs').get(job.id)).toEqual(job)
   })
 
   it('rejects a stored record that fails its zod schema, naming table and key', async () => {
