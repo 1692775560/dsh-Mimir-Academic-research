@@ -174,7 +174,36 @@ export function ZoteroSection({
       </form>
       {zoteroSearch !== null && (
         <>
-          {zoteroSearch.status === 'loading' ? (
+          {zoteroSearch.status === 'loading' && zoteroSearch.previous !== null ? (
+            // #208: the superseded items stay on screen while the new query
+            // is in flight — an empty panel reads as "no results".
+            <>
+              <p className={css.searchStaleNote} role="note">
+                {t('papers.searchStale')}：{zoteroSearch.previous.query}
+              </p>
+              <div className={css.papersResults} data-stale="true">
+                {zoteroSearch.previous.list.map(item => (
+                  <article key={item.key} className={css.paperResult}>
+                    <div className={css.paperResultHead}>
+                      <h3 className={css.paperCardTitle}>
+                        {item.url === ''
+                          ? item.title
+                          : (
+                            <a href={item.url} target="_blank" rel="noreferrer">
+                              {item.title}
+                            </a>
+                          )}
+                      </h3>
+                    </div>
+                    <p className={css.paperCardMeta}>
+                      {item.authors.length > 0 && `${item.authors.join('，')} · `}
+                      {item.year}
+                    </p>
+                  </article>
+                ))}
+              </div>
+            </>
+          ) : zoteroSearch.status === 'loading' ? (
             <p className={css.hint}>{t('papers.searching')}</p>
           ) : zoteroSearch.status === 'error' ? (
             <p className={css.failure} role="alert">

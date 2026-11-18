@@ -556,6 +556,12 @@ export interface ResearchArxivSearchView {
   readonly status: 'loading' | 'ready' | 'error'
   readonly list: readonly ArxivEntry[]
   readonly failure: ResearchFailureView | null
+  /**
+   * The superseded outcome while this one is still in flight (#208); null
+   * otherwise. A new query no longer blanks the panel: the old rows stay
+   * visible under a loading marker and are swapped out when the reply lands.
+   */
+  readonly previous: { readonly query: string; readonly list: readonly ArxivEntry[] } | null
 }
 
 /** The web search panel: the last query's outcome (null before any search). */
@@ -564,6 +570,8 @@ export interface ResearchWebSearchView {
   readonly status: 'loading' | 'ready' | 'error'
   readonly list: readonly WebSearchEntry[]
   readonly failure: ResearchFailureView | null
+  /** The superseded outcome while this one is in flight (#208); see the arXiv slice. */
+  readonly previous: { readonly query: string; readonly list: readonly WebSearchEntry[] } | null
 }
 
 /** The papers view's Zotero section: connection status plus the collection list. */
@@ -584,6 +592,8 @@ export interface ResearchZoteroSearchView {
   readonly status: 'loading' | 'ready' | 'error'
   readonly list: readonly ZoteroItemView[]
   readonly failure: ResearchFailureView | null
+  /** The superseded outcome while this one is in flight (#208); see the arXiv slice. */
+  readonly previous: { readonly query: string; readonly list: readonly ZoteroItemView[] } | null
 }
 
 /** The arXiv subscription bar of the papers view. */
@@ -3063,8 +3073,14 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (trimmed === '') return
     this.arxivGeneration += 1
     const generation = this.arxivGeneration
+    // #208: keep the superseded rows visible while this query is in flight —
+    // blanking the panel reads as "no results", which is a different answer.
+    const settled = this.view.arxivSearch
+    const previous = settled === null || settled.list.length === 0
+      ? null
+      : Object.freeze({ query: settled.query, list: settled.list })
     this.publish({
-      arxivSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null }),
+      arxivSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null, previous }),
     })
     void (async (): Promise<void> => {
       const publishSearch = (view: ResearchArxivSearchView): void => {
@@ -3075,12 +3091,12 @@ export class ResearchController implements HostObservable<ResearchView> {
         const carried = await this.remote.searchArxiv({ query: trimmed })
         const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure, previous: null })
           return
         }
-        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
+        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null, previous: null })
       } catch (error) {
-        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error) })
+        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error), previous: null })
       }
     })()
   }
@@ -3097,8 +3113,14 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (trimmed === '') return
     this.webGeneration += 1
     const generation = this.webGeneration
+    // #208: keep the superseded rows visible while this query is in flight —
+    // blanking the panel reads as "no results", which is a different answer.
+    const settled = this.view.webSearch
+    const previous = settled === null || settled.list.length === 0
+      ? null
+      : Object.freeze({ query: settled.query, list: settled.list })
     this.publish({
-      webSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null }),
+      webSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null, previous }),
     })
     void (async (): Promise<void> => {
       const publishSearch = (view: ResearchWebSearchView): void => {
@@ -3109,12 +3131,12 @@ export class ResearchController implements HostObservable<ResearchView> {
         const carried = await this.remote.searchWeb({ query: trimmed })
         const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure, previous: null })
           return
         }
-        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
+        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null, previous: null })
       } catch (error) {
-        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error) })
+        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error), previous: null })
       }
     })()
   }
@@ -3359,8 +3381,14 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (trimmed === '') return
     this.zoteroGeneration += 1
     const generation = this.zoteroGeneration
+    // #208: keep the superseded rows visible while this query is in flight —
+    // blanking the panel reads as "no results", which is a different answer.
+    const settled = this.view.zoteroSearch
+    const previous = settled === null || settled.list.length === 0
+      ? null
+      : Object.freeze({ query: settled.query, list: settled.list })
     this.publish({
-      zoteroSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null }),
+      zoteroSearch: Object.freeze({ query: trimmed, status: 'loading', list: Object.freeze([]), failure: null, previous }),
     })
     void (async (): Promise<void> => {
       const publishSearch = (view: ResearchZoteroSearchView): void => {
@@ -3371,12 +3399,12 @@ export class ResearchController implements HostObservable<ResearchView> {
         const carried = await this.remote.searchZotero({ query: trimmed })
         const result = unwrapRemote(carried)
         if (!result.ok) {
-          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure })
+          publishSearch({ query: trimmed, status: 'error', list: [], failure: result.failure, previous: null })
           return
         }
-        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null })
+        publishSearch({ query: trimmed, status: 'ready', list: result.value.results, failure: null, previous: null })
       } catch (error) {
-        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error) })
+        publishSearch({ query: trimmed, status: 'error', list: [], failure: transportFailure(error), previous: null })
       }
     })()
   }
