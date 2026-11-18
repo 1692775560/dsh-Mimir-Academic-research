@@ -1106,6 +1106,42 @@ export interface ResearchBackupStatusView {
   readonly lastError: string | null
 }
 
+/**
+ * The plugin's capability layers (#242). A capability is a product domain the
+ * composition can switch off without losing the rest: the panel keeps its
+ * Core views, and the disabled layer's views, tools and Remote surface stop
+ * being advertised.
+ *
+ * The layering exists because one plugin now carries five product domains
+ * (research, literature automation, remote compute, insight, presentation),
+ * and every new feature used to touch Config, Remote, controller and the
+ * navigation at once. Naming the layers gives a new feature a place to land
+ * that is not "the core path".
+ */
+export type ResearchCapability =
+  | 'core'
+  | 'automation'
+  | 'compute'
+  | 'insights'
+  | 'presentation'
+
+/**
+ * `getCapabilities` view: which capability layers this composition enabled.
+ *
+ * The panel renders navigation from this rather than from a static tab list,
+ * so a layer switched off in Config is absent from the rail — not greyed out,
+ * absent. `core` is always present: it is the layer that has no switch.
+ */
+export interface ResearchCapabilitiesView {
+  /** Enabled layers, in declaration order; always starts with `core`. */
+  readonly enabled: readonly ResearchCapability[]
+  /** Layers named in Config but switched off for this composition. */
+  readonly disabled: readonly ResearchCapability[]
+}
+
+/** `getCapabilities` result: the enabled capability layers. */
+export type ResearchGetCapabilitiesResult = ResearchResult<ResearchCapabilitiesView>
+
 /** `listBackups` result: the backup status line for the overview. */
 export type ResearchListBackupsResult = ResearchResult<{ readonly backup: ResearchBackupStatusView }>
 

@@ -20,13 +20,14 @@ import type { ResearchKey } from './locales.ts'
 import { arrowTab, trapFocusIndex } from './focus.ts'
 import { cleanProjectTitle, nextSelectionAfterDelete } from './project-form.ts'
 import { failureCopy } from './view-common.ts'
-import type { ResearchFailureView } from './controller.ts'
+import type { ResearchCapabilitySet, ResearchFailureView } from './controller.ts'
 import { readSidebarFolded, SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue } from './sidebar-fold.ts'
 import { readStorageFlag, readStorageValue, storageFlagValue, writeStorageValue } from './storage.ts'
-import { shortcutFor, TABS } from './shortcuts.ts'
+import { shortcutFor } from './shortcuts.ts'
 import { countUpcomingDeadlines } from './venues-view.ts'
 import { LOAD_MATRIX, SLICES_BY_TAB } from './slice-policy.ts'
 import type { ResearchPanelProps } from './slots.ts'
+import type { ResearchCapability } from 'dsh-mimir/types'
 import { OverviewView } from './OverviewView.tsx'
 import { PaperView } from './PaperView.tsx'
 import { PapersView } from './PapersView.tsx'
@@ -51,6 +52,49 @@ const TAB_KEYS: Record<ResearchTab, ResearchKey> = {
   servers: 'tab.servers',
   ledger: 'tab.ledger',
   venues: 'tab.venues',
+}
+
+/**
+ * Which capability layer each view belongs to (#242). A view whose layer the
+ * host disabled is absent from the rail: the audit's complaint was that
+ * switched-off product domains still occupy the main path, and a greyed-out
+ * tab occupies it just the same.
+ *
+ * `insights` covers the views that read the growth record rather than the
+ * paper: the ledger and the briefing surfaces inside Overview. It maps to the
+ * bundled-skills switch because insights are what that layer contributes —
+ * writing the panel's views into a layer of their own would add a sixth switch
+ * nobody asked for.
+ */
+const TAB_CAPABILITY: Record<ResearchTab, ResearchCapability> = {
+  overview: 'core',
+  paper: 'core',
+  papers: 'core',
+  experiments: 'core',
+  figures: 'presentation',
+  meetings: 'presentation',
+  venues: 'automation',
+  servers: 'compute',
+  ledger: 'insights',
+}
+
+/** The rail order: main-path views first, then the capability-gated ones. */
+const TAB_ORDER: readonly ResearchTab[] = Object.freeze([
+  'overview', 'paper', 'papers', 'experiments', 'figures', 'meetings', 'venues', 'servers', 'ledger',
+])
+
+/**
+ * The views this panel may render, given the host's enabled layers.
+ *
+ * `capabilities` is null until `getCapabilities` answers; the full rail is the
+ * right answer then, because hiding a view on a request that has not failed is
+ * worse than showing one that a later answer removes.
+ * @param capabilities - enabled layers, or null while unknown.
+ * @returns the visible tabs in rail order.
+ */
+export function visibleTabs(capabilities: ResearchCapabilitySet): readonly ResearchTab[] {
+  if (capabilities === null) return TAB_ORDER
+  return TAB_ORDER.filter(tab => capabilities.has(TAB_CAPABILITY[tab]))
 }
 
 /** One 16×16 stroke icon per tab, painted in the nav item's currentColor. */
@@ -201,6 +245,7 @@ export function ResearchPanel({
   const paperFullscreen = useStore(state => state.paperFullscreen)
   const dark = useChrome(chrome => chrome.dark)
   const locale = useChrome(chrome => chrome.locale)
+  const capabilities = useResearch(view => view.capabilities)
   const projects = useResearch(view => view.projects)
   const projectsStatus = useResearch(view => view.projectsStatus)
   const outline = useResearch(view => view.outline)
@@ -325,7 +370,8 @@ export function ResearchPanel({
     const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
     const root = rootRef.current
     const tabs = root?.querySelectorAll<HTMLElement>('[role="tab"]')
-    const active = tabs?.[TABS.indexOf(activeTab)]
+    const visible = visibleTabs(capabilities)
+    const active = tabs?.[visible.indexOf(activeTab)]
     ;(active ?? root?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR))?.focus()
     return () => { previous?.focus() }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
@@ -364,6 +410,7 @@ export function ResearchPanel({
         altKey: event.altKey,
         editable: isEditableTarget(event.target),
         fullscreen: paperFullscreen !== null,
+        rail: visibleTabs(capabilities),
       })
       if (action === null) return
       event.preventDefault()
@@ -515,15 +562,16 @@ export function ResearchPanel({
           role="tablist"
           aria-label={t('panel.views')}
           onKeyDown={(event) => {
-            const next = arrowTab(activeTab, event.key)
+            const rail = visibleTabs(capabilities)
+            const next = arrowTab(activeTab, event.key, rail)
             if (next === null) return
             event.preventDefault()
             actions.setTab(next)
             const tabs = event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
-            tabs[TABS.indexOf(next)]?.focus()
+            tabs[rail.indexOf(next)]?.focus()
           }}
         >
-          {TABS.map(tab => (
+          {visibleTabs(capabilities).map(tab => (
             <button
               key={tab}
               type="button"

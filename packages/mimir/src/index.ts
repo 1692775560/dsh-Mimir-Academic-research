@@ -13,6 +13,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http'
 import { createRequire } from 'node:module'
 import { basename, dirname, extname, join, resolve, sep } from 'node:path'
 import type { Context } from '@deepseek-ai/cordis'
+import type { ResearchCapabilitiesView, ResearchCapability } from './types.ts'
 import z from '@deepseek-ai/schemastery'
 // Type-only: pulls the ctx.webServer Context merge for the PDF route below.
 import type {} from '@deepseek-ai/dsh-host-webserver'
@@ -104,6 +105,9 @@ export type {
   ResearchImportProjectRequest,
   ResearchImportProjectResult,
   ResearchImportedProject,
+  ResearchGetCapabilitiesResult,
+  ResearchCapabilitiesView,
+  ResearchCapability,
   ResearchListBackupsResult,
   ResearchListJobsResult,
   ResearchListProjectsResult,
@@ -610,6 +614,11 @@ export interface Config {
   }
 }
 
+/** The layer set, in the order the panel reports it (#242). */
+const ALL_CAPABILITIES: readonly ResearchCapability[] = Object.freeze([
+  'core', 'automation', 'compute', 'insights', 'presentation',
+])
+
 /** Schemastery configuration for the research suite. */
 /**
  * One default per knob (#218).
@@ -689,6 +698,8 @@ export const Config: z<Config> = z.object({
  * declaration — which is exactly the drift this issue was about. (`Config`'s
  * schema parameter only carries the input type, so the output cannot be
  * recovered from the schema value; `DEFAULTS` is the part that can.)
+ * `capabilities` is derived, never defaulted (#242), so it is intersected on
+ * top of the widened shape.
  */
 type Widen<T> = T extends string ? string
   : T extends number ? number
@@ -696,10 +707,16 @@ type Widen<T> = T extends string ? string
   : T extends object ? { readonly [K in keyof T]: Widen<T[K]> }
   : T
 
-type ResolvedConfig = Widen<typeof DEFAULTS>
+type ResolvedConfig = Widen<typeof DEFAULTS> & { readonly capabilities: ResearchCapabilitiesView }
 
-/** Validate defaults even when a caller invokes apply() without Loader normalization. */
-function resolveConfig(config: Config): ResolvedConfig {
+/**
+ * Fill in every default and derive what is derived (#218, #242). Exported for
+ * the config tests: this is the seam every knob is checked at. Validates the
+ * defaults even when a caller invokes apply() without Loader normalization.
+ * @param config - the raw Loader config.
+ * @returns the normalized config the plugin applies.
+ */
+export function resolveConfig(config: Config): ResolvedConfig {
   // Every fallback reads DEFAULTS — the same objects the schema applies, so a
   // caller that bypasses Loader normalization and one that does not end up
   // with one set of numbers (#218).
@@ -753,7 +770,21 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(backup.intervalMinutes) || backup.intervalMinutes < 1) throw new TypeError('backup.intervalMinutes must be a positive safe integer')
   if (!Number.isSafeInteger(backup.keep) || backup.keep < 1) throw new TypeError('backup.keep must be a positive safe integer')
   if (backup.dir.trim().length === 0) throw new TypeError('backup.dir must be a non-empty path')
-  return { workspaceDir, reviewer, latex, arxiv, search, zotero, subscriptions, backup, skills, serverTools }
+  // The capability layers are derived, never configured (#242): a second place
+  // to state which layer is on would be a second place to disagree with the
+  // switch that actually gates the feature.
+  const layers: readonly ResearchCapability[] = Object.freeze([
+    'core',
+    ...(subscriptions.enabled ? ['automation'] as const : []),
+    ...(serverTools.enabled ? ['compute'] as const : []),
+    ...(skills.enabled ? ['insights'] as const : []),
+    'presentation',
+  ])
+  const capabilities: ResearchCapabilitiesView = Object.freeze({
+    enabled: layers,
+    disabled: Object.freeze(ALL_CAPABILITIES.filter(layer => !layers.includes(layer))),
+  })
+  return { workspaceDir, reviewer, latex, arxiv, search, zotero, subscriptions, backup, skills, serverTools, capabilities }
 }
 
 /**
@@ -1388,6 +1419,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
       ...(resolved.zotero === undefined ? {} : { zotero: resolved.zotero }),
       taskHealth,
       notifyWikiChange: event => wikiChangeHub.publish(event),
+      capabilities: resolved.capabilities,
     },
   })
 

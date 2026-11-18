@@ -66,6 +66,9 @@ import type {
   ResearchImportProjectResult,
   ResearchImportWikiMode,
   ResearchImportWikiResult,
+  ResearchCapabilitiesView,
+  ResearchCapability,
+  ResearchGetCapabilitiesResult,
   ResearchListBackupsResult,
   ResearchListEventsResult,
   ResearchListJobsResult,
@@ -154,6 +157,11 @@ declare module '@deepseek-ai/cordis' {
 }
 
 /** Everything the service needs from the plugin's apply scope. */
+/** Every capability layer, in declaration order (#242). */
+const ALL_CAPABILITIES: readonly ResearchCapability[] = Object.freeze([
+  'core', 'automation', 'compute', 'insights', 'presentation',
+])
+
 export interface ResearchServiceConfig {
   /** Absolute research workspace root (already resolved by the plugin). */
   readonly workspaceDir: string
@@ -232,6 +240,12 @@ export interface ResearchServiceConfig {
     readonly timeoutMs?: number | undefined
     readonly maxBufferBytes?: number | undefined
   } | undefined
+  /**
+   * The capability layers this composition enabled (#242). Absent in tests
+   * and direct constructions, where every layer is on: the panel then shows
+   * its full rail, which is what a bare service has always done.
+   */
+  readonly capabilities?: ResearchCapabilitiesView
 }
 
 /**
@@ -271,6 +285,7 @@ export class ResearchService extends TypertRemoteService {
         ...(config.notifyWikiChange === undefined ? {} : { notifyWikiChange: config.notifyWikiChange }),
         ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
         ...(config.jobs === undefined ? {} : { jobs: config.jobs }),
+        ...(config.capabilities === undefined ? {} : { capabilities: config.capabilities }),
       },
     })
     this.state = {
@@ -783,6 +798,22 @@ export class ResearchService extends TypertRemoteService {
   @Remote('listBackups')
   listBackups(): Promise<ResearchListBackupsResult> {
     return wikiAdmin.listBackups(this.deps)
+  }
+
+  /**
+   * The enabled capability layers (#242). The panel renders its navigation
+   * from this, so a layer switched off in Config is absent from the rail
+   * rather than present-but-dead.
+   */
+  @Remote('getCapabilities')
+  getCapabilities(): Promise<ResearchGetCapabilitiesResult> {
+    // An unwired service (tests, direct construction) reports every layer on:
+    // the panel then renders its full rail, which is what a bare service has
+    // always done.
+    return Promise.resolve(success(this.deps.capabilities ?? {
+      enabled: ALL_CAPABILITIES,
+      disabled: Object.freeze([]),
+    }))
   }
 
   /**
