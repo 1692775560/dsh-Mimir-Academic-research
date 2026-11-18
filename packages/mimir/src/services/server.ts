@@ -190,6 +190,38 @@ async function sshInvocation(server: ServerRecord, remoteCommand: string): Promi
 }
 
 /**
+ * Parse one `nvidia-smi --query-gpu` CSV row (#236), or null when the row
+ * cannot be trusted.
+ *
+ * Two ways a row lies: a non-numeric field becomes `NaN`/`Infinity`, and — the
+ * quieter one — an EMPTY field becomes `0`, because `Number('') === 0`. The
+ * second is the dangerous one: `gpu0, , ,` used to store a perfectly
+ * plausible-looking idle GPU at 0% with 0 MiB used, and a zero is
+ * indistinguishable from a real reading downstream. Both are refused, so a
+ * missing field stays missing instead of turning into data.
+ * @param line - one trimmed output line, `name,util,usedMb,totalMb`.
+ * @returns the GPU row, or null when the line is malformed.
+ */
+export function parseGpuLine(line: string): ServerGpuView | null {
+  const trimmed = line.trim()
+  if (trimmed === '') return null
+  const fields = trimmed.split(',').map(field => field.trim())
+  if (fields.length < 4) return null
+  // `noUncheckedIndexedAccess` is on: index explicitly, then narrow.
+  const name = fields[0] ?? ''
+  const utilizationPct = fields[1] ?? ''
+  const memoryUsedMb = fields[2] ?? ''
+  const memoryTotalMb = fields[3] ?? ''
+  // An empty field is not a zero: `Number('')` would make it one.
+  if (name === '' || utilizationPct === '' || memoryUsedMb === '' || memoryTotalMb === '') return null
+  const utilization = Number(utilizationPct)
+  const usedMb = Number(memoryUsedMb)
+  const totalMb = Number(memoryTotalMb)
+  if (!Number.isFinite(utilization) || !Number.isFinite(usedMb) || !Number.isFinite(totalMb)) return null
+  return { name, utilizationPct: utilization, memoryUsedMb: usedMb, memoryTotalMb: totalMb }
+}
+
+/**
  * Read one server's GPU table over ssh. Best-effort: an ssh or `nvidia-smi`
  * failure is the `ok: false` branch, never a rejection, so the caller can
  * still report the server itself as reachable.
@@ -206,21 +238,8 @@ async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
     })
     const gpus: ServerGpuView[] = []
     for (const line of stdout.split('\n')) {
-      const trimmed = line.trim()
-      if (trimmed === '') continue
-      const [name, utilizationPct, memoryUsedMb, memoryTotalMb] = trimmed.split(',').map(field => field.trim())
-      const utilization = Number(utilizationPct)
-      const usedMb = Number(memoryUsedMb)
-      const totalMb = Number(memoryTotalMb)
-      // #236: a malformed nvidia-smi row (NaN/Infinity) is skipped outright,
-      // never stored as a NaN bar.
-      if (!Number.isFinite(utilization) || !Number.isFinite(usedMb) || !Number.isFinite(totalMb)) continue
-      gpus.push({
-        name: name ?? '',
-        utilizationPct: utilization,
-        memoryUsedMb: usedMb,
-        memoryTotalMb: totalMb,
-      })
+      const gpu = parseGpuLine(line)
+      if (gpu !== null) gpus.push(gpu)
     }
     return { ok: true, gpus: Object.freeze(gpus) }
   } catch (error) {
@@ -249,6 +268,15 @@ async function probeGpus(record: ServerRecord): Promise<GpuProbeOutcome> {
  */
 const SSH_TOKEN_RE = /^[a-zA-Z0-9._:-]+$/
 const SSH_USERNAME_RE = /^[a-zA-Z0-9._-]+$/
+/**
+ * A shape check is not an answer (#236). The whitelist above admits `::`, `..`
+ * and `.`, which are characters without being a destination; and a bare colon
+ * is worse than useless, because ssh reads `user@host:port` in its own target
+ * grammar, so a colon inside the stored host silently changes which port is
+ * dialled. Both are refused here so the failure names the field the user can
+ * fix instead of surfacing as an ssh connect error a layer below.
+ */
+const SEPARATORS_ONLY_RE = /^[.:_-]+$/
 
 /**
  * Password bounds (#263): the cap exists only so a pathological payload
@@ -261,15 +289,47 @@ const SSH_USERNAME_RE = /^[a-zA-Z0-9._-]+$/
 const SERVER_PASSWORD_MAX_CHARS = 256
 const SERVER_PASSWORD_CONTROL_RE = /[\x00-\x1f\x7f]/
 
-/** First invalid-input message for one server upsert payload, or null when valid. */
-function validateServerInput(input: ServerInput): string | null {
+/**
+ * Whether a host carries its port in ssh's target grammar.
+ *
+ * `ssh user@host:port` splits on the colon, so a colon inside the stored host
+ * silently changes which port is dialled while the record's port field says
+ * otherwise. One colon outside brackets can only be that suffix — two or more
+ * belong to an IPv6 literal (`::1`, `fe80::1c:2f`), which keeps its colons.
+ * @param host - the whitelisted host token.
+ * @returns true when the trailing colon group is a port, not an address.
+ */
+function isPortSuffix(host: string): boolean {
+  const bare = host.startsWith('[') && host.endsWith(']') ? host.slice(1, -1) : host
+  // `[::1]:22` is a port suffix on a bracketed literal; `::1` and `fe80::1c:2f`
+  // are not. One colon outside brackets can only be a port separator.
+  return (bare.match(/:/g)?.length ?? 0) === 1
+}
+
+/**
+ * First invalid-input message for one server upsert payload, or null when valid.
+ *
+ * Exported for the tests (#236): the checks are a contract about which stored
+ * records can exist, and the cheapest place to hold that contract is where it
+ * can be read, not through a tool call that has to reach ssh first.
+ * @param input - the payload as the panel or tool handed it over.
+ * @returns the first violation, or null when the payload is acceptable.
+ */
+export function validateServerInput(input: ServerInput): string | null {
   if (input.name.trim().length === 0) return 'name must be non-empty'
   if (input.host.trim().length === 0) return 'host must be non-empty'
-  if (input.host.startsWith('-') || !SSH_TOKEN_RE.test(input.host)) {
+  if (input.host.startsWith('-') || !SSH_TOKEN_RE.test(input.host) || SEPARATORS_ONLY_RE.test(input.host)) {
     return 'host must be a plain hostname or IP (letters, digits, dots, dashes, colons)'
   }
+  // ssh's own target grammar splits on the colon, so `gpu01:2222` here would
+  // dial 2222 while the record's port field said otherwise. A single colon is
+  // always a port suffix; two or more belong to an IPv6 literal.
+  if (isPortSuffix(input.host)) {
+    return 'host must not contain a port; set the port field instead'
+  }
   if (input.username !== undefined && input.username.trim() !== ''
-    && (input.username.startsWith('-') || !SSH_USERNAME_RE.test(input.username))) {
+    && (input.username.startsWith('-') || !SSH_USERNAME_RE.test(input.username)
+      || SEPARATORS_ONLY_RE.test(input.username))) {
     return 'username must be a plain ssh login user (letters, digits, dots, dashes, underscores)'
   }
   if (!Number.isInteger(input.port) || input.port < 1 || input.port > 65535) {
