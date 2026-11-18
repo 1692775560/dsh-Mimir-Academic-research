@@ -113,23 +113,68 @@ fi
 # 5. point the digdig CLI at it (schema mirrors digdig's config file —
 #    ./digdig.config.json or ~/digdig/digdig.config.json, first found wins;
 #    OLLAMA_API_KEY / SEARXNG_* env vars override at runtime).
+#
+#    MERGE, never rewrite. This file also holds the user's own keys
+#    (ollamaApiKey, deepseekApiKey) and anything their digdig version added;
+#    re-running this script must not clear them. Only `baseUrl` is ours to
+#    set — every other key keeps the value already on disk, and the defaults
+#    below merely fill in what the file does not have yet.
 mkdir -p "$HOME/digdig"
-cat > "$HOME/digdig/digdig.config.json" <<JSON
-{
-  "baseUrl": "${BASE_URL}",
-  "defaultEngine": "",
-  "allowedEngines": [],
-  "defaultLimit": 10,
-  "defaultFormat": "md",
-  "useProxy": false,
-  "proxyUrl": "",
-  "timeout": 30000,
-  "ollamaApiKey": "",
-  "deepseekApiKey": "",
-  "redundancyThreshold": 0.7,
-  "redundancyBigramThreshold": 0.5
+python3 - "$HOME/digdig/digdig.config.json" "$BASE_URL" <<'PY'
+import json, os, sys, tempfile
+
+path, base_url = sys.argv[1], sys.argv[2]
+
+# What a fresh install gets. Existing keys always win over these.
+defaults = {
+    'defaultEngine': '',
+    'allowedEngines': [],
+    'defaultLimit': 10,
+    'defaultFormat': 'md',
+    'useProxy': False,
+    'proxyUrl': '',
+    'timeout': 30000,
+    'ollamaApiKey': '',
+    'deepseekApiKey': '',
+    'redundancyThreshold': 0.7,
+    'redundancyBigramThreshold': 0.5,
 }
-JSON
+
+existing = {}
+if os.path.exists(path):
+    try:
+        with open(path, encoding='utf-8') as handle:
+            existing = json.load(handle)
+    except (OSError, ValueError) as error:
+        # A file we cannot parse is the user's, not ours to flatten.
+        sys.exit(f'error: cannot parse {path}: {error}; fix or move it, then re-run')
+    if not isinstance(existing, dict):
+        sys.exit(f'error: {path} is not a JSON object; fix or move it, then re-run')
+
+merged = {**defaults, **existing, 'baseUrl': base_url}
+
+# Atomic write: a crash mid-write must not leave a truncated config behind.
+directory = os.path.dirname(path) or '.'
+handle, temp_path = tempfile.mkstemp(dir=directory, prefix='.digdig.config.', suffix='.tmp')
+try:
+    with os.fdopen(handle, 'w', encoding='utf-8') as out:
+        json.dump(merged, out, indent=2, ensure_ascii=False)
+        out.write('\n')
+    os.replace(temp_path, path)
+except BaseException:
+    if os.path.exists(temp_path):
+        os.unlink(temp_path)
+    raise
+
+kept_defaults = len(existing)
+unknown = sorted(set(existing) - {'baseUrl'} - set(defaults))
+note = f'>> digdig config merged: baseUrl={base_url}'
+if kept_defaults:
+    note += f', kept {kept_defaults} existing key(s)'
+if unknown:
+    note += f', preserved unknown: {", ".join(unknown)}'
+print(note)
+PY
 
 # health check
 if curl -sf -m 10 "${BASE_URL}/search?q=mimir&format=json" >/dev/null 2>&1; then
