@@ -241,6 +241,36 @@
   padding: 4px 12px 16px;
 }
 
+/* The "More" folder (#243): the low-frequency tier folds into one row so the
+   main path stays scannable. The summary is the row itself; the list drops
+   out of flow beneath it, so the rail order never shifts. */
+.navMore {
+  display: contents;
+}
+
+.navMore > summary {
+  list-style: none;
+  cursor: pointer;
+}
+
+.navMore > summary::-webkit-details-marker {
+  display: none;
+}
+
+/* A view behind the folder still lights its entry: the rail must never look
+   like nothing is selected. */
+.navMore[data-lit] > summary {
+  color: var(--dsw-alias-text-primary, inherit);
+  font-weight: 600;
+}
+
+.navMoreList {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding-left: 10px;
+}
+
 .navItem {
   position: relative;
   display: flex;

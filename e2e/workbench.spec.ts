@@ -88,6 +88,10 @@ async function openWorkbench(page: import('@playwright/test').Page) {
 
 test('the panel boots against this checkout and renders every view', async ({ page }, testInfo) => {
   const workbench = await openWorkbench(page)
+  // The low-frequency views live behind the rail's More disclosure (#243);
+  // expanding it keeps every tab reachable for this walk.
+  const more = workbench.getByRole('tab', { name: /更多|More/ }).first()
+  if (await more.count() > 0) await more.click()
   // Tab labels carry live count suffixes ("文献 48"), so match prefixes.
   const tabs = [
     /总览|Overview/, /^论文|^Paper/, /^文献|^Library/,
