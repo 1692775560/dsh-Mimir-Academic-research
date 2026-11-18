@@ -8,7 +8,10 @@ import { typertPlugin } from '@deepseek-ai/dsh-typert-generator/tsdown'
 // would analyze the vendored protocol package too, which fails on merged
 // interfaces partly owned by npm releases.
 export default defineConfig({
-  entry: ['lib/types/index.js'],
+  // Two entries since #244: the plugin root, and the experimental surface that
+  // moved off it. Both are bundled so `dsh-mimir/experimental` resolves at
+  // runtime, not only in types.
+  entry: ['lib/types/index.js', 'lib/types/experimental.js'],
   outDir: 'lib',
   format: ['esm'],
   platform: 'node',

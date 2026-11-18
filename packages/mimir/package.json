@@ -26,6 +26,10 @@
       "types": "./lib/types/types.d.ts",
       "default": "./lib/types/types.js"
     },
+    "./experimental": {
+      "types": "./lib/types/experimental.d.ts",
+      "default": "./lib/experimental.js"
+    },
     "./typert": {
       "types": "./lib/typert.host.d.ts",
       "default": "./lib/typert.host.js"
