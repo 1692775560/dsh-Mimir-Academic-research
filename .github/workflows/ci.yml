@@ -25,6 +25,9 @@ jobs:
       - name: Style gate (CODE_STYLE mechanically-decidable rules)
         run: node scripts/check-style.mjs
 
+      - name: Lint gate (type-aware: floating promises and friends)
+        run: pnpm run lint
+
       - name: "Build (ordered: mimir tsc+bundle, then ui-mimir tsc+bundle)"
         run: pnpm run build
 
