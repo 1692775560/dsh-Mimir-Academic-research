@@ -332,28 +332,31 @@ describe('ResearchService linked-experiment stale-settle guard', () => {
     return { ctx, domain, workspaceDir, service, submit }
   }
 
-  it('does not let an old job settling last overwrite the newer job’s write-back', async () => {
+  it('waits for the last completion instead of trusting the submit order', async () => {
+    // #224 rewrote what this case asserts. It used to pin "an older job settling
+    // last must not overwrite the newer job's write-back", i.e. newest-submitted
+    // wins. That was the implicit rule the issue asked to make explicit, and it
+    // is the wrong answer for an experiment's current status: the field reports
+    // which run finished most recently. So while a sibling is still in flight
+    // nothing may claim a terminal status — and once it settles, IT owns the
+    // record. Both lines still land in the log.
     const { domain, service, workspaceDir, submit } = await linkedHarness()
     const older = await submit('mimir-slow python train.py --epochs 20')
-    const newer = await submit('python train.py --epochs 1')
+    const newer = await submit('echo python train.py --epochs 1')
 
-    // The newer job settles first and owns the experiment's state.
+    // The newer job settles first, but the older one is still running, so the
+    // record must stay `running` rather than adopt the newer outcome.
     const settledNewer = await settleJob(service, newer.id)
     expect(settledNewer.status).toBe('succeeded')
-    expect(domain.table('experiments').get(EXPERIMENT.id)).toMatchObject({
-      status: 'success',
-      lastJob: { jobId: newer.id, status: 'succeeded' },
-    })
+    expect(domain.table('experiments').get(EXPERIMENT.id)).toMatchObject({ status: 'running' })
 
-    // The older job settles late: its outcome lands only in the log, the
-    // record keeps the newer job's status and `lastJob`.
+    // The older job then finishes: it is the latest completion and owns the
+    // record, whichever order they were submitted in.
     const settledOlder = await settleJob(service, older.id)
     expect(settledOlder.status).toBe('succeeded')
-    // Give the (skipped) write-back a beat to prove it stays skipped.
-    await new Promise(resolve => setTimeout(resolve, 100))
     expect(domain.table('experiments').get(EXPERIMENT.id)).toMatchObject({
       status: 'success',
-      lastJob: { jobId: newer.id, status: 'succeeded' },
+      lastJob: { jobId: older.id, status: 'succeeded' },
     })
     const log = await readFile(join(workspaceDir, 'EXPERIMENT_LOG.md'), 'utf8')
     expect(log).toContain(`job ${newer.id} succeeded`)
