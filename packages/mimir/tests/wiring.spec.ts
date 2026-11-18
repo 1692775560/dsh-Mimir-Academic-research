@@ -91,7 +91,7 @@ describe('buildDeps is the only mapping (#231)', () => {
     // `in`-style presence, not truthiness: the service branches on `=== undefined`
     // but a spread of an explicit `undefined` would still be a key it must not
     // see under exactOptionalPropertyTypes.
-    for (const key of ['backup', 'search', 'arxiv', 'svg', 'zotero', 'meetings', 'taskHealth', 'jobs', 'capabilities']) {
+    for (const key of ['backup', 'search', 'arxiv', 'svg', 'zotero', 'meetings', 'taskHealth', 'jobs', 'capabilities', 'metrics']) {
       expect(Object.hasOwn(deps, key)).toBe(false)
     }
   })

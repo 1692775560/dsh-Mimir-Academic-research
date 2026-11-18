@@ -234,6 +234,14 @@ export interface ExperimentRecord {
    * predating the field read as absent).
    */
   readonly lastJob?: ExperimentJobOutcome | undefined
+  /**
+   * Whether this record is an automatic draft captured from a run's
+   * `metrics.jsonl` instead of typed by the user (#152). A draft is a real
+   * record — it carries the metrics and the guessed preference directions —
+   * but the panel marks it so nobody mistakes a machine's guess for a
+   * reviewed result. Absent reads as `false` (every record predating #152).
+   */
+  readonly draft?: boolean | undefined
   /** ISO-8601 timestamp of the last write. */
   readonly updatedAt: string
 }
@@ -256,6 +264,18 @@ export interface JobRecord {
   readonly status: JobStatus
   /** Experiment record the job is linked to, when given at submit time. */
   readonly experimentId?: string | undefined
+  /**
+   * Wiki project the job's captured metrics belong to (#152). Absent means the
+   * job cannot seed an experiment draft: a draft with no project would be
+   * orphaned from every view that lists experiments.
+   */
+  readonly projectId?: string | undefined
+  /**
+   * Directory the remote command runs in, absolute on the server (#152).
+   * Metrics are read from `<workdir>/metrics.jsonl` when the job succeeds;
+   * absent means the job opts out of automatic capture.
+   */
+  readonly workdir?: string | undefined
   /** Remote exit code; null until the job settles (and on a spawn/timeout failure). */
   readonly exitCode: number | null
   /** The last chunk of the job's stdout (empty until the job settles). */

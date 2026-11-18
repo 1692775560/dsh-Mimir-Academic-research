@@ -64,5 +64,6 @@ export function buildDeps(wiring: ResearchWiring): ResearchServiceConfig {
   if (config.taskHealth !== undefined) deps.taskHealth = config.taskHealth
   if (config.jobs !== undefined) deps.jobs = config.jobs
   if (config.capabilities !== undefined) deps.capabilities = config.capabilities
+  if (config.metrics !== undefined) deps.metrics = config.metrics
   return deps
 }

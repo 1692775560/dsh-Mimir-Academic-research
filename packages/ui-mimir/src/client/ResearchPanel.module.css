@@ -2547,6 +2547,19 @@ li.dropIndicator {
   font-size: 12px;
 }
 
+/** Badge marking an experiment record the panel captured from a run (#152). */
+.experimentDraft {
+  margin-left: 6px;
+  padding: 0 6px;
+  border: 1px dashed currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 16px;
+  opacity: 0.75;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
 .experimentStatus[data-status='running'] {
   background: var(--dsw-alias-state-business-tertiary, rgb(65 118 230 / 12%));
   color: var(--dsw-alias-state-business-primary, #4176e6);

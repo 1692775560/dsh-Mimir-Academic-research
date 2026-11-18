@@ -18,6 +18,7 @@ import { join } from 'node:path'
 import { promisify } from 'node:util'
 import { emitEvent, PANEL_ACTOR, SERVICE_ACTOR } from '../ledger.ts'
 import { isActiveJobStatus } from '../job-lifecycle.ts'
+import { summarizeMetrics } from '../metrics-summary.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type {
   ExperimentJobOutcome,
@@ -54,6 +55,16 @@ export interface ServerDeps {
     readonly timeoutMs?: number | undefined
     readonly maxBufferBytes?: number | undefined
   } | undefined
+  /**
+   * Metrics read behind #152's automatic capture; absent, the settle path
+   * runs {@link readMetricsOverSsh}. The seam exists because the capture is
+   * the only part of the settle path that needs a second ssh round-trip, and
+   * the three cases the issue asks for (a normal run, a file the server does
+   * not have, a corrupt file) are all text-in cases the parser owns.
+   */
+  readonly metrics?: {
+    readonly read: (server: ServerRecord, workdir: string) => Promise<string | undefined>
+  } | undefined
 }
 
 /** TCP reachability probe timeout; part of the checkServer probe contract. */
@@ -67,6 +78,16 @@ const NVIDIA_SMI_QUERY = 'nvidia-smi --query-gpu=name,utilization.gpu,memory.use
 
 /** Hard cap of one submitted command line (the durable record stores it verbatim). */
 const JOB_COMMAND_MAX_CHARS = 4000
+/** File a training run writes its per-step metrics to (#152). */
+const METRICS_FILE_NAME = 'metrics.jsonl'
+/** Hard cap of one remote `cat` — a summary is not a transcript. */
+const METRICS_MAX_CHARS = 1_000_000
+/** Timeout of the metrics read; a settle must never hang on it. */
+const METRICS_READ_TIMEOUT_MS = 15_000
+/** Longest remote workdir accepted at submit time. */
+const WORKDIR_MAX_CHARS = 1024
+/** Characters an absolute remote workdir may use; no shell metacharacters survive this. */
+const WORKDIR_RE = /^\/(?:[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)*)?$/
 /**
  * Kill timeout of one remote job's ssh session. Hitting it settles the job
  * `unknown` (#225): the session is dropped, so the remote outcome — including
@@ -567,6 +588,10 @@ export async function submitJob(
     serverId: string
     command: string
     experimentId?: string | undefined
+    /** Wiki project the captured metrics belong to (#152); absent opts out. */
+    projectId?: string | undefined
+    /** Absolute remote directory the command runs in (#152); absent opts out. */
+    workdir?: string | undefined
   },
 ): Promise<ResearchSubmitJobResult> {
   const server = deps.domain.table('servers').get(request.serverId)
@@ -585,6 +610,14 @@ export async function submitJob(
     && deps.domain.table('experiments').get(request.experimentId) === undefined) {
     return rejected({ code: 'experiment-not-found', id: request.experimentId })
   }
+  if (request.projectId !== undefined
+    && deps.domain.table('projects').get(request.projectId) === undefined) {
+    return rejected({ code: 'project-not-found', projectId: request.projectId })
+  }
+  if (request.workdir !== undefined) {
+    const problem = workdirProblem(request.workdir)
+    if (problem !== null) return rejected({ code: 'invalid-input', message: problem })
+  }
   state.jobSeq += 1
   const job: JobRecord = {
     id: `job-${Date.now().toString(36)}-${String(state.jobSeq)}`,
@@ -594,6 +627,8 @@ export async function submitJob(
     // Absent, never `undefined`: an explicit undefined key would pollute the
     // stored record and trip the gateway's JSON boundary validation.
     ...(request.experimentId === undefined ? {} : { experimentId: request.experimentId }),
+    ...(request.projectId === undefined ? {} : { projectId: request.projectId }),
+    ...(request.workdir === undefined ? {} : { workdir: request.workdir }),
     exitCode: null,
     stdoutTail: '',
     stderrTail: '',
@@ -883,6 +918,10 @@ async function finishJob(deps: ServerDeps, state: ServiceState, settled: JobReco
       },
     })
     await writeBackExperiment(deps, settled)
+    // #152: a successful run can seed an experiment record from its
+    // metrics.jsonl. Best-effort and last: capture must never delay or break
+    // the settle itself.
+    await captureMetricsDraft(deps, state, settled).catch(() => {})
   } finally {
     state.jobAborts.delete(settled.id)
     state.jobStopStatus.delete(settled.id)
@@ -1036,6 +1075,162 @@ function isOlderThanRecordedOutcome(existing: ExperimentRecord, outcome: Experim
   if (recorded.finishedAt !== outcome.finishedAt) return recorded.finishedAt > outcome.finishedAt
   return recorded.jobId > outcome.jobId
 }
+
+/**
+ * First invalid-input message for one remote workdir, or null when it is
+ * usable (#152).
+ *
+ * The workdir is the only submit-time field that ends up inside a remote
+ * command line, so it is held to a whitelist rather than escaped: letters,
+ * digits, dot, dash, underscore and slash, absolute, no `..` segment. A
+ * directory whose name needs a space or a quote simply does not get automatic
+ * capture — the alternative is a quoting bug in exchange for a nicer path.
+ * @param workdir - the candidate directory, as the caller wrote it.
+ * @returns the rejection message, or null when valid.
+ */
+function workdirProblem(workdir: string): string | null {
+  if (!workdir.startsWith('/')) return 'workdir must be an absolute path'
+  if (workdir.length > WORKDIR_MAX_CHARS) return `workdir must be at most ${String(WORKDIR_MAX_CHARS)} characters`
+  if (workdir.split('/').includes('..')) return 'workdir must not contain a `..` segment'
+  if (!WORKDIR_RE.test(workdir)) {
+    return 'workdir may only use letters, digits, dot, dash, underscore and slash'
+  }
+  return null
+}
+
+/**
+ * Quote one string for a POSIX shell (#152). Single quotes make every byte
+ * literal; the only character they cannot hold is a single quote itself, which
+ * closes the run, escapes, and reopens.
+ * @param value - the raw string.
+ * @returns a single-quoted shell word.
+ */
+function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`
+}
+
+/**
+ * Read `<workdir>/metrics.jsonl` off the server over ssh (#152).
+ *
+ * Best-effort by contract: a missing file, an unreadable directory, or a dead
+ * session all read as `undefined`, because the capture must never turn a
+ * successful run into a failed one. The file is a convention, and on any given
+ * server the convention simply may not be followed.
+ * @param server - the server the job ran on.
+ * @param workdir - the job's absolute remote directory.
+ * @returns the file's text, or undefined when there is nothing to read.
+ */
+async function readMetricsOverSsh(server: ServerRecord, workdir: string): Promise<string | undefined> {
+  const remotePath = workdir.endsWith('/') ? `${workdir}${METRICS_FILE_NAME}` : `${workdir}/${METRICS_FILE_NAME}`
+  const invocation = await sshInvocation(server, `cat -- ${shellQuote(remotePath)}`)
+  try {
+    const { stdout } = await execFileAsync('ssh', [...invocation.args], {
+      timeout: METRICS_READ_TIMEOUT_MS,
+      maxBuffer: METRICS_MAX_CHARS * 4,
+      ...(invocation.env === undefined ? {} : { env: invocation.env }),
+    })
+    return stdout.slice(0, METRICS_MAX_CHARS)
+  } catch {
+    return undefined
+  } finally {
+    await invocation.cleanup?.()
+  }
+}
+
+/** Longest command excerpt kept in a captured draft's name (#152). */
+const DRAFT_NAME_MAX_CHARS = 80
+
+/**
+ * Name a captured draft after the command that produced it (#152).
+ *
+ * The command is the only thing at hand that says what the run was; its first
+ * line, trimmed, is a better name than `job-abc-3`, which says nothing.
+ * @param job - the settled job record.
+ * @returns a non-empty, length-capped name.
+ */
+function draftNameOf(job: JobRecord): string {
+  const firstLine = job.command.split('\n')[0]?.trim() ?? ''
+  const name = firstLine === '' ? job.id : firstLine
+  return name.length > DRAFT_NAME_MAX_CHARS ? `${name.slice(0, DRAFT_NAME_MAX_CHARS - 1)}…` : name
+}
+
+/**
+ * Turn a settled job's `metrics.jsonl` into an experiment record (#152,
+ * first phase).
+ *
+ * Runs after a **successful** settle and only when the job declared both a
+ * `workdir` and a `projectId` — a draft needs a project to live in, and a
+ * workdir is the only place the file can be found. When the job already names
+ * an experiment, the metrics are merged into that record instead of creating a
+ * second one: the user who linked the job already said where the numbers
+ * belong.
+ *
+ * Everything here is fail-open. A read failure, an empty file, a file with no
+ * usable row, a write the store rejects — each returns quietly and the settle
+ * proceeds as if capture did not exist.
+ * @param deps - open wiki domain plus the metrics read seam.
+ * @param state - owning service state (supplies the record-id counter).
+ * @param job - the settled job record.
+ */
+async function captureMetricsDraft(deps: ServerDeps, state: ServiceState, job: JobRecord): Promise<void> {
+  if (job.status !== 'succeeded') return
+  if (job.workdir === undefined || job.projectId === undefined) return
+  // The project is re-checked at settle time, not trusted from submit: a
+  // project deleted while the job ran must not gain an orphaned draft.
+  if (deps.domain.table('projects').get(job.projectId) === undefined) return
+  const server = deps.domain.table('servers').get(job.serverId)
+  if (server === undefined) return
+  const read = deps.metrics?.read ?? readMetricsOverSsh
+  const text = await read(server, job.workdir).catch(() => undefined)
+  if (text === undefined) return
+  const summary = summarizeMetrics(text)
+  if (summary === undefined) return
+  const table = deps.domain.table('experiments')
+  const now = new Date().toISOString()
+  const linked = job.experimentId === undefined ? undefined : table.get(job.experimentId)
+  if (linked !== undefined) {
+    await table.put(linked.id, {
+      ...linked,
+      metrics: { ...linked.metrics, ...summary.last },
+      metricDirections: { ...linked.metricDirections, ...summary.directions },
+      updatedAt: now,
+    }).catch(() => {})
+    return
+  }
+  const id = nextRecordId(state, 'exp')
+  await table.put(id, {
+    id,
+    projectId: job.projectId,
+    name: draftNameOf(job),
+    status: 'success',
+    metrics: { ...summary.last },
+    metricDirections: { ...summary.directions },
+    serverId: job.serverId,
+    lastJob: {
+      jobId: job.id,
+      status: 'succeeded',
+      exitCode: job.exitCode,
+      durationMs: null,
+      finishedAt: job.finishedAt ?? now,
+      summary: jobSummaryOf(job),
+    },
+    draft: true,
+    updatedAt: now,
+  }).catch(() => {})
+  await emitEvent(deps.domain, {
+    actor: SERVICE_ACTOR,
+    action: 'compute.metrics.drafted',
+    refs: { jobId: job.id, experimentId: id, projectId: job.projectId, serverId: job.serverId },
+    payload: { rows: summary.rows, lastStep: summary.lastStep, metrics: Object.keys(summary.last).length },
+  }).catch(() => {})
+}
+
+/**
+ * Whether another job linked to the same experiment was submitted after
+ * `job` (compared on `createdAt`, then on the id's sequence suffix —
+ * submits within the same millisecond share a `createdAt`). A deleted
+ * newer record is invisible here; its documented contract is already
+ * "the outcome is written nowhere".
 
 /** Non-empty lines kept of one settled job's log summary written back to the experiment. */
 const JOB_SUMMARY_LINES = 5

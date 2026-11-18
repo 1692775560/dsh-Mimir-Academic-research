@@ -177,8 +177,9 @@ async function removeProjectDirs(
  * nothing touched; the table cascade (experiments, figure metadata, venue
  * watches, project-registered ideas) and the paper unlink pass (under the
  * per-paper mutation lock) follow; the project row and the audit event close
- * the run. The ledger, servers, jobs, and claims are deliberately untouched
- * (audit trail and project-independent resources).
+ * the run. The ledger, servers, and claims are deliberately untouched (audit
+ * trail and project-independent resources); jobs stay as the audit trail of
+ * what ran, with only their metrics-capture project link unlinked (#152).
  * @param deps - open wiki domain and workspace root.
  * @param request - the project id plus the confirmation flag.
  * @returns the per-kind removal counts.
@@ -251,6 +252,15 @@ export async function deleteProject(
         return true
       })
       if (changed) paperLinks += 1
+    }
+    // Jobs stay — they are the audit trail of what ran — but the #152 capture
+    // link is dropped: a settled job must not draft metrics into a project
+    // that no longer exists (the settle path also re-checks at capture).
+    const jobsTable = deps.domain.table('jobs')
+    for (const [key, row] of [...jobsTable.entries()]) {
+      if (row.projectId !== record.id) continue
+      const { projectId: _dropped, ...rest } = row
+      await jobsTable.put(key, rest)
     }
     await table.delete(record.id)
 
