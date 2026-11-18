@@ -13,7 +13,9 @@ import {
   cleanExtractCaption,
   extractPaperFigures,
   resolvePaperPdf,
+  GROUP_MEETING_SKILLS_REPO,
 } from '../src/services/paper-figures.ts'
+import { checkExternalTool } from '../src/services/tool-integrity.ts'
 import { loadPaperFigures } from '../src/services/meeting.ts'
 
 async function workspace(): Promise<string> {
@@ -52,29 +54,48 @@ describe('cleanExtractCaption', () => {
   })
 })
 
-describe('extractPaperFigures', () => {
-  /** Fake runner that emulates the extract script: writes manifest + crops into --workdir. */
-  function fakeRunner(cropBytes: Buffer = Buffer.from('png-bytes')) {
-    const calls: string[][] = []
-    return {
-      calls,
-      run: async (_executable: string, args: readonly string[]) => {
-        calls.push([...args])
-        if (args[0] === 'clone') return // git clone: pretend the repo landed
-        const workdir = args[args.indexOf('--workdir') + 1]!
-        await mkdir(join(workdir, 'figures'), { recursive: true })
-        await writeFile(join(workdir, 'figures', 'figure_001_p001_i01.png'), cropBytes)
-        await writeFile(join(workdir, 'figures', 'figure_002_p003_i01.png'), cropBytes)
-        await writeFile(join(workdir, 'manifest.json'), JSON.stringify({
-          figures: [
-            { order: 2, image_path: join(workdir, 'figures', 'figure_002_p003_i01.png'), raw_label: 'Fig. 2', raw_caption: 'Figure 2: Second figure. Tail.', zh_caption: '' },
-            { order: 1, image_path: join(workdir, 'figures', 'figure_001_p001_i01.png'), raw_label: 'Fig. 1', raw_caption: 'Figure 1: First figure. Tail.', zh_caption: '首图要点' },
-          ],
-        }))
-      },
-    }
+/**
+ * Fake runner that emulates the extract script: `git clone` leaves a runnable
+ * script behind, `git -C … rev-parse HEAD` answers the provenance probe, and
+ * anything else writes the crops and manifest into `--workdir`.
+ */
+function fakeRunner(cropBytes: Buffer = Buffer.from('png-bytes')) {
+  const calls: string[][] = []
+  return {
+    calls,
+    run: async (_executable: string, args: readonly string[], _timeoutMs?: number, _signal?: AbortSignal, sink?: string[]) => {
+      calls.push([...args])
+      if (args[0] === 'clone') {
+        // git clone: pretend the repo landed — including the script the
+        // integrity gate checks for (#237).
+        const target = args[args.length - 1]!
+        await mkdir(join(target, 'academic-Group-meeting-skills', 'scripts'), { recursive: true })
+        await writeFile(
+          join(target, 'academic-Group-meeting-skills', 'scripts', 'paper_figures_to_ppt.py'),
+          'print(1)\n',
+        )
+        return
+      }
+      if (args[0] === '-C') {
+        // `git -C <dir> rev-parse HEAD`: the provenance probe (#237).
+        sink?.push('deadbeefcafe\n')
+        return
+      }
+      const workdir = args[args.indexOf('--workdir') + 1]!
+      await mkdir(join(workdir, 'figures'), { recursive: true })
+      await writeFile(join(workdir, 'figures', 'figure_001_p001_i01.png'), cropBytes)
+      await writeFile(join(workdir, 'figures', 'figure_002_p003_i01.png'), cropBytes)
+      await writeFile(join(workdir, 'manifest.json'), JSON.stringify({
+        figures: [
+          { order: 2, image_path: join(workdir, 'figures', 'figure_002_p003_i01.png'), raw_label: 'Fig. 2', raw_caption: 'Figure 2: Second figure. Tail.', zh_caption: '' },
+          { order: 1, image_path: join(workdir, 'figures', 'figure_001_p001_i01.png'), raw_label: 'Fig. 1', raw_caption: 'Figure 1: First figure. Tail.', zh_caption: '首图要点' },
+        ],
+      }))
+    },
   }
+}
 
+describe('extractPaperFigures', () => {
   it('clones the skill repo on first use, extracts, and files the deck manifest', async () => {
     const dir = await workspace()
     const skillsDir = await workspace()
@@ -174,5 +195,78 @@ describe('extractPaperFigures', () => {
       run: async (_e, args) => { calls.push([...args]) },
     })).rejects.toThrow()
     expect(calls).toHaveLength(0) // no clone, no extract
+  })
+})
+
+describe('external tool integrity (#237)', () => {
+  it('records the clone provenance so a stale tool is tellable from a current one', async () => {
+    const dir = await workspace()
+    const skillsDir = await workspace()
+    await mkdir(join(dir, 'papers'), { recursive: true })
+    await writeFile(join(dir, 'papers', '2304.06024.pdf'), '%PDF fake')
+    const fake = fakeRunner()
+
+    await extractPaperFigures(dir, '2304.06024', { skillsDir, run: fake.run })
+
+    const repoDir = join(skillsDir, 'academic-Group-meeting-skills')
+    const provenance = JSON.parse(await readFile(join(repoDir, 'PROVENANCE.json'), 'utf8')) as {
+      source: string
+      commit: string
+    }
+    expect(provenance.source).toBe(GROUP_MEETING_SKILLS_REPO)
+    expect(provenance.commit).toBe('deadbeefcafe')
+    // The probe ran against the clone it just made.
+    expect(fake.calls.some(args => args[0] === '-C' && args[1] === repoDir)).toBe(true)
+  })
+
+  it('re-fetches the skill when the script is present but empty', async () => {
+    const dir = await workspace()
+    const skillsDir = await workspace()
+    await mkdir(join(dir, 'papers'), { recursive: true })
+    await writeFile(join(dir, 'papers', '2304.06024.pdf'), '%PDF fake')
+    // A clone interrupted after creating the file: present, not runnable.
+    const repoDir = join(skillsDir, 'academic-Group-meeting-skills')
+    const scriptDir = join(repoDir, 'academic-Group-meeting-skills', 'scripts')
+    await mkdir(scriptDir, { recursive: true })
+    await writeFile(join(scriptDir, 'paper_figures_to_ppt.py'), '')
+    const fake = fakeRunner()
+
+    const assets = await extractPaperFigures(dir, '2304.06024', { skillsDir, run: fake.run })
+
+    expect(fake.calls[0]?.[0]).toBe('clone')
+    expect(assets).toHaveLength(2)
+  })
+
+  it('degrades to no figures when the re-fetch still leaves the script unusable', async () => {
+    const dir = await workspace()
+    const skillsDir = await workspace()
+    await mkdir(join(dir, 'papers'), { recursive: true })
+    await writeFile(join(dir, 'papers', '2304.06024.pdf'), '%PDF fake')
+
+    // A clone that reports success but writes nothing: the case the old
+    // existence check happily waved through, and the one that used to fail
+    // deep inside `uv run` naming the wrong thing. Deck generation must not
+    // break over it, so the extraction still degrades to "no figures" — but it
+    // never reaches `uv`, which is what the zero extract calls pin.
+    const calls: string[][] = []
+    const run = async (_executable: string, args: readonly string[]): Promise<void> => {
+      calls.push([...args])
+    }
+
+    await expect(extractPaperFigures(dir, '2304.06024', { skillsDir, run })).resolves.toEqual([])
+    expect(calls[0]?.[0]).toBe('clone')
+    expect(calls.some(args => args.includes('extract'))).toBe(false)
+    expect(calls.some(args => args.includes('rev-parse'))).toBe(false)
+  })
+
+  it('names the remedy in the error the gate raises (#237)', async () => {
+    const skillsDir = await workspace()
+    const repoDir = join(skillsDir, 'academic-Group-meeting-skills')
+    await mkdir(join(repoDir, 'academic-Group-meeting-skills', 'scripts'), { recursive: true })
+    const script = join(repoDir, 'academic-Group-meeting-skills', 'scripts', 'paper_figures_to_ppt.py')
+    await writeFile(script, '')
+    const outcome = await checkExternalTool(script)
+    expect(outcome.ok === false && outcome.remedy).toMatch(/re-fetch the skill/)
+    expect(outcome.ok === false && outcome.remedy).toContain(script)
   })
 })
