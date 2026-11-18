@@ -463,7 +463,7 @@ export type {
 } from './arxiv-subscriptions.ts'
 export { runReview, renderReviewRound } from './reviewer.ts'
 export type { ReviewerOptions, ReviewRequest, ReviewOutcome } from './reviewer.ts'
-export { compileLatex, renderLatexResult, createLatexCompileTool, resolveLatexEngine, parseTectonicErrors } from './tools/latex.ts'
+export { compileLatex, renderLatexResult, createLatexCompileTool, resolveLatexEngine, parseTectonicErrors, classifyProbeFailure } from './tools/latex.ts'
 export type { LatexCompileResult, LatexToolOptions, LatexEngineKind, ResolvedLatexEngine, LatexEngineProbe } from './tools/latex.ts'
 export { createArxivSearchTool, createPaperFetchTool, fetchArxivPdf, fetchArxivSearch, paperPdfFileName, parseArxivFeed, ARXIV_PDF_MAX_BYTES } from './tools/arxiv.ts'
 export type { ArxivEntry, ArxivSearchOptions } from './tools/arxiv.ts'
