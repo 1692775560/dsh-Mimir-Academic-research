@@ -114,7 +114,7 @@ describe('ResearchController project management', () => {
 
   it('deletes a project with the confirm gate and refreshes the list', async () => {
     const notify = vi.spyOn(ResearchController.prototype, 'notify')
-    const deleteProject = vi.fn((request: { projectId: string; confirm: true }) => Promise.resolve(carried<ResearchDeleteProjectResult>({
+    const deleteProject = vi.fn((request: { projectId: string; confirm?: boolean }) => Promise.resolve(carried<ResearchDeleteProjectResult>({
       ok: true,
       value: {
         projectId: request.projectId,
