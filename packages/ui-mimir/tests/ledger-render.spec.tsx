@@ -141,6 +141,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
         evidence={coldEvidence}
         eureka={coldEureka}
         digest={coldDigest}
+        locale="en"
         selectedProjectId={null}
         loadLedger={() => {}}
         generateReport={async () => null}

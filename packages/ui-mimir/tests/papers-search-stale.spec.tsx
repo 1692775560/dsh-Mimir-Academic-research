@@ -41,7 +41,12 @@ const PAPERS: ResearchPapersView = { status: 'ready', list: [], failure: null }
 const SUBSCRIPTIONS: ResearchSubscriptionsView = {
   status: 'ready', list: [], checking: false, failure: null, checkErrors: {},
 }
-const DIGDIG: ResearchDigdigConfigView = { status: 'ready', present: true, baseUrl: 'http://x', path: '/p', failure: null }
+const DIGDIG: ResearchDigdigConfigView = {
+  status: 'ready', configured: true, baseUrl: 'http://x', defaultEngine: 'native',
+  allowedEngines: ['native'], defaultLimit: 10, defaultFormat: 'md', useProxy: false,
+  proxyUrl: '', timeout: 30000, ollamaApiKeyPreview: '', redundancyThreshold: 0.8,
+  redundancyBigramThreshold: 0.8, failure: null,
+}
 const ZOTERO: ResearchZoteroView = { status: 'ready', state: 'ok', message: null, collections: [], failure: null }
 
 /** The whole view with every verb stubbed; overrides pick the slice under test. */
