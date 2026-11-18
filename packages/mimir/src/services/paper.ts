@@ -19,6 +19,8 @@ import {
   saveTextFileOptimistic,
 } from '../paper-source.ts'
 import { entryFromPaper, parseBibtex, serializeBibtex } from '../bibtex.ts'
+import { buildRelatedWorkDraft, citationCardOf } from '../related-work.ts'
+import { isValidProjectId } from '../project-id.ts'
 import { compileLatex } from '../tools/latex.ts'
 import type { LatexToolOptions } from '../tools/latex.ts'
 import { captureCompileSnapshot } from './paper-snapshots.ts'
@@ -26,7 +28,9 @@ import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import type {
   BibEntry,
+  PaperRecord,
   ResearchBibliographyResult,
+  ResearchDraftRelatedWorkResult,
   ResearchCompileResult,
   ResearchCompileStatusResult,
   ResearchCompileStatusView,
@@ -299,6 +303,89 @@ export async function reorderPaperSubsections(
     payload: { level: 'subsection', moves: request.moves.length },
   })
   return success({ mtimeMs: outcome.mtimeMs })
+}
+
+function findPaper(domain: ResearchWikiDomain, arxivId: string): PaperRecord | undefined {
+  const table = domain.table('papers')
+  const direct = table.get(arxivId)
+  if (direct !== undefined) return direct
+  const bare = stripVersion(arxivId)
+  for (const [, record] of table.entries()) {
+    if (stripVersion(record.arxivId) === bare) return record
+  }
+  return undefined
+}
+
+/**
+ * An arXiv id without its `vN` suffix (#153). The suffix is meaningful for the
+ * citation key — `2103.00020v2` and `2103.00020` are two different keys — but
+ * it is not what identifies the paper, and a caller holding one form must find
+ * a record filed under the other.
+ * @param arxivId - the id, with or without a version suffix.
+ * @returns the id without the suffix.
+ */
+function stripVersion(arxivId: string): string {
+  return arxivId.replace(/v\d+$/, '')
+}
+
+/**
+ * Assemble a related-work LaTeX draft from library papers (#153).
+ *
+ * The reading side has been accumulating notes and summaries that never
+ * reached the writing side; this is the shortest bridge between them. It is
+ * deliberately a *draft producer*, not an inserter: nothing here touches
+ * `main.tex`, and the returned text opens with a comment saying so. The panel
+ * decides where a draft goes, and a human decides whether it stays.
+ *
+ * The bibliography is read for one reason — to tell the caller which keys need
+ * an entry before the draft can compile. Cited keys are kept even when their
+ * entry is missing: a correct citation with a pending bibliography entry is a
+ * fixable draft, a silently dropped citation is a wrong one.
+ * @param deps - workspace root, open wiki domain, and the LaTeX options the
+ * paper directory resolution reads.
+ * @param request - the target project, the arXiv ids to cover, and an optional
+ * one-line steer recorded as a comment.
+ * @returns the draft plus its keys and the missing bibliography keys, or
+ * `invalid-input` / `project-not-found` / `paper-not-found`.
+ */
+export async function draftRelatedWork(
+  deps: PaperDeps,
+  request: { projectId: string; arxivIds: readonly string[]; hint?: string | undefined },
+): Promise<ResearchDraftRelatedWorkResult> {
+  if (!isValidProjectId(request.projectId)) {
+    return rejected({ code: 'invalid-input', message: 'projectId must be a valid project id' })
+  }
+  const record = deps.domain.table('projects').get(request.projectId)
+  if (record === undefined) {
+    return rejected({ code: 'project-not-found', projectId: request.projectId })
+  }
+  const selected = []
+  for (const arxivId of request.arxivIds) {
+    const paper = findPaper(deps.domain, arxivId)
+    if (paper === undefined) return rejected({ code: 'paper-not-found', id: arxivId })
+    selected.push(paper)
+  }
+  const dir = await resolvePaperDirReal(deps.workspaceDir, undefined, record.paperDir)
+  const snapshot = dir === undefined ? undefined : await readPaperSource(join(dir, 'references.bib'))
+  const present = new Set(snapshot === undefined ? [] : parseBibtex(snapshot.content).map(entry => entry.key))
+  const cards = selected.map(citationCardOf)
+  const missingBibKeys = cards.map(card => card.key).filter(key => !present.has(key))
+  const draft = buildRelatedWorkDraft({
+    cards,
+    missingBibKeys,
+    ...(request.hint === undefined ? {} : { hint: request.hint }),
+  })
+  await emitEvent(deps.domain, {
+    actor: PANEL_ACTOR,
+    action: 'writing.related_work.drafted',
+    refs: { projectId: record.id },
+    payload: { papers: cards.length, missingBibKeys: missingBibKeys.length },
+  })
+  return success({
+    text: draft.text,
+    keys: draft.keys,
+    missingBibKeys: Object.freeze(missingBibKeys),
+  })
 }
 
 /**

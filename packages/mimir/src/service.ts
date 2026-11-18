@@ -42,6 +42,7 @@ import type {
   ResearchGetEurekaViewResult,
   ResearchGenerateDigestResult,
   ResearchBibliographyResult,
+  ResearchDraftRelatedWorkResult,
   ResearchCheckArxivSubscriptionsResult,
   ResearchCheckServerResult,
   ResearchCompileResult,
@@ -531,6 +532,19 @@ export class ResearchService extends TypertRemoteService {
   @Remote('getBibliography')
   getBibliography(request: { projectId: string; dir?: string | undefined }): Promise<ResearchBibliographyResult> {
     return paper.getBibliography(this.deps, request)
+  }
+
+  /**
+   * Assemble a related-work draft from library papers (#153). Returns text
+   * only: the draft never reaches `main.tex` from here.
+   */
+  @Remote('draftRelatedWork')
+  draftRelatedWork(request: {
+    projectId: string
+    arxivIds: readonly string[]
+    hint?: string | undefined
+  }): Promise<ResearchDraftRelatedWorkResult> {
+    return paper.draftRelatedWork(this.deps, request)
   }
 
   @Remote('saveBibliography')
