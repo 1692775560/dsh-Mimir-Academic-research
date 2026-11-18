@@ -546,6 +546,12 @@ export interface Config {
     command?: string
     /** Search kill timeout in milliseconds (default 30000). */
     timeoutMs?: number
+    /**
+     * Default result cap of one web search (default 10, hard cap 50). Its
+     * own knob: it used to ride on `arxiv.maxResults`, so tuning arXiv
+     * silently resized every web search (#232).
+     */
+    maxResults?: number
   }
   /**
    * Zotero Web API credentials (read-only integration; both absent disables
@@ -621,7 +627,8 @@ export const Config: z<Config> = z.object({
   search: z.object({
     command: z.string().default('auto'),
     timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
-  }).default({ command: 'auto', timeoutMs: 30_000 }),
+    maxResults: z.number().step(1).min(1).max(50).default(10),
+  }).default({ command: 'auto', timeoutMs: 30_000, maxResults: 10 }),
   zotero: z.object({
     apiKey: z.string().default(''),
     userId: z.string().default(''),
@@ -650,7 +657,7 @@ interface ResolvedConfig {
   readonly reviewer: { readonly provider: string; readonly maxRounds: number; readonly timeoutMs: number }
   readonly latex: { readonly engine: string; readonly timeoutMs: number }
   readonly arxiv: { readonly maxResults: number; readonly timeoutMs: number }
-  readonly search: { readonly command: string; readonly timeoutMs: number }
+  readonly search: { readonly command: string; readonly timeoutMs: number; readonly maxResults: number }
   readonly zotero: { readonly apiKey: string; readonly userId: string }
   readonly subscriptions: {
     readonly enabled: boolean
@@ -672,7 +679,11 @@ function resolveConfig(config: Config): ResolvedConfig {
   const reviewer = { provider: config.reviewer?.provider ?? 'spawn', maxRounds: config.reviewer?.maxRounds ?? 3, timeoutMs: config.reviewer?.timeoutMs ?? 600_000 }
   const latex = { engine: config.latex?.engine ?? 'auto', timeoutMs: config.latex?.timeoutMs ?? 120_000 }
   const arxiv = { maxResults: config.arxiv?.maxResults ?? 10, timeoutMs: config.arxiv?.timeoutMs ?? 30_000 }
-  const search = { command: config.search?.command ?? 'auto', timeoutMs: config.search?.timeoutMs ?? 30_000 }
+  const search = {
+    command: config.search?.command ?? 'auto',
+    timeoutMs: config.search?.timeoutMs ?? 30_000,
+    maxResults: config.search?.maxResults ?? 10,
+  }
   const zotero = { apiKey: config.zotero?.apiKey ?? '', userId: config.zotero?.userId ?? '' }
   const subscriptions = {
     enabled: config.subscriptions?.enabled ?? true,
@@ -696,6 +707,7 @@ function resolveConfig(config: Config): ResolvedConfig {
   if (!Number.isSafeInteger(arxiv.timeoutMs) || arxiv.timeoutMs < 1) throw new TypeError('arxiv.timeoutMs must be a positive safe integer')
   if (search.command.trim().length === 0) throw new TypeError('search.command must be a non-empty command name')
   if (!Number.isSafeInteger(search.timeoutMs) || search.timeoutMs < 1) throw new TypeError('search.timeoutMs must be a positive safe integer')
+  if (!Number.isSafeInteger(search.maxResults) || search.maxResults < 1) throw new TypeError('search.maxResults must be a positive safe integer')
   if (!Number.isSafeInteger(subscriptions.intervalMinutes) || subscriptions.intervalMinutes < 1) throw new TypeError('subscriptions.intervalMinutes must be a positive safe integer')
   if (!Number.isSafeInteger(backup.intervalMinutes) || backup.intervalMinutes < 1) throw new TypeError('backup.intervalMinutes must be a positive safe integer')
   if (!Number.isSafeInteger(backup.keep) || backup.keep < 1) throw new TypeError('backup.keep must be a positive safe integer')
@@ -1290,12 +1302,12 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     : resolved.search.command
   const searchConfig = searchCommand === undefined
     ? undefined
-    : { command: searchCommand, timeoutMs: resolved.search.timeoutMs }
+    : { command: searchCommand, timeoutMs: resolved.search.timeoutMs, maxResults: resolved.search.maxResults }
   if (searchCommand !== undefined) {
     ctx.tools.register(createWebSearchTool({
       command: searchCommand,
       timeoutMs: resolved.search.timeoutMs,
-      maxResults: resolved.arxiv.maxResults,
+      maxResults: resolved.search.maxResults,
     }))
   }
   // The panel's Servers view and the model-callable server_* tools share the
