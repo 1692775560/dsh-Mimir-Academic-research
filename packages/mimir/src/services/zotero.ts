@@ -21,11 +21,15 @@ import type {
   ResearchZoteroExportResult,
   ResearchZoteroImportResult,
   ResearchZoteroSearchResult,
+  ResearchZoteroPushResult,
+  ZoteroPushFailure,
 } from '../types.ts'
 import { rejected, success } from './common.ts'
 import { importPaper, mergePaperRecord } from './library.ts'
 import { withPaperMutationLock } from './mutation-locks.ts'
 import { appendBibEntries } from './paper.ts'
+import { batchPayloads, pushIdentityOf, samePaper, zoteroItemPayloadOf } from '../zotero-push.ts'
+import type { PushEntry } from '../zotero-push.ts'
 import type { PaperDeps } from './paper.ts'
 
 /** Everything the Zotero domain functions need from the service scope. */
@@ -40,6 +44,8 @@ const ZOTERO_FETCH_TIMEOUT_MS = 15_000
 const ZOTERO_SEARCH_DEFAULT_MAX_RESULTS = 10
 /** Hard result cap of one panel-driven Zotero search. */
 const ZOTERO_SEARCH_MAX_RESULTS = 50
+/** How many library items one identity search reads before deciding "already there". */
+const ZOTERO_DEDUPE_LOOKUP_LIMIT = 5
 /** Papers-table id prefix of an imported item that carries no arXiv id. */
 const ZOTERO_PAPER_ID_PREFIX = 'zotero-'
 
@@ -250,4 +256,143 @@ export async function exportZoteroCollectionToBib(
     entries: parseBibtex(bibtex),
     ...(request.dir === undefined ? {} : { dir: request.dir }),
   })
+}
+
+/**
+ * Push one project's linked papers into a Zotero collection (#151).
+ *
+ * The write-back half of the Zotero bridge. Three properties are load-bearing:
+ *
+ * - **Idempotent.** Every entry is looked up in the library first (arXiv id,
+ *   then DOI, then title) and a hit is skipped rather than rewritten. Pushing
+ *   twice creates nothing the second time.
+ * - **Per-item.** A library item Zotero rejects, or one lookup that fails,
+ *   lands in `failures` with its papers-table id; the rest of the push still
+ *   runs. A half-pushed project is recoverable, a throw half-way is not.
+ * - **Degrading, not failing.** A record without a title becomes a Zotero note
+ *   carrying what the record does have (see `zoteroItemPayloadOf`).
+ *
+ * The collection is matched by name and reused, so repeated pushes accumulate
+ * into the same collection rather than spawning `Related Work (2)`.
+ * @param deps - workspace root, open wiki domain, and the resolved Zotero knobs.
+ * @param request - the project whose linked papers to push, plus an optional
+ * collection name (defaults to the project title, then the project id).
+ * @returns what was created, what the library already had, and what failed, or
+ * `invalid-input` (unconfigured), `project-not-found`, or `operation-failed`
+ * when the collection itself could not be established.
+ */
+export async function pushZoteroCollection(
+  deps: ZoteroDeps,
+  request: { projectId: string; collectionName?: string | undefined },
+): Promise<ResearchZoteroPushResult> {
+  const client = clientOf(deps)
+  if (client === undefined) return rejected(UNCONFIGURED)
+  const project = deps.domain.table('projects').get(request.projectId)
+  if (project === undefined) return rejected({ code: 'project-not-found', projectId: request.projectId })
+  const entries = projectEntriesOf(deps, project.id)
+  const requested = (request.collectionName ?? project.title).trim()
+  const collectionName = requested === '' ? project.id : requested
+  if (entries.length === 0) {
+    // Nothing to push, so nothing is created: an empty collection in the user's
+    // library is a side effect they did not ask for.
+    return success({ collectionKey: null, collectionName, created: 0, skipped: 0, failures: Object.freeze([]) })
+  }
+  let collection: { key: string; created: boolean }
+  try {
+    collection = await client.ensureCollection(collectionName, AbortSignal.timeout(ZOTERO_FETCH_TIMEOUT_MS))
+  } catch (error) {
+    return failed(error, 'zotero collection setup failed')
+  }
+  const failures: ZoteroPushFailure[] = []
+  const pending: PushEntry[] = []
+  let skipped = 0
+  for (const entry of entries) {
+    const identity = pushIdentityOf(entry)
+    if (identity.query === '') {
+      // No identifier and no title: nothing can be matched and nothing can be
+      // titled. A note with no content would be noise, so it is reported.
+      failures.push({ paperId: entry.paperId, message: 'the record has no title, DOI, or arXiv id to push' })
+      continue
+    }
+    try {
+      const found = await client.searchItems(
+        identity.query,
+        ZOTERO_DEDUPE_LOOKUP_LIMIT,
+        AbortSignal.timeout(ZOTERO_FETCH_TIMEOUT_MS),
+      )
+      if (found.some(item => samePaper(item, entry))) {
+        skipped += 1
+        continue
+      }
+    } catch (error) {
+      failures.push({
+        paperId: entry.paperId,
+        message: error instanceof Error ? error.message : 'zotero lookup failed',
+      })
+      continue
+    }
+    pending.push(entry)
+  }
+  let created = 0
+  let offset = 0
+  for (const batch of batchPayloads(pending.map(entry => zoteroItemPayloadOf(entry, collection.key)))) {
+    const slice = pending.slice(offset, offset + batch.length)
+    offset += batch.length
+    let outcome: Awaited<ReturnType<typeof client.createItems>>
+    try {
+      outcome = await client.createItems(batch, AbortSignal.timeout(ZOTERO_FETCH_TIMEOUT_MS))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'zotero item creation failed'
+      for (const entry of slice) failures.push({ paperId: entry.paperId, message })
+      continue
+    }
+    created += outcome.keys.length
+    for (const failure of outcome.failures) {
+      const entry = slice[failure.index]
+      failures.push({ paperId: entry?.paperId ?? '', message: failure.message })
+    }
+    // A batch that returned neither a key nor a failure left an entry
+    // unaccounted for; silence there would make the counts lie.
+    const accounted = outcome.keys.length + outcome.failures.length
+    for (const entry of slice.slice(accounted)) {
+      failures.push({ paperId: entry.paperId, message: 'zotero accepted the request but reported no result for this item' })
+    }
+  }
+  return success({
+    collectionKey: collection.key,
+    collectionName,
+    created,
+    skipped,
+    failures: Object.freeze(failures),
+  })
+}
+
+/**
+ * The project's linked papers as push entries (#151). The link lives in
+ * `record.projectIds`, which is how every other project-scoped read decides
+ * membership.
+ * @param deps - open wiki domain.
+ * @param projectId - the project whose literature to collect.
+ * @returns one entry per linked paper, in table order.
+ */
+function projectEntriesOf(deps: ZoteroDeps, projectId: string): PushEntry[] {
+  const entries: PushEntry[] = []
+  for (const [paperId, record] of deps.domain.table('papers').entries()) {
+    if (!record.projectIds.includes(projectId)) continue
+    const published = (record.published ?? '').trim()
+    const year = /^\d{4}/.exec(published)?.[0] ?? ''
+    const arxivId = /^[a-zA-Z0-9._/-]+$/.test(record.arxivId) && !record.arxivId.startsWith(ZOTERO_PAPER_ID_PREFIX)
+      ? record.arxivId
+      : null
+    entries.push({
+      paperId,
+      title: record.title,
+      authors: [...record.authors],
+      ...(year === '' ? {} : { year }),
+      ...(record.doi === undefined || record.doi.trim() === '' ? {} : { doi: record.doi }),
+      arxivId,
+      ...(record.url.trim() === '' ? {} : { url: record.url }),
+    })
+  }
+  return entries
 }

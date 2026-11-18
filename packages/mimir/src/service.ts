@@ -114,6 +114,7 @@ import type {
   ResearchCheckZoteroResult,
   ResearchZoteroCollectionsResult,
   ResearchZoteroExportResult,
+  ResearchZoteroPushResult,
   ResearchZoteroImportResult,
   ResearchZoteroSearchResult,
   SectionMove,
@@ -430,6 +431,18 @@ export class ResearchService extends TypertRemoteService {
     dir?: string | undefined
   }): Promise<ResearchZoteroExportResult> {
     return zotero.exportZoteroCollectionToBib(this.deps, request)
+  }
+
+  /**
+   * Push the project's linked papers back into a Zotero collection (#151).
+   * Idempotent: entries the library already holds are skipped, not rewritten.
+   */
+  @Remote('pushZoteroCollection')
+  pushZoteroCollection(request: {
+    projectId: string
+    collectionName?: string | undefined
+  }): Promise<ResearchZoteroPushResult> {
+    return zotero.pushZoteroCollection(this.deps, request)
   }
 
   // subscription domain: arXiv new-paper checks (pure filesystem storage)
