@@ -864,9 +864,14 @@ describe('ResearchController servers and figure deletion', () => {
     await Promise.resolve()
   }
 
+  /**
+   * The panel-facing view (record minus `password`, plus `hasPassword`): the
+   * save round-trip returns a `ServerView`, so the fixture has to be one.
+   */
   const SERVER = {
     id: 'srv-1', name: 'gpu01', host: '10.0.0.8', port: 22,
-    username: 'ops', note: '', tags: [], createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
+    username: 'ops', note: '', tags: [], hasPassword: false,
+    createdAt: '2026-08-01T00:00:00Z', updatedAt: '2026-08-01T00:00:00Z',
   }
 
   it('loads the server list once on ensureServers', async () => {
@@ -2111,6 +2116,12 @@ describe('ResearchController cognitive brief (CBE)', () => {
           eventCount: 4,
           derivationVersion: 2,
           questions: [{ kind: 'pending-claim', lineId: 'c9', label: 'delta transfers' }],
+          // The brief carries a line strip and a moment roll-up (I6); the
+          // generate result is the source of truth, so the fixture needs them.
+          lines: [],
+          transitions: [],
+          openLoops: [],
+          moments: [],
         },
       })),
     }))
@@ -2124,6 +2135,10 @@ describe('ResearchController cognitive brief (CBE)', () => {
       derivationVersion: 2,
       recalibrated: false,
       questions: [{ kind: 'pending-claim', lineId: 'c9', label: 'delta transfers' }],
+      lines: [],
+      transitions: [],
+      openLoops: [],
+      moments: [],
       failure: null,
     })
     expect(controller.getSnapshot().toasts).toHaveLength(1)
@@ -2778,8 +2793,8 @@ describe('loadEvidenceGraph window request', () => {
   })
 
   it('ignores a stale response once a newer request supersedes it', async () => {
-    const slow = deferred<ResearchGetEvidenceGraphResult>()
-    const fast = deferred<ResearchGetEvidenceGraphResult>()
+    const slow = deferred<RemoteResult<ResearchGetEvidenceGraphResult>>()
+    const fast = deferred<RemoteResult<ResearchGetEvidenceGraphResult>>()
     const controller = new ResearchController(stubRemote({
       getEvidenceGraph: request => (request.projectId === 'p1' ? slow.promise : fast.promise),
     }))
@@ -2798,7 +2813,7 @@ describe('loadEvidenceGraph window request', () => {
 
   it('single-flights an identical in-flight request', async () => {
     let calls = 0
-    const run = deferred<ResearchGetEvidenceGraphResult>()
+    const run = deferred<RemoteResult<ResearchGetEvidenceGraphResult>>()
     const controller = new ResearchController(stubRemote({
       getEvidenceGraph: () => {
         calls += 1
@@ -2834,7 +2849,7 @@ describe('loadEvidenceGraph window request', () => {
 
   it('keeps the previous view while a refresh is loading', async () => {
     let call = 0
-    const slow = deferred<ResearchGetEvidenceGraphResult>()
+    const slow = deferred<RemoteResult<ResearchGetEvidenceGraphResult>>()
     const controller = new ResearchController(stubRemote({
       getEvidenceGraph: () => {
         call += 1

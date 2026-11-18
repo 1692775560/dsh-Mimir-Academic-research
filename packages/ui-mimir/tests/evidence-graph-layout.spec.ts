@@ -14,6 +14,7 @@ import type {
   EvidenceGraphEdge,
   EvidenceTimelineEntry,
   EvidenceTimelineGroup,
+  LedgerActor,
 } from 'dsh-mimir/types'
 import {
   bandKeyOfLine,
@@ -24,8 +25,16 @@ import {
   type EvidenceGraphLayoutInput,
 } from '../src/client/evidence-graph-layout.ts'
 
+/**
+ * The actor default is triple-typed on purpose: `Object.freeze` over a spread
+ * of `Partial<T>` widens literals, so without the `satisfies` the default
+ * degrades to `{ kind: string }` and the whole fixture stops being an
+ * `EvidenceTimelineEntry` (exactly the drift #143 item 1 exists to catch).
+ */
+const HUMAN_ACTOR = { kind: 'user', id: 'human' } as const satisfies LedgerActor
+
 function entry(partial: Partial<EvidenceTimelineEntry> & { readonly sourceEventId: string; readonly ts: string }): EvidenceTimelineEntry {
-  return Object.freeze({ rel: 'supports', actor: { kind: 'panel', id: 'human' }, note: null, retracted: false, ...partial })
+  return Object.freeze({ rel: 'supports', actor: HUMAN_ACTOR, note: null, retracted: false, ...partial })
 }
 function claim(partial: Partial<EvidenceClaimHistory> & { readonly claimKey: string; readonly history: readonly EvidenceTimelineEntry[] }): EvidenceClaimHistory {
   return Object.freeze({ claimLabel: partial.claimKey, status: null, supportsCount: 0, contradictsCount: 0, hasConflict: false, ...partial })
@@ -36,7 +45,7 @@ function group(partial: Partial<EvidenceTimelineGroup> & { readonly key: string;
 function edge(partial: Partial<EvidenceGraphEdge> & { readonly id: string; readonly sourceEventId: string }): EvidenceGraphEdge {
   return Object.freeze({
     dedupKey: `dedup:${partial.id}`, rel: 'supports', src: 'lit:arxiv:2401.00001', dst: 'claim:c1',
-    ts: '2026-09-01T00:00:00.000Z', actor: { kind: 'panel', id: 'human' }, note: null, retracted: false,
+    ts: '2026-09-01T00:00:00.000Z', actor: HUMAN_ACTOR, note: null, retracted: false,
     retractedAt: null, retractedBy: null, retractEventId: null, retractReason: null,
     scope: { projectId: null, ideaId: null, claimId: null }, ...partial,
   })

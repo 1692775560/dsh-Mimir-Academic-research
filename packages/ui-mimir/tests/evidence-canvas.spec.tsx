@@ -15,6 +15,7 @@ import type {
   EvidenceGraphEdge,
   EvidenceTimelineEntry,
   EvidenceTimelineGroup,
+  LedgerActor,
 } from 'dsh-mimir/types'
 import { deriveEvidenceGraphLayout, type EvidenceGraphLayoutInput } from '../src/client/evidence-graph-layout.ts'
 import { conflictLinesByClaim } from '../src/client/evidence-graph-view.ts'
@@ -31,8 +32,15 @@ function t(key: ResearchKey, params?: Record<string, string>): string {
   return text
 }
 
+/**
+ * Pinned with `satisfies` on purpose: `Object.freeze` over a spread of
+ * `Partial<T>` widens the literal to `{ kind: string }`, which stops matching
+ * `LedgerActor` — the exact silent drift #143 item 1 was opened for.
+ */
+const HUMAN_ACTOR = { kind: 'user', id: 'human' } as const satisfies LedgerActor
+
 function entry(partial: Partial<EvidenceTimelineEntry> & { readonly sourceEventId: string; readonly ts: string }): EvidenceTimelineEntry {
-  return Object.freeze({ rel: 'supports', actor: { kind: 'panel', id: 'human' }, note: null, retracted: false, ...partial })
+  return Object.freeze({ rel: 'supports', actor: HUMAN_ACTOR, note: null, retracted: false, ...partial })
 }
 function claim(partial: Partial<EvidenceClaimHistory> & { readonly claimKey: string; readonly history: readonly EvidenceTimelineEntry[] }): EvidenceClaimHistory {
   return Object.freeze({ claimLabel: partial.claimKey, status: null, supportsCount: 0, contradictsCount: 0, hasConflict: false, ...partial })
@@ -43,7 +51,7 @@ function group(partial: Partial<EvidenceTimelineGroup> & { readonly key: string;
 function edge(partial: Partial<EvidenceGraphEdge> & { readonly id: string; readonly sourceEventId: string }): EvidenceGraphEdge {
   return Object.freeze({
     dedupKey: `dedup:${partial.id}`, rel: 'supports', src: 'lit:arxiv:2401.00001', dst: 'claim:c1',
-    ts: '2026-09-01T00:00:00.000Z', actor: { kind: 'panel', id: 'human' }, note: null, retracted: false,
+    ts: '2026-09-01T00:00:00.000Z', actor: HUMAN_ACTOR, note: null, retracted: false,
     retractedAt: null, retractedBy: null, retractEventId: null, retractReason: null,
     scope: { projectId: null, ideaId: null, claimId: null }, ...partial,
   })
@@ -83,7 +91,9 @@ function renderCanvas(fix: EvidenceGraphLayoutInput = FIXTURE): string {
     <EvidenceGraphCanvas
       layout={layout}
       selectedId={null}
+      focusedBandKey={null}
       onSelect={() => {}}
+      onFocusBand={() => {}}
       t={t as ResearchT}
       conflictLinesByClaim={lines}
     />,
@@ -173,7 +183,9 @@ describe('EvidenceGraphCanvas unattributed Eureka band', () => {
       <EvidenceGraphCanvas
         layout={layout}
         selectedId={null}
+        focusedBandKey={null}
         onSelect={() => {}}
+        onFocusBand={() => {}}
         t={t as ResearchT}
       />,
     )
@@ -215,16 +227,16 @@ describe('EvidenceGraphCanvas focus mode (§47)', () => {
 describe('EvidenceGraphCanvas declared line-state glyphs', () => {
   it('renders ✗ for a failed line and ✓ for an adopted one, none for open', () => {
     const failed = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'failed', idleDays: null }]]) })
-    const failedHtml = renderToString(<EvidenceGraphCanvas layout={failed} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    const failedHtml = renderToString(<EvidenceGraphCanvas layout={failed} selectedId={null} focusedBandKey={null} onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />)
     expect(failedHtml).toContain('evidenceBandStatus')
     expect(failedHtml).toContain('✗')
 
     const adopted = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'adopted', idleDays: null }]]) })
-    const adoptedHtml = renderToString(<EvidenceGraphCanvas layout={adopted} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    const adoptedHtml = renderToString(<EvidenceGraphCanvas layout={adopted} selectedId={null} focusedBandKey={null} onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />)
     expect(adoptedHtml).toContain('✓')
 
     const open = deriveEvidenceGraphLayout(FIXTURE, { lineStates: new Map([['idea:1', { status: 'open', idleDays: 5 }]]) })
-    const openHtml = renderToString(<EvidenceGraphCanvas layout={open} selectedId={null} onSelect={() => {}} t={t as ResearchT} />)
+    const openHtml = renderToString(<EvidenceGraphCanvas layout={open} selectedId={null} focusedBandKey={null} onSelect={() => {}} onFocusBand={() => {}} t={t as ResearchT} />)
     expect(openHtml).not.toContain('evidenceBandStatus')
     expect(openHtml).toContain(t('evidence.graph.idle', { days: '5' }))
   })
