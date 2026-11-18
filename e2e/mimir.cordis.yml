@@ -1,0 +1,20 @@
+# Minimal overlay for the self-hosted E2E instance (#240): the research suite
+# only, with the background loops off so a short-lived instance writes no
+# backups and leaves no timers behind.
+- insert:
+    - id: mimir
+      name: 'dsh-mimir'
+      config:
+        workspaceDir: .research
+        latex:
+          engine: auto
+          timeoutMs: 120000
+        arxiv:
+          maxResults: 10
+        search:
+          command: auto
+          timeoutMs: 30000
+        backup:
+          enabled: false
+        skills:
+          enabled: false

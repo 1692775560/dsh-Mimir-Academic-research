@@ -1,0 +1,46 @@
+name: e2e
+
+# Browser-path coverage that carries its own instance (#240). The job builds
+# THIS commit and boots a dsh Web instance from it, so a regression in the
+# panel surfaces here without anyone wiring up DSH_E2E_URL. Set the repository
+# variable DSH_E2E_IMAGE to skip the boot and drive an external instance
+# instead (kept for the same reason as before: someone may already run one).
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  playwright:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Build the checkout under test
+        run: pnpm run build
+      - run: pnpm exec playwright install --with-deps chromium
+      - name: Install the dsh CLI
+        # The suite boots the instance itself; the CLI is the binary it shells
+        # out to. Pinned so an upstream release cannot change the harness.
+        run: npm i -g @deepseek-ai/dsh@latest
+      - name: Link the suite into the CLI's web profile
+        run: ./e2e/link-plugin.sh "$PWD" "$HOME/.dsh/profiles/web"
+      - name: Playwright E2E (self-hosted instance)
+        run: pnpm test:e2e
+        env:
+          DSH_E2E_URL: ${{ vars.DSH_E2E_URL }}
+      - if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report
+          path: |
+            playwright-report/
+            test-results/e2e/
+          if-no-files-found: ignore
