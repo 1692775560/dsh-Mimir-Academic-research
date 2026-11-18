@@ -938,11 +938,28 @@ export type ResearchListJobsResult = ResearchResult<{ readonly jobs: readonly Jo
 /** `deleteJob` result: the deleted record's id. */
 export type ResearchDeleteJobResult = ResearchResult<{ readonly id: string }>
 
+/**
+ * `draftRelatedWork` result (#153): the LaTeX related-work draft assembled
+ * from the selected papers, the citation keys it cites, and the keys whose
+ * `references.bib` entry is missing (add those before compiling).
+ */
+export interface ResearchDraftRelatedWorkView {
+  /** The draft text, draft marker first; never written to `main.tex`. */
+  readonly text: string
+  /** Citation keys the draft cites, in the order they appear. */
+  readonly keys: readonly string[]
+  /** Keys the project bibliography does not carry yet. */
+  readonly missingBibKeys: readonly string[]
+}
+
 /** `getBibliography` result: the parsed `references.bib` entries plus the file mtime (null when absent). */
 export type ResearchBibliographyResult = ResearchResult<{
   readonly entries: readonly BibEntry[]
   readonly mtimeMs: number | null
 }>
+
+/** `draftRelatedWork` result (#153). */
+export type ResearchDraftRelatedWorkResult = ResearchResult<ResearchDraftRelatedWorkView>
 
 /** `saveBibliography` result: the committed mtime (a conflict rejects with its mtime). */
 export type ResearchSaveBibliographyResult = ResearchResult<{ readonly mtimeMs: number }>
