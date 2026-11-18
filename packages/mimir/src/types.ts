@@ -218,8 +218,20 @@ export interface ExperimentRecord {
   /** Remembered server the run executed on, when linked. */
   readonly serverId?: string | undefined
   /**
-   * Outcome of the most recently settled linked remote job; absent until a
-   * linked job settles (records predating the field read as absent).
+   * The linked job whose settle currently OWNS this record's state (#224):
+   * set when that job is submitted, moved when a newer one is submitted, and
+   * cleared when it settles. Absent when nothing is in flight — and always
+   * absent on records written before the field existed.
+   *
+   * This is the explicit answer to "which run is this experiment about". The
+   * write-back used to infer it from `createdAt`/id ordering, which confuses
+   * "newest submitted" with "finished last".
+   */
+  readonly activeJobId?: string | undefined
+  /**
+   * Outcome of the most recently SETTLED linked remote job (by completion, not
+   * by submission — #224); absent until a linked job settles (records
+   * predating the field read as absent).
    */
   readonly lastJob?: ExperimentJobOutcome | undefined
   /** ISO-8601 timestamp of the last write. */

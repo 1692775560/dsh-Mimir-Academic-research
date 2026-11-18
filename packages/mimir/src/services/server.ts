@@ -30,6 +30,7 @@ import type {
   ResearchListServersResult,
   ResearchSaveServerResult,
   ResearchSubmitJobResult,
+  ExperimentRecord,
   ServerGpuView,
   ServerInput,
   ServerRecord,
@@ -531,7 +532,9 @@ export async function recoverInterruptedJobs(deps: ServerDeps): Promise<void> {
       finishedAt: now,
     }
     await jobs.put(job.id, recovered)
-    if (job.experimentId === undefined || hasNewerLinkedJob(deps, job)) continue
+    // #224: the same ownership rule as the live path, asked after THIS job was
+    // marked interrupted — a sibling still running keeps the experiment.
+    if (job.experimentId === undefined || hasRunningSiblingJob(jobs, job)) continue
     const experiment = experiments.get(job.experimentId)
     if (experiment?.status === 'running') {
       await experiments.put(experiment.id, { ...experiment, status: 'failed', updatedAt: now })
@@ -598,7 +601,11 @@ export async function submitJob(
   }
   await deps.domain.table('jobs').put(job.id, job)
   if (request.experimentId !== undefined) {
-    await markExperiment(deps, request.experimentId, 'running', server.id)
+    // #224: claim ownership only when nothing else holds it. A second submit on
+    // an experiment that already has a live owner must not steal the pointer —
+    // the record names the run whose settle is still outstanding, and the
+    // write-back resolves the collision on completion order.
+    await markExperiment(deps, request.experimentId, 'running', server.id, job.id, true)
   }
   await emitEvent(deps.domain, {
     actor: PANEL_ACTOR,
@@ -925,11 +932,20 @@ async function settleCrashedJob(deps: ServerDeps, state: ServiceState, id: strin
  * the run produced no usable result — the job record keeps the precise
  * cause.
  *
- * Stale-settle guard: when a NEWER job is linked to the same experiment
- * (submitted after this one, in any status), that job owns the
- * experiment's state, so this late settle leaves the record untouched and
- * only lands in the log — otherwise an old job finishing last would flip
- * the status back over the newer job's write-back.
+ * Who owns the record (#224): the settle of the run that finished LAST wins,
+ * not the run that was submitted last. Two questions, and only one of them is
+ * about `lastJob` — an experiment's current outcome is a statement about
+ * completion. So:
+ *
+ *  - a still-active linked job keeps ownership, and this settle only lands in
+ *    the log (something is genuinely in flight; the record must not claim a
+ *    terminal status);
+ *  - otherwise the later `(finishedAt, id)` write-back stands. An older job
+ *    whose remote machine answered after a newer one therefore owns the
+ *    record, which is what "the latest run" means.
+ *
+ * `activeJobId` names the owner while it runs and is cleared by its own
+ * settle, so the field is a live pointer rather than a history log.
  * @param deps - open wiki domain plus workspace root.
  * @param job - the settled job record.
  */
@@ -951,14 +967,22 @@ async function writeBackExperiment(deps: ServerDeps, job: JobRecord): Promise<vo
     finishedAt,
     summary: jobSummaryOf(job),
   }
-  if (hasNewerLinkedJob(deps, job)) {
+  const superseded = hasActiveSiblingJob(deps, job)
+    || isOlderThanRecordedOutcome(existing, outcome)
+  if (superseded) {
     await appendExperimentLog(deps, existing.name, outcome).catch(() => {})
     return
   }
+  // The record is now terminal, and this settle is what made it terminal by
+  // finishing last — so nothing owns it any more. Clearing unconditionally
+  // (not just our own claim) matters for the out-of-order case: the OTHER job
+  // cleared its own claim when it settled first, leaving the record pointing
+  // at a job that is itself already terminal (#224).
   await table.put(existing.id, {
     ...existing,
     status: outcome.status === 'succeeded' ? 'success' : 'failed',
     lastJob: outcome,
+    activeJobId: undefined,
     updatedAt: new Date().toISOString(),
   })
   // Best-effort: a read-only workspace must not break the settle.
@@ -966,31 +990,51 @@ async function writeBackExperiment(deps: ServerDeps, job: JobRecord): Promise<vo
 }
 
 /**
- * Whether another job linked to the same experiment was submitted after
- * `job` (compared on `createdAt`, then on the id's sequence suffix —
- * submits within the same millisecond share a `createdAt`). A deleted
- * newer record is invisible here; its documented contract is already
- * "the outcome is written nowhere".
+ * Whether another job linked to the same experiment is still queued or
+ * running (#224). While one is, that run owns the experiment's state and this
+ * settle must not claim a terminal status for it.
  * @param deps - open wiki domain.
  * @param job - the settled job record.
- * @returns true when a newer linked job supersedes this settle.
+ * @returns true when an in-flight sibling supersedes this settle.
  */
-function hasNewerLinkedJob(deps: ServerDeps, job: JobRecord): boolean {
+function hasActiveSiblingJob(deps: ServerDeps, job: JobRecord): boolean {
   for (const [, other] of deps.domain.table('jobs').entries()) {
     if (other.id === job.id || other.experimentId !== job.experimentId) continue
-    if (other.createdAt !== job.createdAt) {
-      if (other.createdAt > job.createdAt) return true
-    } else if (jobSeqOf(other.id) > jobSeqOf(job.id)) {
-      return true
-    }
+    if (isActiveJobStatus(other.status)) return true
   }
   return false
 }
 
-/** Numeric sequence suffix of one job id (`job-<ms>-<seq>`); 0 when absent. */
-function jobSeqOf(id: string): number {
-  const match = /-(\d+)$/.exec(id)
-  return match === null ? 0 : Number(match[1])
+/**
+ * Recovery-time sibling check (#224): after `recoverInterruptedJobs` has marked
+ * the row `interrupted`, is another job on the same experiment still live? If
+ * so the experiment is not orphaned and must keep its `running` status.
+ * @param jobs - the jobs table, read AFTER the interruption marks.
+ * @param job - the job that was just recovered.
+ * @returns true when a live sibling still owns the experiment.
+ */
+function hasRunningSiblingJob(jobs: { entries(): Iterable<[string, JobRecord]> }, job: JobRecord): boolean {
+  for (const [, other] of jobs.entries()) {
+    if (other.id === job.id || other.experimentId !== job.experimentId) continue
+    if (isActiveJobStatus(other.status)) return true
+  }
+  return false
+}
+
+/**
+ * Whether the record already holds an outcome that completed AFTER this one
+ * (#224). Ordering is on `(finishedAt, job id)` — id only breaks the tie when
+ * two settles share a millisecond, and it is a total order because ids are
+ * unique. A record with no `lastJob` never refuses.
+ * @param existing - the experiment record as stored.
+ * @param outcome - the settle being written back.
+ * @returns true when the stored outcome is the later one.
+ */
+function isOlderThanRecordedOutcome(existing: ExperimentRecord, outcome: ExperimentJobOutcome): boolean {
+  const recorded = existing.lastJob
+  if (recorded === undefined) return false
+  if (recorded.finishedAt !== outcome.finishedAt) return recorded.finishedAt > outcome.finishedAt
+  return recorded.jobId > outcome.jobId
 }
 
 /** Non-empty lines kept of one settled job's log summary written back to the experiment. */
@@ -1049,14 +1093,22 @@ async function markExperiment(
   experimentId: string,
   status: ExperimentStatus,
   serverId?: string,
+  activeJobId?: string,
+  keepExistingOwner = false,
 ): Promise<void> {
   const table = deps.domain.table('experiments')
   const existing = table.get(experimentId)
   if (existing === undefined) return
+  const claim = activeJobId === undefined || (keepExistingOwner && existing.activeJobId !== undefined)
+    ? {}
+    : { activeJobId }
   await table.put(experimentId, {
     ...existing,
     status,
     serverId: serverId ?? existing.serverId,
+    // #224: the experiment names the run that owns its state. A legacy record
+    // gains the field the moment a job is submitted against it.
+    ...claim,
     updatedAt: new Date().toISOString(),
   })
 }
