@@ -22,10 +22,6 @@ import type { EvidenceGraphRequest } from './evidence-graph-view.ts'
 import type {
   ArxivEntry,
   ResearchEvidenceGraphView,
-  ResearchGetEvidenceGraphResult,
-  ResearchGetProtocolVersionResult,
-  ResearchRetractEvidenceEdgeResult,
-  RetractEvidenceEdgeRequest,
   ArxivSubscriptionView,
   BibEntry,
   EventRecord,
@@ -36,20 +32,9 @@ import type {
   OutlineNode,
   PaperRecord,
   PaperSnapshotView,
-  ResearchArtifactResult,
-  ResearchArxivSubscriptionsResult,
-  ResearchAddJournalEntryResult,
-  ResearchCloseIdeaResult,
-  ResearchAdoptIdeaResult,
-  ResearchGetForagingResult,
-  ResearchGetWorktreeResult,
-  ResearchGetMomentIndexResult,
-  ResearchGetEurekaViewResult,
   ResearchMomentIndexView,
   ResearchEurekaView,
   ResearchForagingView,
-  ResearchSetIdeaParentResult,
-  ResearchSetMainlineResult,
   ResearchWorktreeView,
   ResearchBriefLine,
   ResearchBriefMoment,
@@ -57,98 +42,26 @@ import type {
   ResearchBriefQuestion,
   ResearchBriefTransition,
   ResearchBackupStatusView,
-  ResearchBibliographyResult,
-  ResearchCheckArxivSubscriptionsResult,
-  ResearchCheckServerResult,
-  ResearchCheckZoteroResult,
-  ResearchCompileResult,
-  ResearchCompileStatusResult,
   ResearchCompileStatusView,
-  ResearchConvertFigureResult,
-  ResearchCreateProjectResult,
-  ResearchDeleteArxivSubscriptionResult,
-  ResearchDeleteExperimentResult,
-  ResearchDeleteFigureResult,
-  ResearchDeleteJobResult,
-  ResearchDeleteProjectResult,
-  ResearchDeleteServerResult,
   ResearchEventFilter,
-  ResearchExperimentsResult,
-  ResearchExportWikiResult,
   ResearchFailure,
   ResearchResult,
-  ResearchFetchPaperPdfResult,
-  ResearchFiguresResult,
   ResearchGenerateBriefOptions,
-  ResearchGenerateBriefResult,
-  ResearchGenerateDigestResult,
   ResearchDigestView,
   ResearchDigestTier,
-  ResearchSetEurekaResult,
-  ResearchPinMomentResult,
   ResearchJournalQuestionRef,
-  ResearchImportBibResult,
-  ResearchImportPaperResult,
-  ResearchImportProjectRequest,
-  ResearchImportProjectResult,
   ResearchImportedProject,
   ResearchImportWikiMode,
-  ResearchImportWikiResult,
-  ResearchListBackupsResult,
-  ResearchListEventsResult,
-  ResearchListJobsResult,
-  ResearchListProjectsResult,
-  ResearchListServersResult,
   MetricDirection,
   ResearchScheduledTaskView,
-  ResearchTaskHealthResult,
-  ResearchVenueTemplatesResult,
-  ResearchApplyVenueResult,
-  ResearchClearVenueResult,
-  ResearchDeleteMeetingDeckResult,
-  ResearchGenerateMeetingResult,
-  ResearchGetImageGenConfigResult,
-  ResearchGetDigdigConfigResult,
-  ResearchMeetingDecksResult,
   MeetingDeckView,
   MeetingInclude,
   VenueTemplateView,
-  ResearchOutlineResult,
-  ResearchPaperSnapshotResult,
-  ResearchPaperSnapshotsResult,
-  ResearchPaperSourceResult,
-  ResearchPapersResult,
   ResearchProjectView,
   ResearchProgressReportOptions,
-  ResearchProgressReportResult,
-  ResearchRemovePaperResult,
-  ResearchRenameFigureResult,
-  ResearchRenameProjectResult,
-  ResearchRevertPaperSnapshotResult,
-  ResearchSaveArxivSubscriptionResult,
-  ResearchSaveBibliographyResult,
-  ResearchSaveExperimentResult,
-  ResearchSavePaperSourceResult,
-  ResearchSaveFigureResult,
-  ResearchSaveServerResult,
-  ResearchSearchArxivResult,
-  ResearchSearchWebResult,
-  ResearchSetImageGenConfigResult,
-  ResearchSetDigdigConfigResult,
-  ResearchSubmitJobResult,
-  ResearchUpdateExperimentResult,
-  ResearchUpdateFigureResult,
-  ResearchUpdatePaperResult,
-  ResearchRefreshVenueDeadlinesResult,
-  ResearchSetVenueWatchResult,
-  ResearchVenueDeadlinesResult,
   ResearchWikiSnapshot,
   VenueDeadlineView,
   VenueJournalView,
-  ResearchZoteroCollectionsResult,
-  ResearchZoteroExportResult,
-  ResearchZoteroImportResult,
-  ResearchZoteroSearchResult,
   SectionMove,
   SectionOutlineTitles,
   ServerInput,
@@ -160,6 +73,9 @@ import type {
   ZoteroItemView,
   ResearchWikiChangeEvent,
 } from 'dsh-mimir/types'
+// Type-only: the generated Host face, merged by `dsh-mimir/remote` (#226).
+import type { TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
+import 'dsh-mimir/remote'
 // Runtime: the client's own copy of the handshake version + verdict (#250).
 import { protocolVerdict, RESEARCH_PROTOCOL_VERSION } from './protocol.ts'
 import {
@@ -190,259 +106,14 @@ export type {
  * `actorKind`/`order` as widened `string` (the generated face elides the
  * literal unions across the boundary).
  */
-export interface ResearchRemote {
-  /** The wire handshake (#250): the host's protocol version. */
-  getProtocolVersion: () => Promise<RemoteResult<ResearchGetProtocolVersionResult>>
-  listProjects: () => Promise<RemoteResult<ResearchListProjectsResult>>
-  importProject: (request: ResearchImportProjectRequest) => Promise<RemoteResult<ResearchImportProjectResult>>
-  createProject: (request: { title: string }) => Promise<RemoteResult<ResearchCreateProjectResult>>
-  renameProject: (request: { projectId: string; title: string }) => Promise<RemoteResult<ResearchRenameProjectResult>>
-  deleteProject: (request: { projectId: string; confirm: true }) => Promise<RemoteResult<ResearchDeleteProjectResult>>
-  getPaperOutline: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchOutlineResult>>
-  compile: (request: { projectId?: string; dir?: string | undefined }, signal?: AbortSignal) => Promise<RemoteResult<ResearchCompileResult>>
-  getCompileStatus: (request: { projectId?: string }) => Promise<RemoteResult<ResearchCompileStatusResult>>
-  getPaperSource: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchPaperSourceResult>>
-  savePaperSource: (request: {
-    projectId: string
-    content: string
-    baseMtimeMs: number
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSavePaperSourceResult>>
-  listPapers: () => Promise<RemoteResult<ResearchPapersResult>>
-  searchArxiv: (request: { query: string; maxResults?: number }) => Promise<RemoteResult<ResearchSearchArxivResult>>
-  searchWeb: (request: {
-    query: string
-    maxResults?: number
-    categories?: string | undefined
-    lang?: string | undefined
-  }) => Promise<RemoteResult<ResearchSearchWebResult>>
-  importPaper: (request: { entry: ArxivEntry; projectId?: string | undefined }) => Promise<RemoteResult<ResearchImportPaperResult>>
-  removePaper: (request: { arxivId: string }) => Promise<RemoteResult<ResearchRemovePaperResult>>
-  updatePaper: (request: {
-    arxivId: string
-    tags?: string[] | undefined
-    projectIds?: string[] | undefined
-    notes?: string | undefined
-  }) => Promise<RemoteResult<ResearchUpdatePaperResult>>
-  fetchPaperPdf: (request: { arxivId: string }) => Promise<RemoteResult<ResearchFetchPaperPdfResult>>
-  checkZotero: () => Promise<RemoteResult<ResearchCheckZoteroResult>>
-  listZoteroCollections: () => Promise<RemoteResult<ResearchZoteroCollectionsResult>>
-  searchZotero: (request: { query: string; maxResults?: number }) => Promise<RemoteResult<ResearchZoteroSearchResult>>
-  importZoteroItem: (request: { key: string; projectId?: string | undefined }) => Promise<RemoteResult<ResearchZoteroImportResult>>
-  exportZoteroCollectionToBib: (request: {
-    projectId: string
-    collectionKey: string
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchZoteroExportResult>>
-  listArxivSubscriptions: () => Promise<RemoteResult<ResearchArxivSubscriptionsResult>>
-  saveArxivSubscription: (request: { query: string }) => Promise<RemoteResult<ResearchSaveArxivSubscriptionResult>>
-  deleteArxivSubscription: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteArxivSubscriptionResult>>
-  checkArxivSubscriptions: () => Promise<RemoteResult<ResearchCheckArxivSubscriptionsResult>>
-  listExperiments: (request: { projectId?: string }) => Promise<RemoteResult<ResearchExperimentsResult>>
-  deleteExperiment: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteExperimentResult>>
-  updateExperiment: (request: {
-    id: string
-    serverId?: string | null | undefined
-  }) => Promise<RemoteResult<ResearchUpdateExperimentResult>>
-  saveExperiment: (request: { experiment: ExperimentInput }) => Promise<RemoteResult<ResearchSaveExperimentResult>>
-  readArtifact: (request: { projectId: string; name: string }) => Promise<RemoteResult<ResearchArtifactResult>>
-  listFigures: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchFiguresResult>>
-  deleteFigure: (request: { projectId: string; relPath: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchDeleteFigureResult>>
-  renameFigure: (request: {
-    projectId: string
-    relPath: string
-    newName: string
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchRenameFigureResult>>
-  updateFigure: (request: {
-    projectId: string
-    relPath: string
-    caption: string
-  }) => Promise<RemoteResult<ResearchUpdateFigureResult>>
-  convertFigure: (request: { projectId: string; relPath: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchConvertFigureResult>>
-  saveFigure: (request: {
-    projectId: string
-    name: string
-    content: string
-    caption?: string | undefined
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSaveFigureResult>>
-  listServers: () => Promise<RemoteResult<ResearchListServersResult>>
-  listVenueTemplates: () => Promise<RemoteResult<ResearchVenueTemplatesResult>>
-  applyVenueTemplate: (request: {
-    projectId: string
-    dir?: string | undefined
-    templateId?: string | undefined
-    customName?: string | undefined
-  }) => Promise<RemoteResult<ResearchApplyVenueResult>>
-  clearVenueTemplate: (request: { projectId: string }) => Promise<RemoteResult<ResearchClearVenueResult>>
-  listVenueDeadlines: (request: { projectId?: string | undefined }) => Promise<RemoteResult<ResearchVenueDeadlinesResult>>
-  setVenueWatch: (request: {
-    projectId: string
-    series: string
-    watched: boolean
-  }) => Promise<RemoteResult<ResearchSetVenueWatchResult>>
-  refreshVenueDeadlines: () => Promise<RemoteResult<ResearchRefreshVenueDeadlinesResult>>
-  generateMeetingDeck: (request: {
-    projectId: string
-    title?: string | undefined
-    presenter?: string | undefined
-    date?: string | undefined
-    paperIds?: readonly string[] | undefined
-    figureRelPaths?: readonly string[] | undefined
-    include?: Partial<MeetingInclude> | undefined
-    aiIllustrations?: boolean | undefined
-  }) => Promise<RemoteResult<ResearchGenerateMeetingResult>>
-  listMeetingDecks: (request: { projectId: string }) => Promise<RemoteResult<ResearchMeetingDecksResult>>
-  deleteMeetingDeck: (request: { projectId: string; file: string }) => Promise<RemoteResult<ResearchDeleteMeetingDeckResult>>
-  getImageGenConfig: () => Promise<RemoteResult<ResearchGetImageGenConfigResult>>
-  setImageGenConfig: (request: {
-    baseUrl?: string | undefined
-    apiKey?: string | undefined
-    model?: string | undefined
-    size?: string | undefined
-  }) => Promise<RemoteResult<ResearchSetImageGenConfigResult>>
-  getDigdigConfig: () => Promise<RemoteResult<ResearchGetDigdigConfigResult>>
-  setDigdigConfig: (request: {
-    baseUrl?: string | undefined
-    defaultEngine?: string | undefined
-    allowedEngines?: readonly string[] | undefined
-    defaultLimit?: number | undefined
-    defaultFormat?: 'md' | 'json' | undefined
-    useProxy?: boolean | undefined
-    proxyUrl?: string | undefined
-    timeout?: number | undefined
-    ollamaApiKey?: string | undefined
-    redundancyThreshold?: number | undefined
-    redundancyBigramThreshold?: number | undefined
-  }) => Promise<RemoteResult<ResearchSetDigdigConfigResult>>
-  saveServer: (request: { server: ServerInput }) => Promise<RemoteResult<ResearchSaveServerResult>>
-  deleteServer: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteServerResult>>
-  checkServer: (request: { id: string }) => Promise<RemoteResult<ResearchCheckServerResult>>
-  submitJob: (request: {
-    serverId: string
-    command: string
-    experimentId?: string | undefined
-  }) => Promise<RemoteResult<ResearchSubmitJobResult>>
-  listJobs: (request: { serverId?: string }) => Promise<RemoteResult<ResearchListJobsResult>>
-  deleteJob: (request: { id: string }) => Promise<RemoteResult<ResearchDeleteJobResult>>
-  getBibliography: (request: { projectId: string; dir?: string | undefined }) => Promise<RemoteResult<ResearchBibliographyResult>>
-  saveBibliography: (request: {
-    projectId: string
-    entries: BibEntry[]
-    baseMtimeMs: number | null
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSaveBibliographyResult>>
-  importPapersToBib: (request: {
-    projectId: string
-    arxivIds: string[]
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchImportBibResult>>
-  reorderPaperSections: (request: {
-    projectId: string
-    moves: SectionMove[]
-    baseOutline: string[]
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSavePaperSourceResult>>
-  reorderPaperSubsections: (request: {
-    projectId: string
-    moves: SubsectionMove[]
-    baseOutline: SectionOutlineTitles[]
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchSavePaperSourceResult>>
-  listPaperSnapshots: (request: { projectId: string }) => Promise<RemoteResult<ResearchPaperSnapshotsResult>>
-  getPaperSnapshot: (request: { projectId: string; id: string }) => Promise<RemoteResult<ResearchPaperSnapshotResult>>
-  revertPaperSnapshot: (request: {
-    projectId: string
-    id: string
-    baseMtimeMs: number
-    dir?: string | undefined
-  }) => Promise<RemoteResult<ResearchRevertPaperSnapshotResult>>
-  exportWiki: () => Promise<RemoteResult<ResearchExportWikiResult>>
-  importWiki: (request: {
-    snapshot: ResearchWikiSnapshot
-    mode: ResearchImportWikiMode
-    confirmReplace?: boolean
-  }) => Promise<RemoteResult<ResearchImportWikiResult>>
-  listBackups: () => Promise<RemoteResult<ResearchListBackupsResult>>
-  getTaskHealth: () => Promise<RemoteResult<ResearchTaskHealthResult>>
-  listEvents: (request: {
-    projectId?: string | undefined
-    actorKind?: string | undefined
-    actionPrefix?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-    limit?: number | undefined
-    order?: string | undefined
-  }) => Promise<RemoteResult<ResearchListEventsResult>>
-  generateProgressReport: (request: {
-    projectId?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-  }) => Promise<RemoteResult<ResearchProgressReportResult>>
-  generateBrief: (request: {
-    projectId?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-  }) => Promise<RemoteResult<ResearchGenerateBriefResult>>
-  addJournalEntry: (request: {
-    text: string
-    projectId?: string | undefined
-    ideaId?: string | undefined
-    valence?: number | undefined
-    arousal?: number | undefined
-    question?: ResearchJournalQuestionRef | undefined
-  }) => Promise<RemoteResult<ResearchAddJournalEntryResult>>
-  getForaging: () => Promise<RemoteResult<ResearchGetForagingResult>>
-  getWorktree: () => Promise<RemoteResult<ResearchGetWorktreeResult>>
-  setMainline: (request: {
-    ideaId?: string | undefined
-    projectId?: string | undefined
-  }) => Promise<RemoteResult<ResearchSetMainlineResult>>
-  setIdeaParent: (request: {
-    ideaId: string
-    parentIdeaId: string | null
-  }) => Promise<RemoteResult<ResearchSetIdeaParentResult>>
-  adoptIdea: (request: { ideaId: string }) => Promise<RemoteResult<ResearchAdoptIdeaResult>>
-  closeIdea: (request: {
-    ideaId: string
-    reason: string
-  }) => Promise<RemoteResult<ResearchCloseIdeaResult>>
-  /** Assemble one digest (weekly / monthly / project) as a pure fold, rendered as MMS. */
-  generateDigest: (request: {
-    tier?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-    lang?: string | undefined
-  }) => Promise<RemoteResult<ResearchGenerateDigestResult>>
-  /** Declare one Eureka — the researcher's own named milestone (never system-declared). */
-  setEureka: (request: {
-    ideaId?: string | undefined
-    projectId?: string | undefined
-    title: string
-  }) => Promise<RemoteResult<ResearchSetEurekaResult>>
-  /** Pin (or unpin/decline) one moment — the explicit bookmark of a curated instant. */
-  pinMoment: (request: {
-    targetEventId: string
-    note?: string | undefined
-    pinned?: boolean | undefined
-  }) => Promise<RemoteResult<ResearchPinMomentResult>>
-  /** Read the unified moment timeline (S9b): pull-only, five sources, zero verbs. */
-  getMomentIndex: (request: {
-    since?: string | undefined
-    until?: string | undefined
-  }) => Promise<RemoteResult<ResearchGetMomentIndexResult>>
-  /** Read the retrospective eureka view (S8c): declarations × measured roads. */
-  getEurekaView: () => Promise<RemoteResult<ResearchGetEurekaViewResult>>
-  /** Read the evidence graph (v1): one pure fold over one ledger window (L1). */
-  getEvidenceGraph: (request: {
-    projectId?: string | undefined
-    since?: string | undefined
-    until?: string | undefined
-  }) => Promise<RemoteResult<ResearchGetEvidenceGraphResult>>
-  /** Retract one evidence edge by dedupKey (panel: any edge — human final say). */
-  retractEvidenceEdge: (request: RetractEvidenceEdgeRequest) => Promise<RemoteResult<ResearchRetractEvidenceEdgeResult>>
-}
+/**
+ * The Remote calls this controller needs, taken from the generated Host face
+ * rather than mirrored by hand (#226). `TypertRemoteNamespaceMap` is merged by
+ * the generated `dsh-mimir/remote` module (loaded in `index.ts`), so this alias
+ * IS the wire surface: a method the host stops exposing fails to compile here
+ * instead of drifting into a mirror nobody re-reads.
+ */
+export type ResearchRemote = TypertRemoteNamespaceMap['research']
 
 /** Quiet period after the last keystroke before the draft autosaves. */
 export const AUTOSAVE_DEBOUNCE_MS = 800
