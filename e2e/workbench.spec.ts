@@ -2,11 +2,12 @@
  * Build-and-run E2E for the Mimir workbench (#240).
  *
  * The suite boots a dsh Web instance serving THIS checkout — built from the
- * commit under test, recorded in every failure's attachments — and drives the
- * real panel through the browser. `DSH_E2E_URL` still wins when set, so anyone
- * keeping a long-lived instance can point at it, but nothing REQUIRES one:
- * the browser path is covered on every run instead of only when a CI variable
- * happens to be configured.
+ * commit under test, recorded in every failure's attachments, running against a
+ * repo-local DSH home that a fresh clone can create — and drives the real panel
+ * through the browser. `DSH_E2E_URL` still wins when set, so anyone keeping a
+ * long-lived instance can point at it, but nothing REQUIRES one: the browser
+ * path is covered on every run instead of only when a CI variable happens to be
+ * configured.
  */
 import { expect, test } from '@playwright/test'
 import { tmpdir } from 'node:os'
@@ -47,21 +48,42 @@ test.beforeEach(async ({ page }, testInfo) => {
 })
 
 /**
- * Open the workbench overlay from the sidebar-footer toggle.
+ * Open the workbench from wherever this commit hangs its entry — the sidebar's
+ * panel row (a `main` panel), or the footer toggle it used to be — and return
+ * the workbench itself.
  *
- * The toggle can enter the DOM before the overlay it opens is mounted, and the
- * press that lands in that window is swallowed — so the click is retried until
- * the dialog actually appears rather than assumed to have taken.
+ * The entry can enter the DOM before the panel it selects is mounted, and the
+ * press that lands in that window is swallowed, so the click is retried until
+ * the panel actually appears rather than assumed to have taken. The panel is
+ * located by role, not by name alone: both the row and the panel answer to
+ * "Mimir".
  */
 async function openWorkbench(page: import('@playwright/test').Page) {
-  const toggle = page.getByRole('button', { name: /Mimir/ }).first()
-  const dialog = page.getByRole('dialog', { name: /Mimir/ })
-  await expect(toggle).toBeVisible({ timeout: 60_000 })
-  await expect(async () => {
-    if (!(await dialog.isVisible().catch(() => false))) await toggle.click()
-    await expect(dialog).toBeVisible({ timeout: 5_000 })
-  }).toPass({ timeout: 90_000 })
-  return dialog
+  const entry = page.getByRole('button', { name: /Mimir/ }).first()
+  const workbench = page.locator('[role="dialog"][aria-label="Mimir"], [role="region"][aria-label="Mimir"]').first()
+  await expect(entry).toBeVisible({ timeout: 45_000 })
+
+  // A hand-rolled retry rather than `expect.poll`/`toPass`: those report their own
+  // timeout, which loses the one thing worth knowing. Here the LAST failure is
+  // what the test throws, so a first-run modal says so by name and a panel that
+  // never mounts says that instead.
+  const deadline = Date.now() + 30_000
+  let lastError: unknown = new Error('the workbench never opened')
+  while (Date.now() < deadline) {
+    try {
+      // Both first-run modals mount a beat after the shell and cover it with a
+      // mask; see instance.ts for why they are seeded away instead of clicked.
+      await expect(page.getByRole('dialog', { name: 'Preview Notice' })).toHaveCount(0, { timeout: 1_000 })
+      await expect(page.getByRole('dialog', { name: /Get started|开始使用/ })).toHaveCount(0, { timeout: 1_000 })
+      if (!(await workbench.isVisible().catch(() => false))) await entry.click({ timeout: 5_000 })
+      await expect(workbench).toBeVisible({ timeout: 5_000 })
+      return workbench
+    } catch (error) {
+      lastError = error
+      await page.waitForTimeout(250)
+    }
+  }
+  throw lastError
 }
 
 test('the panel boots against this checkout and renders every view', async ({ page }, testInfo) => {

@@ -9,11 +9,70 @@
  */
 import { execFile, spawn } from 'node:child_process'
 import type { ChildProcess } from 'node:child_process'
-import { existsSync, mkdirSync, rmSync, symlinkSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
-import { homedir, platform } from 'node:os'
+import { platform } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+
+/**
+ * The two first-run facts a fresh home needs settled, written as profile config
+ * rather than clicked away in the browser.
+ *
+ * Both modals cover the whole app with a mask and keep the root inert, so with
+ * either one up the sidebar entry is unreachable and the spec dies on a click
+ * timeout that explains nothing. They are also not removable by clicking alone:
+ *
+ * - `welcomeNoticeVersion` is the durable acknowledgement of the "Preview
+ *   Notice" copy version, and the notice mounts a few SECONDS after the shell
+ *   paints, so it lands on top of an interaction already under way. The version
+ *   comes from the host build; bump it here when the host bumps the notice.
+ * - `credentialOnboarding: false` is the same switch the desktop app sets by
+ *   detecting its own shell: with it on, a home with no provider credential gets
+ *   the "Add an API key" step, which `Configure later` only dismisses for that
+ *   page load — a reload would put it straight back, and the reload is the point
+ *   of the business-loop test.
+ */
+const FIRST_RUN_ENTRIES = `- id: ui-settings-general
+  name: "@deepseek-ai/dsh-client-ui-settings-general"
+  config:
+    welcomeNoticeVersion: 2026-09-28.1
+- id: ui-settings-models
+  name: "@deepseek-ai/dsh-client-ui-settings-models"
+  config:
+    credentialOnboarding: false
+`
+
+/**
+ * The DSH home this suite boots against. Always ours: a fresh repo-local
+ * directory, unless `DSH_E2E_HOME` pins one.
+ *
+ * Deliberately NOT `DSH_HOME`: the Desktop app exports `DSH_HOME` into every
+ * shell it starts, so inheriting it would quietly run the suite against the
+ * developer's own acknowledged profile — where the first-run notice is already
+ * gone — and the fresh-home path this suite exists to cover would never be
+ * exercised. That false green is why the pin has its own name.
+ */
+export function homeDir(repoRoot: string): string {
+  const pinned = process.env.DSH_E2E_HOME
+  return pinned !== undefined && pinned !== '' ? pinned : join(repoRoot, 'test-results', 'dsh-home')
+}
+
+/**
+ * Make the profile's patch carry the first-run facts, so neither first-run modal
+ * mounts. Idempotent, and additive: an existing patch keeps its entries.
+ * @param repoRoot - repository root, used for the default home.
+ * @returns the patch file this run will boot with.
+ */
+export function seedProfilePatch(repoRoot: string): string {
+  const profile = join(homeDir(repoRoot), 'profiles', 'web')
+  mkdirSync(profile, { recursive: true })
+  const patch = join(profile, 'cordis.patch.yml')
+  const existing = existsSync(patch) ? readFileSync(patch, 'utf8') : ''
+  if (existing.includes('welcomeNoticeVersion') && existing.includes('credentialOnboarding')) return patch
+  writeFileSync(patch, `${existing}${existing === '' ? '' : '\n'}${FIRST_RUN_ENTRIES}`)
+  return patch
+}
 
 const execFileAsync = promisify(execFile)
 
@@ -48,7 +107,7 @@ export async function freePort(): Promise<number> {
  * has to be reachable from `<DSH_HOME>/profiles/web/node_modules`. Idempotent.
  */
 export function linkPluginIntoProfile(repoRoot: string): string {
-  const profile = join(process.env.DSH_HOME ?? join(homedir(), '.dsh'), 'profiles', 'web')
+  const profile = join(homeDir(repoRoot), 'profiles', 'web')
   const target = join(profile, 'node_modules', 'dsh-mimir')
   mkdirSync(join(profile, 'node_modules'), { recursive: true })
   if (!existsSync(target)) {
@@ -100,13 +159,16 @@ export async function startInstance(repoRoot: string): Promise<E2EInstance> {
     return { baseURL: external, token, commit, patch, stop: () => Promise.resolve() }
   }
 
+  const patchWithAck = seedProfilePatch(repoRoot)
   const link = linkPluginIntoProfile(repoRoot)
   const port = await freePort()
   const command = process.env.DSH_E2E_BIN ?? (platform() === 'win32' ? 'dsh.cmd' : 'dsh')
   const args = ['--profile', 'web', '--patch', patch, '--port', String(port), '--no-open']
   const child = spawn(command, args, {
     cwd: repoRoot,
-    env: { ...process.env, DSH_E2E_STARTED: '1' },
+    // A repo-local home keeps the run reproducible: no dev profile, no state
+    // from a previous run, no Preview Notice (see seedProfilePatch).
+    env: { ...process.env, DSH_HOME: homeDir(repoRoot), DSH_E2E_STARTED: '1' },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   let log: string
@@ -115,7 +177,7 @@ export async function startInstance(repoRoot: string): Promise<E2EInstance> {
   } catch (error) {
     child.kill('SIGKILL')
     const message = error instanceof Error ? error.message : String(error)
-    throw new Error(`${message}\n[plugin link: ${link}]`)
+    throw new Error(`${message}\n[plugin link: ${link}] [profile patch: ${patchWithAck}]`)
   }
   const baseURL = `http://127.0.0.1:${String(port)}`
   return {
@@ -131,8 +193,10 @@ export async function startInstance(repoRoot: string): Promise<E2EInstance> {
   }
 }
 
-/** Forget this run's workspace leftovers so a suite run starts clean. */
+/** Forget the workspace AND the boot home, so every run starts from nothing. */
 export function cleanWorkspace(repoRoot: string): void {
   const workspace = join(repoRoot, '.research')
   rmSync(join(workspace, 'venue-deadlines.cache.json'), { force: true })
+  if (process.env.DSH_E2E_HOME !== undefined && process.env.DSH_E2E_HOME !== '') return
+  rmSync(homeDir(repoRoot), { recursive: true, force: true })
 }

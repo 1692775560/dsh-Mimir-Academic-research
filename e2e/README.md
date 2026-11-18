@@ -33,4 +33,20 @@ names exactly what was running.
 | `DSH_E2E_BIN` | The `dsh` executable to boot (defaults to `dsh` on `PATH`). |
 | `DSH_E2E_PATCH` | Overlay to boot with (defaults to `e2e/mimir.cordis.yml`). |
 | `DSH_E2E_PORT` | Pin the port instead of taking a free one. |
+| `DSH_E2E_HOME` | Boot against this dsh home instead of the repo-local `test-results/dsh-home`. Pin it to keep a warm profile between runs; a pinned home is not cleaned. |
+
+The suite always boots against its **own** dsh home (`test-results/dsh-home`,
+wiped at the start of every run). Not `DSH_HOME`: the Desktop app exports that
+into every shell it starts, so inheriting it would silently run the suite against
+the developer's own acknowledged profile — where the first-run modals are already
+gone — and the fresh-home path this suite exists to cover would never run.
+
+That home's `profiles/web/cordis.patch.yml` is seeded with two entries, because a
+fresh home greets the first page with blocking modals that `Configure later` only
+defers:
+
+| Entry | Why |
+| --- | --- |
+| `ui-settings-general.welcomeNoticeVersion` | Acknowledges the "Preview Notice". It mounts a few seconds *after* the shell paints and covers the app with a mask, so it lands on top of a click already under way. |
+| `ui-settings-models.credentialOnboarding: false` | Disables the "Get started" API-key step for this home — the same switch the desktop app sets by detecting its own shell. Clicking past it would come back on the next reload, which the business-loop test performs on purpose. |
 | `DSH_HOME` | Where to look for `profiles/web` when linking the plugin. |
