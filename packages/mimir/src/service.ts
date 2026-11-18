@@ -175,6 +175,8 @@ export interface ResearchServiceConfig {
   readonly search?: {
     readonly command: string
     readonly timeoutMs: number
+    /** Deployment default result cap of one web search (#232); never the arXiv knob. */
+    readonly maxResults: number
     /** Test hook replacing the real child process. */
     readonly run?: (command: string, args: readonly string[], timeoutMs: number) => Promise<string>
   }

@@ -665,6 +665,7 @@ describe('ResearchService.searchWeb', () => {
       search: {
         command: 'dg',
         timeoutMs: 5_000,
+        maxResults: 10,
         run: (_command, args) => { calls.push([...args]); return Promise.resolve(stdout) },
       },
     })
