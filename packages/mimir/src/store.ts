@@ -122,6 +122,9 @@ export const experimentRecord = z.object({
     finishedAt: z.string(),
     summary: z.string(),
   }).optional(),
+  // Added WITHOUT a version bump (#152): true on a record the metrics capture
+  // drafted; absent on every record predating the capture.
+  draft: z.boolean().optional(),
   updatedAt: z.string(),
 })
 
@@ -154,6 +157,10 @@ export const jobRecord = z.object({
   // carry only the six earlier values and keep validating.
   status: z.enum(['queued', 'running', 'succeeded', 'failed', 'cancelled', 'interrupted', 'unknown']),
   experimentId: z.string().optional(),
+  // Added WITHOUT a version bump (#152): the capture scope of an automatic
+  // metrics draft; absent on jobs submitted before the field existed.
+  projectId: z.string().optional(),
+  workdir: z.string().optional(),
   exitCode: z.number().int().nullable(),
   stdoutTail: z.string(),
   stderrTail: z.string(),

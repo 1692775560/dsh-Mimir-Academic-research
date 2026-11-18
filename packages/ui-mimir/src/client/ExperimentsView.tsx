@@ -269,6 +269,14 @@ export function ExperimentsView({
                         <span className={css.experimentStatus} data-status={record.status}>
                           {t(`experimentStatus.${record.status}`)}
                         </span>
+                        {record.draft === true && (
+                          <span
+                            className={css.experimentDraft}
+                            title={t('experiments.draftHint')}
+                          >
+                            {t('experiments.draft')}
+                          </span>
+                        )}
                         {record.lastJob !== undefined && (
                           <span
                             className={css.experimentLastJob}

@@ -120,6 +120,7 @@ import type {
   SectionMove,
   SectionOutlineTitles,
   ServerInput,
+  ServerRecord,
   SubsectionMove,
   ResearchTaskHealthResult,
   ResearchWikiChangeEvent,
@@ -248,6 +249,14 @@ export interface ResearchServiceConfig {
    * its full rail, which is what a bare service has always done.
    */
   readonly capabilities?: ResearchCapabilitiesView
+  /**
+   * Metrics read behind the automatic experiment capture (#152); absent, the
+   * settle path reads `<workdir>/metrics.jsonl` over ssh. Tests inject here so
+   * the three cases the issue names need no remote at all.
+   */
+  readonly metrics?: {
+    readonly read: (server: ServerRecord, workdir: string) => Promise<string | undefined>
+  } | undefined
 }
 
 /**
@@ -288,6 +297,7 @@ export class ResearchService extends TypertRemoteService {
         ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
         ...(config.jobs === undefined ? {} : { jobs: config.jobs }),
         ...(config.capabilities === undefined ? {} : { capabilities: config.capabilities }),
+        ...(config.metrics === undefined ? {} : { metrics: config.metrics }),
       },
     })
     this.state = {
@@ -793,6 +803,8 @@ export class ResearchService extends TypertRemoteService {
     serverId: string
     command: string
     experimentId?: string | undefined
+    projectId?: string | undefined
+    workdir?: string | undefined
   }): Promise<ResearchSubmitJobResult> {
     return server.submitJob(this.deps, this.state, request)
   }
