@@ -2387,6 +2387,24 @@ li.dropIndicator {
   gap: 10px;
 }
 
+/* #208: the superseded rows stay legible but read as "being replaced", so a
+   user never mistakes them for the answer to the query they just typed. */
+.papersResults[data-stale] {
+  opacity: 0.72;
+}
+
+.searchPending {
+  margin-left: 8px;
+  font-weight: 400;
+  opacity: 0.8;
+}
+
+.searchStaleNote {
+  margin: 0 0 8px;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
 .paperResult {
   display: flex;
   flex-direction: column;

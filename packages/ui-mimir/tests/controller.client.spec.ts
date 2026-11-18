@@ -1224,6 +1224,79 @@ describe('ResearchController arXiv search and paper import', () => {
     expect(controller.getSnapshot().webSearch).toMatchObject({ query: 'fast', status: 'error' })
   })
 
+  // #208: a new query must not blank the panel. The superseded rows ride along
+  // on the loading slice so the view can keep painting them behind a marker.
+  it('keeps the superseded arXiv rows visible while the next query is in flight', async () => {
+    const next = deferred<RemoteResult<ResearchSearchArxivResult>>()
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      searchArxiv: () => {
+        calls += 1
+        return calls === 1
+          ? Promise.resolve(carried<ResearchSearchArxivResult>({ ok: true, value: { results: [ENTRY] } }))
+          : next.promise
+      },
+    }))
+    controller.searchArxiv('first')
+    await settle()
+    expect(controller.getSnapshot().arxivSearch?.list).toHaveLength(1)
+
+    controller.searchArxiv('second')
+    const inFlight = controller.getSnapshot().arxivSearch
+    expect(inFlight).toMatchObject({ query: 'second', status: 'loading' })
+    // The old rows are still there — as the previous outcome, not as this one.
+    expect(inFlight?.list).toHaveLength(0)
+    expect(inFlight?.previous).toMatchObject({ query: 'first' })
+    expect(inFlight?.previous?.list[0]?.id).toBe(ENTRY.id)
+
+    next.resolve(carried<ResearchSearchArxivResult>({ ok: true, value: { results: [ENTRY] } }))
+    await settle()
+    expect(controller.getSnapshot().arxivSearch).toMatchObject({ query: 'second', status: 'ready' })
+    expect(controller.getSnapshot().arxivSearch?.previous).toBeNull()
+  })
+
+  it('carries no stale rows when the previous search found nothing', async () => {
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      searchArxiv: () => {
+        calls += 1
+        return calls === 1
+          ? Promise.resolve(carried<ResearchSearchArxivResult>({ ok: true, value: { results: [] } }))
+          : new Promise(() => {})
+      },
+    }))
+    controller.searchArxiv('empty')
+    await settle()
+    controller.searchArxiv('next')
+    expect(controller.getSnapshot().arxivSearch?.previous).toBeNull()
+  })
+
+  it('keeps the superseded web rows visible while the next query is in flight', async () => {
+    const next = deferred<RemoteResult<ResearchSearchWebResult>>()
+    let calls = 0
+    const controller = new ResearchController(stubRemote({
+      searchWeb: () => {
+        calls += 1
+        return calls === 1
+          ? Promise.resolve(carried<ResearchSearchWebResult>({
+              ok: true,
+              value: { results: [{ title: 'Old page', url: 'https://example.com/old', content: 'Snippet.', engine: 'brave', category: 'general', publishedDate: '' }] },
+            }))
+          : next.promise
+      },
+    }))
+    controller.searchWeb('first')
+    await settle()
+    controller.searchWeb('second')
+    const inFlight = controller.getSnapshot().webSearch
+    expect(inFlight).toMatchObject({ query: 'second', status: 'loading' })
+    expect(inFlight?.previous?.query).toBe('first')
+    expect(inFlight?.previous?.list[0]?.url).toBe('https://example.com/old')
+    next.resolve(carried<ResearchSearchWebResult>({ ok: true, value: { results: [] } }))
+    await settle()
+    expect(controller.getSnapshot().webSearch?.previous).toBeNull()
+  })
+
   it('refreshes the literature list after a successful import and returns failures otherwise', async () => {
     let lists = 0
     const controller = new ResearchController(stubRemote({
