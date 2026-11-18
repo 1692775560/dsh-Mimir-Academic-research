@@ -107,6 +107,9 @@ export const experimentRecord = z.object({
   // Added WITHOUT a version bump: `.optional()` leaves the field absent on
   // records that predate it, so existing v2 JSON stores keep loading.
   serverId: z.string().optional(),
+  // Added WITHOUT a version bump (#224): the linked job whose settle owns the
+  // record's state; absent on records written before the field existed.
+  activeJobId: z.string().optional(),
   // Added WITHOUT a version bump: `.optional()` leaves the field absent on
   // records that predate it, so existing v2 JSON stores keep loading.
   // 'cancelled' added to the enum (#247): writeBackExperiment already wrote

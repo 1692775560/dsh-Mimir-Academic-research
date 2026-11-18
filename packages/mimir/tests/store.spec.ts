@@ -169,6 +169,27 @@ describe('researchWikiDomainSpec', () => {
     expect(stored?.serverId).toBeUndefined()
   })
 
+  it('keeps activeJobId on an experiment record across a simulated restart', async () => {
+    const experiment: ExperimentRecord = {
+      id: 'exp-1',
+      projectId: 'p1',
+      name: 'baseline',
+      status: 'running',
+      metrics: {},
+      serverId: 'srv-1',
+      activeJobId: 'job-1',
+      updatedAt: '2026-08-20T00:00:00.000Z',
+    }
+    const pool = new MemoryMediaPool()
+    {
+      const { facility } = await harness(pool)
+      await (await facility.open(researchWikiDomainSpec)).table('experiments').put(experiment.id, experiment)
+    }
+    const { facility } = await harness(pool)
+    const reopened = await facility.open(researchWikiDomainSpec)
+    expect(reopened.table('experiments').get(experiment.id)).toEqual(experiment)
+  })
+
   it('rejects a stored record that fails its zod schema, naming table and key', async () => {
     const pool = new MemoryMediaPool()
     {
