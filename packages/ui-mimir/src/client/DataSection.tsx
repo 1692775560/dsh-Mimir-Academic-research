@@ -134,6 +134,22 @@ export function DataSection({ backup, taskHealth, exportWiki, importWiki, t }: {
             : t('overview.backupDisabled')}
         </p>
       )}
+      {/*
+        The backup loop's own health (#227). A file count alone cannot say
+        whether the loop still runs: a loop that broke hours ago leaves older
+        files on disk looking exactly like a healthy one that just ran.
+      */}
+      {backup !== null && backup.enabled && backup.consecutiveFailures > 0 && (
+        <p className={css.hint} data-danger="true" aria-label={t('overview.backupHealth')}>
+          {t('overview.backupFailing')} × {backup.consecutiveFailures}
+          {backup.lastError === null ? '' : `：${backup.lastError}`}
+        </p>
+      )}
+      {backup !== null && backup.enabled && backup.consecutiveFailures === 0 && backup.lastSuccessAt !== null && (
+        <p className={css.hint}>
+          {t('overview.backupLastOk')} · {new Date(backup.lastSuccessAt).toLocaleString()}
+        </p>
+      )}
       {taskHealth !== null && taskHealth.length > 0 && (
         <ul className={css.artifactList} aria-label={t('overview.taskHealth')}>
           {taskHealth.map(task => (

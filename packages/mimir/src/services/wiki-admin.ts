@@ -11,7 +11,7 @@ import { join } from 'node:path'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { isValidArxivId } from '../arxiv-id.ts'
 import { isValidProjectId } from '../project-id.ts'
-import { isBackupFileName } from '../backup.ts'
+import { isBackupFileName, WIKI_BACKUP_TASK } from '../backup.ts'
 import {
   buildWikiSnapshot,
   snapshotEnvelopeError,
@@ -22,6 +22,7 @@ import {
 } from '../wiki-snapshot.ts'
 import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
 import type { ResearchWikiDomain } from '../store.ts'
+import type { TaskHealthRegistry } from '../task-health.ts'
 import type {
   ResearchExportWikiResult,
   ResearchImportWikiMode,
@@ -48,6 +49,13 @@ export interface WikiAdminDeps {
     readonly keep: number
     readonly dir: string
   }
+  /**
+   * The shared scheduled-task health book (#227). `listBackups` reads the
+   * `wiki-backup` entry out of it so the panel can tell "no backups yet" from
+   * "the backup loop has been failing for hours"; absent in tests and direct
+   * constructions, where the health fields read as never-run.
+   */
+  readonly taskHealth?: TaskHealthRegistry | undefined
 }
 
 /** Durable undo record for an interrupted destructive wiki import. */
@@ -302,9 +310,18 @@ export async function importWiki(
  * @returns the backup status view.
  */
 export async function listBackups(deps: WikiAdminDeps): Promise<ResearchListBackupsResult> {
+  // One health row out of the shared book; defaults keep the view total when
+  // the service was built without a registry.
+  const health = deps.taskHealth?.snapshot().find(task => task.name === WIKI_BACKUP_TASK)
+  const healthFields = {
+    lastSuccessAt: health?.lastSuccessAt ?? null,
+    lastFailureAt: health?.lastFailureAt ?? null,
+    consecutiveFailures: health?.consecutiveFailures ?? 0,
+    lastError: health?.lastError ?? null,
+  }
   if (deps.backup === undefined || !deps.backup.enabled) {
     return success({
-      backup: { enabled: false, intervalMinutes: 0, keep: 0, count: 0, latestName: null },
+      backup: { enabled: false, intervalMinutes: 0, keep: 0, count: 0, latestName: null, ...healthFields },
     })
   }
   const names = (await readdir(deps.backup.dir).catch(() => [] as string[]))
@@ -317,6 +334,7 @@ export async function listBackups(deps: WikiAdminDeps): Promise<ResearchListBack
       keep: deps.backup.keep,
       count: names.length,
       latestName: names.at(-1) ?? null,
+      ...healthFields,
     },
   })
 }
