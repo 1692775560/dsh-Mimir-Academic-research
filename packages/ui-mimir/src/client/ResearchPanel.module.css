@@ -6149,3 +6149,86 @@ li.dropIndicator {
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
+
+/* ── LaTeX completion (#154) ────────────────────────────────────────────────
+   The popover is placed by `PaperView` from line/column arithmetic, so it is an
+   absolutely positioned sibling inside `.editorStack` and never takes part in
+   the editor's layout. Every colour is a host alias with a light fallback, so
+   the dark theme flips it through the tokens `.workbench` already overrides —
+   no second rule, and no hardcoded palette to keep in sync. */
+.editorMeasure {
+  position: absolute;
+  top: 0;
+  left: -9999px;
+  visibility: hidden;
+  white-space: pre;
+  pointer-events: none;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 13px;
+  line-height: 19px;
+}
+
+.completion {
+  position: absolute;
+  z-index: 30;
+  min-width: 200px;
+  /* Narrow on purpose: the popover lives inside the editor pane, and a wider
+     box gets clipped by the pane instead of growing past it. */
+  max-width: 300px;
+  max-height: 214px;
+  overflow: auto;
+  padding: 4px;
+  border: 1px solid var(--dsw-alias-border-l2, #e6e8eb);
+  border-radius: 8px;
+  background: var(--dsw-specific-menu, #fff);
+  box-shadow: 0 12px 28px rgb(31 35 41 / 16%);
+}
+
+.completionHead {
+  margin: 0 0 4px;
+  padding: 2px 8px;
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  color: var(--dsw-alias-label-tertiary, #8f959e);
+}
+
+.completionList {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.completionRow {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--dsw-alias-label-primary, #1f2329);
+  font-family: var(--dsw-font-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.completionRow[data-active] {
+  background: var(--dsw-alias-interactive-bg-hover, #eef1f5);
+}
+
+.completionValue {
+  flex: 0 0 auto;
+  font-weight: 600;
+}
+
+.completionDetail {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-size: 11px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--dsw-alias-label-tertiary, #8f959e);
+}
