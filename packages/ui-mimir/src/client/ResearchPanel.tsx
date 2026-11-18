@@ -937,6 +937,7 @@ export function ResearchPanel({
             eureka={eureka}
             ensureEureka={ensureEureka}
             digest={digest}
+            locale={locale}
             ensureDigest={ensureDigest}
             refreshDigest={refreshDigest}
             generateDigest={generateDigest}
