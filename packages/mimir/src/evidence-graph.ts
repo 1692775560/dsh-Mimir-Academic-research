@@ -224,6 +224,12 @@ export interface EvidenceGraphStats {
   readonly aliasMerges: number
   /** Provided alias values that failed normalization (counted, not guessed). */
   readonly unnormalizable: number
+  /**
+   * Declarations refused because they would close a directed cycle (#216).
+   * Counted rather than dropped in silence: I2 says a refusal is disclosed,
+   * and a graph a consumer can traverse must be acyclic.
+   */
+  readonly cycleRejected: number
 }
 
 /** The composed evidence graph (the pure fold's product). */
@@ -336,6 +342,52 @@ function scopeOf(event: EventRecord): EvidenceGraphEdge['scope'] {
     ideaId: event.refs.ideaId ?? null,
     claimId: event.refs.claimId ?? null,
   })
+}
+
+/**
+ * Drop the edges that would close a directed cycle, in place, and return how
+ * many were refused (#216 item 2).
+ *
+ * The walk is a DFS over the accepted prefix: an edge is refused when its
+ * destination can already reach its source through edges accepted earlier (the
+ * `(ts, id)` order makes that decision deterministic — the same event set
+ * always refuses the same rows, whichever order storage hands them back).
+ * `narrates` rows never participate; they attach a journal entry to a line and
+ * carry no evidence weight.
+ * @param edges - the assembled edges, in canonical order (mutated in place).
+ * @returns the number of edges refused.
+ */
+function refuseCycles(edges: EvidenceGraphEdge[]): number {
+  const out = new Map<string, Set<string>>()
+  const reaches = (from: string, to: string): boolean => {
+    if (from === to) return true
+    const seen = new Set<string>([from])
+    const stack = [from]
+    while (stack.length > 0) {
+      const current = stack.pop() as string
+      for (const next of out.get(current) ?? []) {
+        if (next === to) return true
+        if (seen.has(next)) continue
+        seen.add(next)
+        stack.push(next)
+      }
+    }
+    return false
+  }
+  let refused = 0
+  for (let index = edges.length - 1; index >= 0; index -= 1) {
+    const edge = edges[index] as EvidenceGraphEdge
+    if (edge.rel === 'narrates') continue
+    if (reaches(edge.dst, edge.src)) {
+      edges.splice(index, 1)
+      refused += 1
+      continue
+    }
+    const targets = out.get(edge.src) ?? new Set<string>()
+    targets.add(edge.dst)
+    out.set(edge.src, targets)
+  }
+  return refused
 }
 
 /**
@@ -585,6 +637,16 @@ export function deriveEvidenceGraph(
     }))
   }
   edges.sort((left, right) => left.ts.localeCompare(right.ts) || left.id.localeCompare(right.id))
+
+  /* 6b. Cycle refusal (#216 item 2). The fold is the last line of defence: a
+     consumer that walks the edges must not be able to hang, and "a claim's
+     evidence transitively rests on itself" is not a structure any reader can
+     use. Declarations are visited in (ts, id) order and a row whose endpoints
+     are already connected in the same direction is refused and counted — it is
+     NOT dropped in silence, so the refusal stays auditable. `narrates` rows
+     are excluded: they point at a line node, carry zero weight, and cannot
+     close an evidence loop. */
+  const cycleRejected = refuseCycles(edges)
 
   /* 7. Nodes: endpoints unified through the alias map, labels resolved. */
   interface NodeAccum {
@@ -847,6 +909,7 @@ export function deriveEvidenceGraph(
     duplicateEdges,
     aliasMerges,
     unnormalizable,
+    cycleRejected,
   })
 
   return Object.freeze({
@@ -876,7 +939,7 @@ export function renderEvidenceGraphMarkdown(graph: EvidenceGraph): string {
   push(`- Derivation: v${graph.derivationVersion}`)
   push(`- Edges: ${graph.stats.totalEdges} total · ${graph.stats.activeEdges} active · ${graph.stats.retractedEdges} retracted (active口径 unless noted)`)
   push(`- Nodes: ${graph.nodes.length} · Conflicts: ${graph.conflicts.length}`)
-  push(`- Duplicates merged: ${graph.stats.duplicateEdges} · Alias merges: ${graph.stats.aliasMerges} · Unnormalizable: ${graph.stats.unnormalizable} · Retract orphans: ${graph.stats.retractOrphans}`)
+  push(`- Duplicates merged: ${graph.stats.duplicateEdges} · Alias merges: ${graph.stats.aliasMerges} · Unnormalizable: ${graph.stats.unnormalizable} · Retract orphans: ${graph.stats.retractOrphans} · Cycles refused: ${graph.stats.cycleRejected}`)
   push()
 
   push('## Evidence history by research line')
