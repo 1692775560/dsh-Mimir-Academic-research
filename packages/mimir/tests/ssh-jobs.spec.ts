@@ -17,6 +17,7 @@ import Storage, { storageBackendServiceKey } from '@deepseek-ai/dsh-storage'
 import { DomainFacility } from '@deepseek-ai/dsh-storage-domain'
 import { MemoryMediaPool, MemoryStorageBackend } from './helpers/memory-backend.ts'
 import { researchWikiDomainSpec } from '../src/store.ts'
+import type { ResearchWikiDomain } from '../src/store.ts'
 import { recoverInterruptedJobs } from '../src/services/server.ts'
 import { isActiveJobStatus, isTerminalJobStatus, JOB_ACTIVE_STATUSES, JOB_STATUSES } from '../src/job-lifecycle.ts'
 import { ResearchService } from '../src/service.ts'
@@ -79,13 +80,37 @@ async function stubFakeSsh(): Promise<void> {
   vi.stubEnv('PATH', `${binDir}:${process.env.PATH ?? ''}`)
 }
 
-/** Poll listJobs until one job reaches a terminal status. */
-async function settleJob(service: ResearchService, id: string): Promise<JobRecord> {
+/**
+ * Poll until the job settles AND its experiment write-back has landed.
+ *
+ * The record flips terminal before the settle finishes: `finishJob` writes the
+ * record, emits the event, then writes back the linked experiment and appends
+ * `EXPERIMENT_LOG.md`, only releasing the abort handle afterwards. A caller
+ * that stops at `!isActiveJob` can therefore read the record and still lose the
+ * race to the file — the settle is genuinely not done yet, so waiting for it is
+ * the fix rather than a sleep. Reading `lastJob` is the signal that the
+ * write-back (and the append that follows it) has run.
+ * @param service - the service owning the job.
+ * @param id - the job record id.
+ * @param options - `waitForLog: false` for jobs whose experiment write-back is
+ *   not part of the assertion (an unlinked job has no write-back at all).
+ * @returns the settled job record.
+ */
+async function settleJob(
+  service: ResearchService,
+  id: string,
+  domain?: ResearchWikiDomain,
+): Promise<JobRecord> {
+  const waitForLog = domain !== undefined
   for (let attempt = 0; attempt < 200; attempt += 1) {
     const listed = await service.listJobs({})
     if (listed.ok) {
       const job = listed.value.jobs.find(record => record.id === id)
-      if (job !== undefined && !isActiveJob(job)) return job
+      if (job !== undefined && !isActiveJob(job)) {
+        if (!waitForLog || job.experimentId === undefined) return job
+        const experiment = domain.table('experiments').get(job.experimentId)
+        if (experiment?.lastJob?.jobId === job.id) return job
+      }
     }
     await new Promise(resolve => setTimeout(resolve, 25))
   }
@@ -163,7 +188,7 @@ describe('ResearchService.submitJob validation', () => {
     const submitted = await service.submitJob({ serverId, command: 'hostname' })
     if (!submitted.ok) throw new Error('submit failed')
 
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled.status).toBe('failed')
     expect(settled.stderrTail).toContain('the job driver failed internally: store unavailable')
   })
@@ -222,7 +247,7 @@ describe('ResearchService job lifecycle', () => {
     if (!submitted.ok) throw new Error('submit rejected')
     expect('experimentId' in submitted.value.job).toBe(false)
     expect('experimentId' in domain.table('jobs').get(submitted.value.job.id)!).toBe(false)
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled.status).toBe('succeeded')
   })
 
@@ -249,7 +274,7 @@ describe('ResearchService job lifecycle', () => {
       serverId,
     })
 
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled.status).toBe('succeeded')
     expect(settled.exitCode).toBe(0)
     expect(settled.stdoutTail).toContain('fake-ssh stdout: python train.py --epochs 1')
@@ -287,7 +312,7 @@ describe('ResearchService job lifecycle', () => {
       experimentId: EXPERIMENT.id,
     })
     if (!submitted.ok) throw new Error('submit rejected')
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled.status).toBe('failed')
     expect(settled.exitCode).toBe(3)
     expect(settled.stderrTail).toContain('fake-ssh stderr line')
@@ -301,7 +326,7 @@ describe('ResearchService job lifecycle', () => {
   })
 
   it('settles an ssh session failure as failed with the client message and a null exit code', async () => {
-    const { service } = await harness()
+    const { domain, service } = await harness()
     // No shim: the real ssh hits a refused port and fails fast.
     const created = await service.saveServer({
       server: { ...SERVER_INPUT, host: '127.0.0.1', port: 19999 },
@@ -309,7 +334,7 @@ describe('ResearchService job lifecycle', () => {
     if (!created.ok) throw new Error('create failed')
     const submitted = await service.submitJob({ serverId: created.value.server.id, command: 'hostname' })
     if (!submitted.ok) throw new Error('submit rejected')
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled.status).toBe('failed')
     expect(settled.stderrTail).toBeTruthy()
   }, 20_000)
@@ -417,7 +442,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
   })
 
   it('cancels an active job instead of deleting an unowned remote command', async () => {
-    const { service } = await harness()
+    const { domain, service } = await harness()
     await stubFakeSsh()
     const created = await service.saveServer({ server: SERVER_INPUT })
     if (!created.ok) throw new Error('create failed')
@@ -436,7 +461,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
       ok: true,
       value: { id: submitted.value.job.id },
     })
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled).toMatchObject({
       status: 'cancelled',
       exitCode: null,
@@ -445,7 +470,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
   })
 
   it('interrupts an active job when its host service is disposed', async () => {
-    const { ctx, service } = await harness()
+    const { ctx, domain, service } = await harness()
     await stubFakeSsh()
     const created = await service.saveServer({ server: SERVER_INPUT })
     if (!created.ok) throw new Error('create failed')
@@ -456,7 +481,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
     if (!submitted.ok) throw new Error('submit rejected')
 
     await ctx.fiber.dispose()
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled).toMatchObject({
       status: 'interrupted',
       exitCode: null,
@@ -477,7 +502,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
     })
     if (!submitted.ok) throw new Error('submit rejected')
 
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled.status).toBe('unknown')
     expect(settled.exitCode).toBeNull()
     expect(settled.stderrTail).toContain('may still be running')
@@ -489,7 +514,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
   })
 
   it('settles output past the capture cap as an explicit failure, never a silent truncation (#225)', async () => {
-    const { service } = await harness({ maxBufferBytes: 512 })
+    const { domain, service } = await harness({ maxBufferBytes: 512 })
     await stubFakeSsh()
     const created = await service.saveServer({ server: SERVER_INPUT })
     if (!created.ok) throw new Error('create failed')
@@ -499,7 +524,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
     })
     if (!submitted.ok) throw new Error('submit rejected')
 
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled.status).toBe('failed')
     expect(settled.exitCode).toBeNull()
     expect(settled.stderrTail).toContain('capture limit')
@@ -527,7 +552,7 @@ describe('ResearchService.listJobs / deleteJob', () => {
       ok: true,
       value: { id: submitted.value.job.id },
     })
-    const settled = await settleJob(service, submitted.value.job.id)
+    const settled = await settleJob(service, submitted.value.job.id, domain)
     expect(settled.status).toBe('cancelled')
     // The store schema must accept the cancelled outcome: the write-back
     // lands instead of dying on the enum (#247). The job's terminal write
