@@ -28,11 +28,15 @@ jobs:
       - run: pnpm exec playwright install --with-deps chromium
       - name: Install the dsh CLI
         # The suite boots the instance itself; the CLI is the binary it shells
-        # out to. Pinned so an upstream release cannot change the harness.
+        # out to. Deliberately `@latest` — the panel ships as a bundle for
+        # whatever dsh is current — but the version is printed below, because
+        # "latest" that silently moves is how a harness breaks without a diff.
         run: npm i -g @deepseek-ai/dsh@latest
-      - name: Link the suite into the CLI's web profile
-        run: ./e2e/link-plugin.sh "$PWD" "$HOME/.dsh/profiles/web"
+      - name: Record the CLI under test
+        run: dsh --version
       - name: Playwright E2E (self-hosted instance)
+        # No profile linking step: the suite boots against its own
+        # `test-results/dsh-home` and links the package into THAT profile.
         run: pnpm test:e2e
         env:
           DSH_E2E_URL: ${{ vars.DSH_E2E_URL }}
