@@ -167,6 +167,13 @@ import {
   type LiveSlice,
   type WikiChangeAggregator,
 } from './live-refresh.ts'
+import {
+  sliceAction,
+  type LazySlice,
+  type LoadTrigger,
+  type SliceAction,
+  type SliceStatus,
+} from './slice-policy.ts'
 
 // Re-exported so view components (DigestView) can import these model types
 // from the controller module rather than reaching into the package directly.
@@ -989,6 +996,26 @@ export type ResearchProtocolState =
     readonly verdict: 'host-ahead' | 'client-ahead' | 'unknown'
   }
 
+/**
+ * The slices the pushed wiki stream already re-reads on reconnect (see
+ * {@link ResearchController.resyncLiveSlices}): asking for them a second time
+ * would race the aggregate flush, and the second ask would be dropped anyway.
+ */
+const LIVE_TABLE_SLICES: ReadonlySet<LazySlice> = new Set<LazySlice>(['papers', 'jobs', 'figures'])
+
+/** The artifact the experiments view reads (its log). Owned here so the
+ * slice runner can name it without the panel's constant. */
+const EXPERIMENT_ARTIFACT_NAME = 'EXPERIMENT_LOG.md'
+
+/**
+ * The slices a reconnect re-reads (#222). The project list is excluded: it is
+ * the dependency every other slice waits on, so {@link ResearchController.resync}
+ * reads it first rather than here.
+ */
+const RECONNECT_SLICES: readonly LazySlice[] = Object.freeze([
+  'projects', 'papers', 'subscriptions', 'zotero', 'jobs', 'venues', 'figures', 'artifact',
+])
+
 /** Whether two evidence window requests name the same fold window (single-flight). */
 function sameEvidenceRequest(left: EvidenceGraphRequest | null, right: EvidenceGraphRequest): boolean {
   if (left === null) return false
@@ -1090,6 +1117,8 @@ export class ResearchController implements HostObservable<ResearchView> {
   )
   /** The filter of the last ledger load, replayed by the live refresh. */
   private ledgerFilter: ResearchEventFilter | null = null
+  /** The project the views are looking at; drives the project-scoped slices. */
+  private selectedProjectId: string | null = null
   private disposed = false
   private toastSeq = 0
   private paperJumpSeq = 0
@@ -1108,12 +1137,119 @@ export class ResearchController implements HostObservable<ResearchView> {
     return () => { this.listeners.delete(listener) }
   }
 
-  /** Load the project list once; a failed load stays retryable. */
+  /**
+   * Tell the controller which project the views are looking at, so a slice
+   * whose loader needs it (venues, figures, the experiment artifact) can be
+   * driven by {@link loadSlice} alone rather than by every call site passing
+   * the id again. The panel already tracks the selection; this mirrors it.
+   * @param projectId - the selected project, or null when none is.
+   */
+  setSelectedProjectId(projectId: string | null): void {
+    this.selectedProjectId = projectId
+  }
+
+  /**
+   * The single entry every lazy slice loads through (#222). The panel's
+   * effects no longer decide freshness themselves — they name a slice and say
+   * WHY it is wanted, and {@link sliceAction} answers "load, refresh, or
+   * leave it alone" from one table. That is what makes a failed load retryable
+   * from the first-open, revisit, reconnect, and project-switch paths alike:
+   * before, each `ensure*` method carried its own `status === 'ready'` guard
+   * and an `'error'` slice was skipped forever.
+   * @param slice - the lazy slice to consider.
+   * @param trigger - why it is being asked for (drives the policy table).
+   */
+  loadSlice(slice: LazySlice, trigger: LoadTrigger): void {
+    const action = sliceAction(this.sliceStatus(slice), this.sliceInFlight(slice), trigger)
+    if (action === 'skip') return
+    this.runSlice(slice, action)
+  }
+
+  /**
+   * Load the project list (the panel's first open, the retry entry, and the
+   * reconnect resync). Kept as a named method because the overview's
+   * informational reads ride along with it.
+   */
   ensure(): void {
-    if (this.view.projectsStatus === 'ready' || this.loadPromise !== null) return
-    this.loadPromise = this.loadProjects().finally(() => { this.loadPromise = null })
+    this.loadSlice('projects', 'first-open')
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
     this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
+  }
+
+  /** The status one lazy slice currently reports. */
+  private sliceStatus(slice: LazySlice): SliceStatus {
+    switch (slice) {
+      case 'projects': return this.view.projectsStatus
+      case 'papers': return this.view.papers.status
+      case 'subscriptions': return this.view.arxivSubscriptions.status
+      case 'zotero': return this.view.zotero.status
+      case 'jobs': return this.view.jobs.status
+      case 'venues': return this.view.venues.status
+      case 'figures': return this.view.figures?.status ?? 'cold'
+      case 'artifact': return this.view.artifact?.status ?? 'cold'
+    }
+  }
+
+  /** Whether one lazy slice already has a load running. */
+  private sliceInFlight(slice: LazySlice): boolean {
+    switch (slice) {
+      case 'projects': return this.loadPromise !== null
+      case 'papers': return this.papersPromise !== null
+      case 'subscriptions': return this.subscriptionsPromise !== null
+      case 'zotero': return this.zoteroPromise !== null
+      case 'jobs': return this.jobsPromise !== null
+      case 'venues': return this.venuesInFlight
+      // These two own their in-flight bookkeeping inside the loader, which
+      // also queues a superseding request; asking twice would race it.
+      case 'figures': return this.figuresInFlight
+      case 'artifact': return false
+    }
+  }
+
+  /** Run one decided action for a slice. */
+  private runSlice(slice: LazySlice, action: SliceAction): void {
+    const quiet = action === 'refresh'
+    switch (slice) {
+      case 'projects': {
+        this.loadPromise ??= this.loadProjects().finally(() => { this.loadPromise = null })
+        return
+      }
+      case 'papers': {
+        this.papersPromise ??= this.loadPapers(quiet).finally(() => { this.papersPromise = null })
+        return
+      }
+      case 'subscriptions': {
+        this.subscriptionsPromise ??= this.loadSubscriptions()
+          .then(() => {
+            const { list, checking } = this.view.arxivSubscriptions
+            if (!checking && anySubscriptionDue(list, Date.now())) void this.checkArxivSubscriptions()
+          })
+          .finally(() => { this.subscriptionsPromise = null })
+        return
+      }
+      case 'zotero': {
+        this.zoteroPromise ??= this.loadZotero().finally(() => { this.zoteroPromise = null })
+        return
+      }
+      case 'jobs': {
+        this.jobsPromise ??= this.loadJobs().finally(() => { this.jobsPromise = null })
+        return
+      }
+      case 'venues': {
+        this.ensureVenues(this.selectedProjectId, quiet)
+        return
+      }
+      case 'figures': {
+        const projectId = this.selectedProjectId
+        if (projectId !== null) this.loadFigures(projectId, true, quiet)
+        return
+      }
+      case 'artifact': {
+        const projectId = this.selectedProjectId
+        if (projectId !== null) this.loadArtifact(projectId, EXPERIMENT_ARTIFACT_NAME, true)
+        return
+      }
+    }
   }
 
   /**
@@ -1161,13 +1297,18 @@ export class ResearchController implements HostObservable<ResearchView> {
     })()
   }
 
-  /** Re-read the project list (the retry entry and the reconnect resync). */
+  /**
+   * Re-read the project list and every other warm slice (#222's reconnect
+   * path). A reconnect may follow a host upgrade or an outage, so both the
+   * handshake and the data are re-read: a failed slice gets another chance
+   * instead of sitting on its error card until someone presses a button.
+   */
   resync(): void {
     // A reconnect may follow a host upgrade: re-run the handshake even when
     // the panel is cold, so a version change never goes unnoticed.
     this.checkProtocol()
     if (this.view.projectsStatus === 'cold') return
-    this.loadPromise ??= this.loadProjects().finally(() => { this.loadPromise = null })
+    for (const slice of RECONNECT_SLICES) this.loadSlice(slice, 'reconnect')
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
     this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
   }
@@ -1970,10 +2111,12 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
   }
 
-  /** Load the literature list once, on the papers view's first open. */
+  /**
+   * Load the literature list if it is not settled yet (the papers view's
+   * first open and its retry control).
+   */
   ensurePapers(): void {
-    if (this.view.papers.status === 'ready' || this.papersPromise !== null) return
-    this.papersPromise = this.loadPapers().finally(() => { this.papersPromise = null })
+    this.loadSlice('papers', 'first-open')
   }
 
   /**
@@ -1991,13 +2134,7 @@ export class ResearchController implements HostObservable<ResearchView> {
    * scheduled daily check is the steady-state path, this only freshens.
    */
   ensureSubscriptions(): void {
-    if (this.view.arxivSubscriptions.status === 'ready' || this.subscriptionsPromise !== null) return
-    this.subscriptionsPromise = this.loadSubscriptions()
-      .then(() => {
-        const { list, checking } = this.view.arxivSubscriptions
-        if (!checking && anySubscriptionDue(list, Date.now())) void this.checkArxivSubscriptions()
-      })
-      .finally(() => { this.subscriptionsPromise = null })
+    this.loadSlice('subscriptions', 'first-open')
   }
 
   /**
@@ -2584,17 +2721,20 @@ export class ResearchController implements HostObservable<ResearchView> {
    * flags ride the catalog read).
    * @param projectId - the project whose watch list rides along, or null.
    */
-  ensureVenues(projectId: string | null): void {
+  ensureVenues(projectId: string | null, quiet = false): void {
     if (this.venuesInFlight) {
       // Queue the newest request behind the in-flight one and stale-mark that
       // one's reply: publishing it would flash another project's watch list.
       this.venuesGeneration += 1
-      this.venuesPending = { projectId, quiet: false }
+      this.venuesPending = { projectId, quiet }
       return
     }
     const current = this.view.venues
-    if (current.status === 'ready' && current.watchedProjectId === projectId) return
-    void this.loadVenueDeadlines(projectId, false)
+    // A ready catalog for the SAME project is fresh; a ready catalog for a
+    // different project is stale (the watched flags ride the catalog read),
+    // and a failed one is retryable — both fall through to the reload.
+    if (!quiet && current.status === 'ready' && current.watchedProjectId === projectId) return
+    void this.loadVenueDeadlines(projectId, quiet)
   }
 
   /**
@@ -3321,8 +3461,7 @@ export class ResearchController implements HostObservable<ResearchView> {
    * probe stays retryable through {@link recheckZotero}.
    */
   ensureZotero(): void {
-    if (this.view.zotero.status === 'ready' || this.zoteroPromise !== null) return
-    this.zoteroPromise = this.loadZotero().finally(() => { this.zoteroPromise = null })
+    this.loadSlice('zotero', 'first-open')
   }
 
   /** Re-probe the Zotero connection (the section's retry entry). */
@@ -3873,10 +4012,9 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
   }
 
-  /** Load the job list once, on the servers view's jobs section first open. */
+  /** Load the job list if it is not settled yet (the jobs section's first open). */
   ensureJobs(): void {
-    if (this.view.jobs.status === 'ready' || this.jobsPromise !== null) return
-    this.jobsPromise = this.loadJobs().finally(() => { this.jobsPromise = null })
+    this.loadSlice('jobs', 'first-open')
   }
 
   /**
@@ -4185,7 +4323,9 @@ export class ResearchController implements HostObservable<ResearchView> {
    * landed while it was down are unknown. Re-read every warm slice at once —
    * one pseudo change per mappable table rides the normal aggregation path,
    * and the cold-slice gates in {@link applyLiveSlices} keep untouched views
-   * untouched.
+   * untouched. The lazy slices the wiki stream does not track (papers list,
+   * subscriptions, the Zotero probe, the venue catalog) go through the same
+   * trigger #222 defines for a reconnect.
    */
   private resyncLiveSlices(): void {
     if (this.disposed) return
@@ -4193,6 +4333,13 @@ export class ResearchController implements HostObservable<ResearchView> {
       this.liveAggregator.push({ table, key: '', operation: 'put' })
     }
     this.liveAggregator.flushNow()
+    // The wiki-stream tables above do not carry the papers list, the
+    // subscriptions, the Zotero probe, or the venue catalog: drive those
+    // explicitly, or an outage that broke exactly one of them never recovers.
+    for (const slice of RECONNECT_SLICES) {
+      if (slice === 'projects' || LIVE_TABLE_SLICES.has(slice)) continue
+      this.loadSlice(slice, 'reconnect')
+    }
   }
 
   /** Close the events stream and drop any pending live refresh. */
