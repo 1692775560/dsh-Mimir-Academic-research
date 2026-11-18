@@ -82,6 +82,7 @@ export function LedgerView({
   ensureMoments, refreshMoments, declineMoment,
   loadEvidenceGraph, refreshEvidenceGraph, retractEvidence,
   ensureEureka, ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
+  locale,
   t,
 }: {
   readonly ledger: ResearchLedgerView
@@ -130,8 +131,15 @@ export function LedgerView({
   readonly refreshEvidenceGraph: () => void
   /** Retract one evidence edge by dedupKey (the panel's human final say). */
   readonly retractEvidence: (dedupKey: string, reason?: string | undefined) => Promise<ResearchFailureView | null>
-  /** Load the digest once, on the ledger view's first open (active push). */
-  readonly ensureDigest: () => void
+  /** Load the digest once, on the ledger view's first open (active push), in the UI locale (#142 item 3). */
+  readonly ensureDigest: (lang?: 'zh' | 'en') => void
+  /**
+   * The UI locale id, so the first-open digest is not pinned to one language
+   * (#142 item 3). The host types this as a plain string; anything that is not
+   * `'en'` keeps the long-standing `'zh'` default rather than inventing a third
+   * digest language.
+   */
+  readonly locale: string
   /** Load the researcher-declared Eureka records once (Evidence Graph markers). */
   readonly ensureEureka: () => void
   /** Re-fetch the digest at its current tier/lang. */
@@ -186,10 +194,11 @@ export function LedgerView({
   useEffect(() => {
     loadEvidenceGraph(evidenceGraphRequestOf(ledgerWindow, scopedProjectId, Date.now()))
   }, [ledgerWindow, scopedProjectId, loadEvidenceGraph])
-  // The digest (B–F) pushes on the ledger view's first open.
+  // The digest (B–F) pushes on the ledger view's first open, in the UI locale
+  // (#142 item 3) — a fixed 'zh' gave an English panel a Chinese digest.
   useEffect(() => {
-    ensureDigest()
-  }, [ensureDigest])
+    ensureDigest(locale === 'en' ? 'en' : 'zh')
+  }, [ensureDigest, locale])
   // The researcher-declared Eureka records load once, for the graph's markers.
   useEffect(() => {
     ensureEureka()

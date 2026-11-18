@@ -1500,10 +1500,18 @@ export class ResearchController implements HostObservable<ResearchView> {
     }
   }
 
-  /** Load the digest once, on the ledger view's first open (active push). */
-  ensureDigest(): void {
+  /**
+   * Load the digest once, on the ledger view's first open (active push).
+   *
+   * The first push follows the UI locale (#142 item 3): it used to be pinned to
+   * `'zh'`, so an English panel opened the ledger and got a Chinese digest with
+   * no way to tell why. The default stays `'zh'` for callers that genuinely do
+   * not know a locale — the panel never relies on it.
+   * @param lang - the digest language for the first push.
+   */
+  ensureDigest(lang: 'zh' | 'en' = 'zh'): void {
     if (this.view.digest.status !== 'idle' || this.digestPromise !== null) return
-    this.digestPromise = this.generateDigest('weekly', 'zh').finally(() => { this.digestPromise = null })
+    this.digestPromise = this.generateDigest('weekly', lang).finally(() => { this.digestPromise = null })
   }
 
   /** Re-fetch the digest at its current tier/lang (the card's refresh button). */

@@ -569,8 +569,11 @@
     flex-basis: 60px;
   }
 
+  /* The close button stays reachable when the rail folds (#142 item 4): the
+     theme and language toggles are re-entrant from the header, the close
+     action is not, so hiding all three stranded anyone who folded the rail. */
   .side[data-folded] .brandCopy,
-  .side[data-folded] .headActions,
+  .side[data-folded] .headActions > .iconButton,
   .side[data-folded] .navLabel,
   .side[data-folded] .navCount,
   .side[data-folded] .sideProjects,
@@ -579,9 +582,17 @@
     display: none;
   }
 
+  /* Folded head: the brand shrinks to the glyph and the close button stays on
+     the same row, right-aligned so it is still the reachable corner (#142). */
   .side[data-folded] .sideHead {
     justify-content: center;
     padding: 20px 8px 18px;
+    flex-wrap: wrap;
+    row-gap: 8px;
+  }
+
+  .side[data-folded] .headActions {
+    justify-content: center;
   }
 
   .side[data-folded] .nav {

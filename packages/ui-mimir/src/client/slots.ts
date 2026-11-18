@@ -672,7 +672,7 @@ export interface ResearchPanelInjected {
   /**
    * Load the digest (B–F) once, on the ledger view's first open (active push).
    */
-  ensureDigest: () => void
+  ensureDigest: (lang?: 'zh' | 'en') => void
   /** Re-fetch the digest at its current tier/lang (the card's refresh button). */
   refreshDigest: () => void
   /**
