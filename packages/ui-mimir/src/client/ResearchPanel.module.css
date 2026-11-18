@@ -617,6 +617,12 @@
   line-height: 1.6;
 }
 
+/* The backup loop's failure line (#227): same size as a hint, but it must not
+   read as one more piece of muted metadata. */
+.hint[data-danger] {
+  color: var(--dsw-alias-state-error-primary, #a24b3f);
+}
+
 .failure {
   display: flex;
   align-items: center;

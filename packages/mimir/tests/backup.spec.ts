@@ -241,6 +241,7 @@ describe('listBackups', () => {
     const empty = await service.listBackups()
     expect(empty.ok && empty.value.backup).toEqual({
       enabled: true, intervalMinutes: 60, keep: 24, count: 0, latestName: null,
+      lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, lastError: null,
     })
     await runWikiBackup(domain, dir, 24, new Date('2026-08-21T00:00:01Z'))
     await runWikiBackup(domain, dir, 24, new Date('2026-08-21T00:00:02Z'))
@@ -248,6 +249,7 @@ describe('listBackups', () => {
     expect(settled.ok && settled.value.backup).toEqual({
       enabled: true, intervalMinutes: 60, keep: 24, count: 2,
       latestName: 'mimir-wiki-20260821-000002.json',
+      lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, lastError: null,
     })
   })
 
@@ -259,6 +261,72 @@ describe('listBackups', () => {
     const result = await service.listBackups()
     expect(result.ok && result.value.backup).toEqual({
       enabled: false, intervalMinutes: 0, keep: 0, count: 0, latestName: null,
+      lastSuccessAt: null, lastFailureAt: null, consecutiveFailures: 0, lastError: null,
     })
+  })
+})
+
+/**
+ * The file count alone cannot say whether the loop still runs: a loop that
+ * broke eight hours ago leaves its older files sitting on disk looking
+ * exactly like a healthy one that just ran (#227).
+ */
+describe('listBackups carries the loop health (#227)', () => {
+  it('surfaces a failure streak and the error summary from the health book', async () => {
+    const { ctx, domain, workspaceDir } = await openDomain()
+    const dir = join(workspaceDir, 'backups')
+    const taskHealth = new TaskHealthRegistry()
+    const service = new ResearchService(ctx, {
+      workspaceDir, domain, latex: { engine: 'auto', timeoutMs: 1000 },
+      backup: { enabled: true, intervalMinutes: 60, keep: 24, dir },
+      taskHealth,
+    })
+    // One healthy pass, so `count` looks fine — then the loop breaks.
+    taskHealth.recordSuccess('wiki-backup')
+    await runWikiBackup(domain, dir, 24, new Date('2026-08-21T00:00:01Z'))
+    taskHealth.recordFailure('wiki-backup', new Error('EACCES: permission denied'))
+    taskHealth.recordFailure('wiki-backup', new Error('disk full'))
+
+    const result = await service.listBackups()
+    const backup = result.ok ? result.value.backup : null
+    expect(backup?.count).toBe(1)
+    expect(backup?.consecutiveFailures).toBe(2)
+    expect(backup?.lastError).toBe('disk full')
+    expect(backup?.lastSuccessAt).not.toBeNull()
+    expect(backup?.lastFailureAt).not.toBeNull()
+  })
+
+  it('reads healthy again after a successful pass clears the streak', async () => {
+    const { ctx, domain, workspaceDir } = await openDomain()
+    const taskHealth = new TaskHealthRegistry()
+    const service = new ResearchService(ctx, {
+      workspaceDir, domain, latex: { engine: 'auto', timeoutMs: 1000 },
+      backup: { enabled: true, intervalMinutes: 60, keep: 24, dir: join(workspaceDir, 'backups') },
+      taskHealth,
+    })
+    taskHealth.recordFailure('wiki-backup', new Error('boom'))
+    taskHealth.recordSuccess('wiki-backup')
+    const result = await service.listBackups()
+    const backup = result.ok ? result.value.backup : null
+    expect(backup?.consecutiveFailures).toBe(0)
+    expect(backup?.lastError).toBeNull()
+    expect(backup?.lastSuccessAt).not.toBeNull()
+    // The failure instant survives: the panel can still say when it last broke.
+    expect(backup?.lastFailureAt).not.toBeNull()
+  })
+
+  it('ignores health rows of other scheduled tasks', async () => {
+    const { ctx, domain, workspaceDir } = await openDomain()
+    const taskHealth = new TaskHealthRegistry()
+    const service = new ResearchService(ctx, {
+      workspaceDir, domain, latex: { engine: 'auto', timeoutMs: 1000 },
+      backup: { enabled: true, intervalMinutes: 60, keep: 24, dir: join(workspaceDir, 'backups') },
+      taskHealth,
+    })
+    taskHealth.recordFailure('arxiv-subscriptions', new Error('rate limited'))
+    const result = await service.listBackups()
+    const backup = result.ok ? result.value.backup : null
+    expect(backup?.consecutiveFailures).toBe(0)
+    expect(backup?.lastError).toBeNull()
   })
 })

@@ -1080,6 +1080,18 @@ export interface ResearchBackupStatusView {
   readonly count: number
   /** Newest backup's filename; null while none exists. */
   readonly latestName: string | null
+  // The loop's health book (#227). Counting files answers "is there a backup
+  // at all"; these answer "is the thing that makes backups still working" —
+  // which the count cannot, because a loop that broke eight hours ago leaves
+  // its older files sitting there looking healthy.
+  /** ISO instant of the last backup pass that succeeded; null while none has. */
+  readonly lastSuccessAt: string | null
+  /** ISO instant of the last backup pass that failed; null while none has. */
+  readonly lastFailureAt: string | null
+  /** Live failure streak; 0 while healthy. */
+  readonly consecutiveFailures: number
+  /** Short summary of the last failure; null while healthy. */
+  readonly lastError: string | null
 }
 
 /** `listBackups` result: the backup status line for the overview. */
