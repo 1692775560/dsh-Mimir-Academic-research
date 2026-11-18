@@ -25,6 +25,7 @@ import { readSidebarFolded, SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue } 
 import { readStorageFlag, readStorageValue, storageFlagValue, writeStorageValue } from './storage.ts'
 import { shortcutFor, TABS } from './shortcuts.ts'
 import { countUpcomingDeadlines } from './venues-view.ts'
+import { LOAD_MATRIX, SLICES_BY_TAB } from './slice-policy.ts'
 import type { ResearchPanelProps } from './slots.ts'
 import { OverviewView } from './OverviewView.tsx'
 import { PaperView } from './PaperView.tsx'
@@ -117,9 +118,6 @@ const TAB_ICONS: Record<ResearchTab, ReactNode> = {
   ),
 }
 
-/** The artifact shown by the experiments view's log section. */
-const EXPERIMENT_LOG_ARTIFACT = 'EXPERIMENT_LOG.md'
-
 /** localStorage key the sidebar project-list fold persists under. */
 const PROJECTS_COLLAPSED_STORAGE_KEY = 'mimir.sideProjects.collapsed'
 
@@ -172,19 +170,20 @@ const FOCUSABLE_SELECTOR = 'button:not(:disabled), a[href], input:not(:disabled)
  */
 export function ResearchPanel({
   useStore, actions, useResearch, useChrome, useSessionList,
-  ensure, selectProject, importProject, createProject, renameProject, deleteProject, selectSession, compile, editSource, reloadSource, requestCompileFix,
+  ensure, loadSlice, setSelectedProjectId, selectProject, importProject, createProject, renameProject, deleteProject,
+  selectSession, compile, editSource, reloadSource, requestCompileFix,
   requestRelatedWork, requestPaperScore, requestFigureOrganize,
-  ensurePapers, refreshPapers, searchArxiv, searchWeb, importPaper, removePaper, updatePaper, fetchPaperPdf, loadArtifact, loadFigures, uploadFigures, deleteFigure,
+  ensurePapers, refreshPapers, searchArxiv, searchWeb, importPaper, removePaper, updatePaper, fetchPaperPdf, loadFigures, uploadFigures, deleteFigure,
   renameFigure, updateFigure,
-  ensureSubscriptions, saveArxivSubscription, deleteArxivSubscription, checkArxivSubscriptions,
-  ensureZotero, recheckZotero, searchZotero, importZoteroItem, exportZoteroCollectionToBib,
+  saveArxivSubscription, deleteArxivSubscription, checkArxivSubscriptions,
+  recheckZotero, searchZotero, importZoteroItem, exportZoteroCollectionToBib,
   insertFigure, consumePaperJump, generateMetricFigure,
   deleteExperiment, updateExperiment, saveExperiment, ensureServers, saveServer, deleteServer, checkServer, checkAllServers,
   ensureJobs, refreshJobs, submitJob, deleteJob,
   ensureBibliography, reloadBibliography, deleteBibEntry, updateBibEntry, importPapersToBib, reorderPaperSections, reorderPaperSubsections,
   loadSnapshots, loadSnapshotDetail, closeSnapshotDetail, revertSnapshot,
   ensureVenueTemplates, applyVenueTemplate, clearVenueTemplate, uploadTemplateFiles, requestVenueFormat,
-  ensureVenues, refreshVenues, refreshVenueCatalog, toggleVenueWatch,
+  refreshVenues, refreshVenueCatalog, toggleVenueWatch,
   loadMeetings, generateMeetingDeck, deleteMeetingDeck, getImageGenConfig, saveImageGenConfig,
   loadLedger, generateReport, generateBrief, addJournal,
   ensureWorktree, refreshWorktree, setMainline, setIdeaParent, adoptIdea, closeIdea,
@@ -290,36 +289,31 @@ export function ResearchPanel({
       selectProject(projects[0]?.id ?? '')
     }
   }, [open, projectsStatus, selectedProjectId, projects, selectProject])
+  // Mirror the selection onto the controller so a slice loader that needs the
+  // project id (venues, figures, the experiment artifact) can be driven by
+  // loadSlice alone. Runs before the trigger effect below so the id is current
+  // when a project switch fires.
   useEffect(() => {
-    if (open && activeTab === 'papers') ensurePapers()
-    if (open && activeTab === 'papers') ensureSubscriptions()
-    if (open && activeTab === 'papers') ensureZotero()
-  }, [open, activeTab, ensurePapers, ensureSubscriptions, ensureZotero])
-  // The overview's stat chips count the papers and figures slices, both lazy:
-  // warm them when the overview opens so the chips show real numbers instead
-  // of dashes; the activity card reads the jobs slice, equally lazy. The
-  // experiments slice is already loaded by select().
+    setSelectedProjectId(selectedProjectId)
+  }, [selectedProjectId, setSelectedProjectId])
+  // One trigger, one question (#222): "which slices does this tab want?" The
+  // freshness policy (fresh / failed / in flight) lives in loadSlice's matrix,
+  // not here — these effects only declare intent, so a failed slice retries on
+  // the next visit instead of waiting for its own button, and the reconnect
+  // and project-switch paths reach the same table.
   useEffect(() => {
-    if (open && activeTab === 'overview') {
-      ensurePapers()
-      ensureJobs()
-      ensureVenues(selectedProjectId)
-      if (selectedProjectId !== null) loadFigures(selectedProjectId)
-    }
-  }, [open, activeTab, selectedProjectId, ensurePapers, ensureJobs, ensureVenues, loadFigures])
+    if (!open) return
+    for (const slice of SLICES_BY_TAB[activeTab] ?? []) loadSlice(slice, 'first-open')
+  }, [open, activeTab, loadSlice])
+  // A project switch re-reads the project-scoped slices: their content is a
+  // different project's, so the settled view is stale rather than fresh.
+  const previousProjectId = useRef(selectedProjectId)
   useEffect(() => {
-    if (open && activeTab === 'venues') ensureVenues(selectedProjectId)
-  }, [open, activeTab, selectedProjectId, ensureVenues])
-  useEffect(() => {
-    if (open && activeTab === 'experiments' && selectedProjectId !== null) {
-      loadArtifact(selectedProjectId, EXPERIMENT_LOG_ARTIFACT)
-    }
-  }, [open, activeTab, selectedProjectId, loadArtifact])
-  useEffect(() => {
-    if (open && activeTab === 'figures' && selectedProjectId !== null) {
-      loadFigures(selectedProjectId)
-    }
-  }, [open, activeTab, selectedProjectId, loadFigures])
+    const previous = previousProjectId.current
+    previousProjectId.current = selectedProjectId
+    if (!open || previous === selectedProjectId) return
+    for (const slice of LOAD_MATRIX['project-switch']) loadSlice(slice, 'project-switch')
+  }, [open, selectedProjectId, loadSlice])
 
   // Dialog focus management: opening the panel moves focus into the rail (to
   // the active tab), and closing returns it to the element that held it

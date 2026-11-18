@@ -318,6 +318,8 @@ function panelApply(ctx: ClientContext): void {
       requestVenueFormat: prompt => sendPromptToCurrentSession(prompt, 'toast.venueFormatSent', 'toast.venueFormatSendFailed'),
       editSource: (content) => { controller.edit(content) },
       reloadSource: () => { controller.reloadSource() },
+      loadSlice: (slice, trigger) => { controller.loadSlice(slice, trigger) },
+      setSelectedProjectId: (projectId) => { controller.setSelectedProjectId(projectId) },
       ensurePapers: () => { controller.ensurePapers() },
       refreshPapers: () => { controller.refreshPapers() },
       ensureSubscriptions: () => { controller.ensureSubscriptions() },
