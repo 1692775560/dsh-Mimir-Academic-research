@@ -14,7 +14,7 @@
  * @module dsh-client-ui-mimir/client/ResearchPanel
  */
 
-import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import type { ResearchTab } from './store.ts'
 import type { ResearchKey } from './locales.ts'
 import { arrowTab, trapFocusIndex } from './focus.ts'
@@ -42,6 +42,68 @@ import { ImportProjectDialog } from './ImportProjectDialog.tsx'
 import css from './ResearchPanel.module.css'
 
 /** Locale key of one tab label. */
+/** One rail tab; shared by the main path and the "More" list (#243). */
+function NavTab({ tab, activeTab, count, setTab, t }: {
+  readonly tab: ResearchTab
+  readonly activeTab: ResearchTab
+  readonly count: number | null | undefined
+  readonly setTab: (tab: ResearchTab) => void
+  readonly t: (key: ResearchKey) => string
+}): ReactElement {
+  return (
+    <button
+      type="button"
+      role="tab"
+      className={css.navItem}
+      data-active={tab === activeTab || undefined}
+      aria-selected={tab === activeTab}
+      title={t(TAB_KEYS[tab])}
+      onClick={() => { setTab(tab) }}
+    >
+      <span className={css.navIcon} aria-hidden>{TAB_ICONS[tab]}</span>
+      <span className={css.navLabel}>{t(TAB_KEYS[tab])}</span>
+      {count !== undefined && count !== null && (
+        <span className={css.navCount} aria-label={String(count)}>{count}</span>
+      )}
+    </button>
+  )
+}
+
+/**
+ * The rail in two tiers (#243): the research main path stays on the first
+ * level, the low-frequency tools sit behind one "More" affordance.
+ *
+ * The split is by capability layer — `core` and `presentation` are the path a
+ * paper actually travels (read, write, look at, present); `automation`,
+ * `compute` and `insights` are instruments reached for occasionally. Tying
+ * the fold to the layer keeps it honest: a view added to a core layer lands on
+ * the main path without anyone editing a list here.
+ */
+const PRIMARY_CAPABILITIES: ReadonlySet<ResearchCapability> = new Set<ResearchCapability>(['core', 'presentation'])
+
+/** A capability-gated rail split into two tiers. */
+export interface RailTiers {
+  /** Tabs on the first level, in rail order. */
+  readonly primary: readonly ResearchTab[]
+  /** Tabs behind the "More" affordance, in rail order. */
+  readonly secondary: readonly ResearchTab[]
+}
+
+/**
+ * Split a capability-gated rail into its two tiers.
+ * @param capabilities - the enabled layers; null means "not known yet".
+ * @returns both tiers, each in rail order, partitioning `visibleTabs`.
+ */
+export function railTiers(capabilities: ResearchCapabilitySet): RailTiers {
+  const primary: ResearchTab[] = []
+  const secondary: ResearchTab[] = []
+  for (const tab of visibleTabs(capabilities)) {
+    const target = PRIMARY_CAPABILITIES.has(TAB_CAPABILITY[tab]) ? primary : secondary
+    target.push(tab)
+  }
+  return { primary: Object.freeze(primary), secondary: Object.freeze(secondary) }
+}
+
 const TAB_KEYS: Record<ResearchTab, ResearchKey> = {
   overview: 'tab.overview',
   paper: 'tab.paper',
@@ -246,6 +308,8 @@ export function ResearchPanel({
   const dark = useChrome(chrome => chrome.dark)
   const locale = useChrome(chrome => chrome.locale)
   const capabilities = useResearch(view => view.capabilities)
+  const rail = visibleTabs(capabilities)
+  const tiers = railTiers(capabilities)
   const projects = useResearch(view => view.projects)
   const projectsStatus = useResearch(view => view.projectsStatus)
   const outline = useResearch(view => view.outline)
@@ -555,14 +619,17 @@ export function ResearchPanel({
             </button>
           </div>
         </div>
-        {/* The nine views as a tablist: 1–9 and ArrowUp/Down/Left/Right all
-            switch, aria-selected carries the active tab to AT. */}
+        {/* Two tiers, one tablist (#243): the research main path on the first
+            level, the low-frequency instruments behind "More". The rail order
+            is still the shortcut order, so `n` stays one number per view; a
+            view behind More still lights its own More button, so the rail
+            never claims nothing is selected. Arrow keys walk the whole rail
+            across both tiers. */}
         <nav
           className={css.nav}
           role="tablist"
           aria-label={t('panel.views')}
           onKeyDown={(event) => {
-            const rail = visibleTabs(capabilities)
             const next = arrowTab(activeTab, event.key, rail)
             if (next === null) return
             event.preventDefault()
@@ -571,26 +638,28 @@ export function ResearchPanel({
             tabs[rail.indexOf(next)]?.focus()
           }}
         >
-          {visibleTabs(capabilities).map(tab => (
-            <button
-              key={tab}
-              type="button"
-              role="tab"
-              className={css.navItem}
-              data-active={tab === activeTab || undefined}
-              aria-selected={tab === activeTab}
-              title={t(TAB_KEYS[tab])}
-              onClick={() => { actions.setTab(tab) }}
-            >
-              <span className={css.navIcon} aria-hidden>{TAB_ICONS[tab]}</span>
-              <span className={css.navLabel}>{t(TAB_KEYS[tab])}</span>
-              {navCounts[tab] !== undefined && navCounts[tab] !== null && (
-                <span className={css.navCount} aria-label={String(navCounts[tab])}>
-                  {navCounts[tab]}
-                </span>
-              )}
-            </button>
+          {tiers.primary.map(tab => (
+            <NavTab key={tab} tab={tab} activeTab={activeTab} count={navCounts[tab]} setTab={actions.setTab} t={t} />
           ))}
+          {tiers.secondary.length > 0 && (
+            <details className={css.navMore} data-lit={tiers.secondary.includes(activeTab) || undefined}>
+              <summary
+                className={css.navItem}
+                role="tab"
+                aria-selected={tiers.secondary.includes(activeTab)}
+                aria-label={t('nav.more')}
+                title={t('nav.more')}
+              >
+                <span className={css.navIcon} aria-hidden>⋯</span>
+                <span className={css.navLabel}>{t('nav.more')}</span>
+              </summary>
+              <div className={css.navMoreList}>
+                {tiers.secondary.map(tab => (
+                  <NavTab key={tab} tab={tab} activeTab={activeTab} count={navCounts[tab]} setTab={actions.setTab} t={t} />
+                ))}
+              </div>
+            </details>
+          )}
         </nav>
         {/* The rail fold toggle (narrow icons-only rail); hides in top-bar
             mode via CSS. The 1–9 shortcuts work in both states. */}
