@@ -46,10 +46,23 @@ test.beforeEach(async ({ page }, testInfo) => {
   await expect(page.locator('body')).toBeVisible({ timeout: 60_000 })
 })
 
-/** Open the workbench overlay from the sidebar-footer toggle. */
+/**
+ * Open the workbench overlay from the sidebar-footer toggle.
+ *
+ * The button exists as soon as the client mounts, but the app paints a
+ * boot/welcome mask over everything and only removes it once its own start-up
+ * settles — so "visible" is not "clickable". Dismiss that layer first, then
+ * click; waiting for the overlay is the real synchronization point.
+ */
 async function openWorkbench(page: import('@playwright/test').Page) {
   const toggle = page.getByRole('button', { name: /Mimir/ }).first()
   await expect(toggle).toBeVisible({ timeout: 60_000 })
+  const mask = page.locator('div[aria-hidden="true"][class*="mask"]').first()
+  if (await mask.isVisible().catch(() => false)) {
+    // The mask itself swallows the first click; that press reaches the layer.
+    await page.mouse.click(5, 5)
+    await expect(mask).toBeHidden({ timeout: 30_000 })
+  }
   await toggle.click()
   const dialog = page.getByRole('dialog', { name: /Mimir/ })
   await expect(dialog).toBeVisible({ timeout: 30_000 })
