@@ -132,6 +132,7 @@ describe('LedgerView render smoke (S2 branch flow + S4 rhythm)', () => {
     }
     const html = renderToString(
       <LedgerView
+        locale="zh"
         ledger={coldLedger}
         report={coldReport}
         brief={coldBrief}

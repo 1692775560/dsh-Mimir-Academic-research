@@ -2841,6 +2841,7 @@ describe('loadEvidenceGraph window request', () => {
           duplicateEdges: 0,
           aliasMerges: 0,
           unnormalizable: 0,
+          cycleRejected: 0,
         },
       },
     },

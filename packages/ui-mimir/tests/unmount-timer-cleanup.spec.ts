@@ -16,6 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 /** Views that arm a `setTimeout` for copy feedback. */
 const COPY_FEEDBACK_VIEWS = ['CognitiveBriefView', 'DigestView', 'LedgerView', 'FiguresView'] as const
 
+/** The view's source text, read straight off disk. */
 function sourceOf(view: string): string {
   return readFileSync(fileURLToPath(new URL(`../src/client/${view}.tsx`, import.meta.url)), 'utf8')
 }
