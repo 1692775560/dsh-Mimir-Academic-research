@@ -10,6 +10,7 @@
     "build": "tsc -b packages/mimir && pnpm --filter dsh-mimir run bundle && tsc -b packages/ui-mimir && pnpm --filter dsh-client-ui-mimir run bundle && pnpm --filter dsh-mimir run bundle:client",
     "typecheck": "tsc -b packages/mimir packages/ui-mimir && tsc -p packages/ui-mimir/tsconfig.test.json",
     "check-style": "node scripts/check-style.mjs",
+    "lint": "eslint",
     "test": "vitest run",
     "test:e2e": "playwright test",
     "bundle": "pnpm -r run bundle"
@@ -18,10 +19,14 @@
     "@deepseek-ai/dsh-typert-generator": "0.2.1-alpha.2",
     "@playwright/test": "^1.62.1",
     "@types/node": "^22.20.0",
+    "eslint": "^9.39.4",
+    "eslint-plugin-react-hooks": "^5.0.0",
     "lightningcss": "^1.32.0",
     "tsdown": "^0.22.2",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3",
-    "vitest": "^4.1.8"
+    "typescript-eslint": "^8.73.0",
+    "vitest": "^4.1.8",
+    "yaml": "^2.9.1"
   }
 }
