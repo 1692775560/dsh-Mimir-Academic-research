@@ -16,6 +16,7 @@
  */
 
 import { execFile } from 'node:child_process'
+import { readdirSync, rmSync } from 'node:fs'
 import { readFile, rm, writeFile } from 'node:fs/promises'
 import { join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -43,15 +44,34 @@ async function lintProbe(source: string): Promise<readonly string[]> {
   }
 }
 
+/**
+ * Every case here shells out to ESLint, which needs the TypeScript program to
+ * load — seconds per case, and more when the suite's other workers compete for
+ * the same cores. The default five seconds is a coin flip in a full run.
+ */
+const PROBE_TIMEOUT_MS = 60_000
+
+/**
+ * A killed run (a timeout, a Ctrl-C) leaves its probe behind, and a probe is a
+ * source file with a deliberate violation in it — the gate would then fail for
+ * the wrong reason on the next run. Sweep first.
+ */
+function removeStaleProbes(): void {
+  for (const name of readdirSync(SRC_DIR)) {
+    if (name.startsWith('zz-lint-probe-')) rmSync(join(SRC_DIR, name), { force: true })
+  }
+}
+
 describe('lint gate (#239)', () => {
   it('reports a promise nobody awaits', async () => {
+    removeStaleProbes()
     const rules = await lintProbe([
       'export function probe(load: () => Promise<number>): void {',
       '  load()',
       '}',
     ].join('\n'))
     expect(rules).toContain('@typescript-eslint/no-floating-promises')
-  })
+  }, PROBE_TIMEOUT_MS)
 
   it('accepts the two shapes the repo uses to fire and forget', async () => {
     // CODE_STYLE §4 sites say `void this.loadX()`; task-health.ts chains
@@ -63,7 +83,7 @@ describe('lint gate (#239)', () => {
       '}',
     ].join('\n'))
     expect(rules).not.toContain('@typescript-eslint/no-floating-promises')
-  })
+  }, PROBE_TIMEOUT_MS)
 
   it('reports an await on a non-promise', async () => {
     const rules = await lintProbe([
@@ -72,7 +92,7 @@ describe('lint gate (#239)', () => {
       '}',
     ].join('\n'))
     expect(rules).toContain('@typescript-eslint/await-thenable')
-  })
+  }, PROBE_TIMEOUT_MS)
 
   it('reports a promise handed to a slot that cannot carry it', async () => {
     const rules = await lintProbe([
@@ -81,14 +101,14 @@ describe('lint gate (#239)', () => {
       '}',
     ].join('\n'))
     expect(rules).toContain('@typescript-eslint/no-misused-promises')
-  })
+  }, PROBE_TIMEOUT_MS)
 
   it('stays out of the test tree, where an unawaited promise is often the point', async () => {
     // The config scopes itself to `packages/*/src`; a spec that resolves a
     // deferred by hand would otherwise fight the gate.
     const rules = await lintProbe('export function probe(): void {}\n')
     expect(rules).toEqual([])
-  })
+  }, PROBE_TIMEOUT_MS)
 })
 
 describe('lint wiring (#239)', () => {
@@ -102,7 +122,7 @@ describe('lint wiring (#239)', () => {
     // not a flake, and it should fail the cheapest job first.
     expect(workflow).toContain('pnpm run lint')
     expect(workflow.indexOf('pnpm run lint')).toBeLessThan(workflow.indexOf('pnpm test'))
-  })
+  }, PROBE_TIMEOUT_MS)
 
   it('keeps the workspace the config is supposed to cover', async () => {
     const config = await readFile(join(ROOT, 'eslint.config.mjs'), 'utf8')
