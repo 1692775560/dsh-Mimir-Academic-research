@@ -9,7 +9,9 @@
  * @module dsh-client-ui-mimir/client/controller
  */
 
-import type { RemoteResult } from '@deepseek-ai/dsh-typert-protocol'
+import type { RemoteResult, TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
+// Type-only: the generated `research` namespace members (#226).
+import 'dsh-mimir/remote'
 import type { HostObservable } from '@deepseek-ai/dsh-client-ui-slots'
 import type { ResearchKey } from './locales.ts'
 import { figureBlockOf, findFigureReferenceLine, insertFigureBlock, isSvgFigure, svgConvertedRelPaths } from './figure-insert.ts'
@@ -42,6 +44,7 @@ import type {
   ResearchBriefQuestion,
   ResearchBriefTransition,
   ResearchBackupStatusView,
+  ResearchCapability,
   ResearchCompileStatusView,
   ResearchEventFilter,
   ResearchFailure,
@@ -73,9 +76,6 @@ import type {
   ZoteroItemView,
   ResearchWikiChangeEvent,
 } from 'dsh-mimir/types'
-// Type-only: the generated Host face, merged by `dsh-mimir/remote` (#226).
-import type { TypertRemoteNamespaceMap } from '@deepseek-ai/dsh-typert-protocol'
-import 'dsh-mimir/remote'
 // Runtime: the client's own copy of the handshake version + verdict (#250).
 import { protocolVerdict, RESEARCH_PROTOCOL_VERSION } from './protocol.ts'
 import {
@@ -488,10 +488,24 @@ export interface ResearchSnapshotDetailView {
   readonly failure: ResearchFailureView | null
 }
 
+/**
+ * The capability layers the panel may render (#242), or null while unknown.
+ * A view whose layer is disabled is absent from the rail entirely — the issue
+ * is about not exposing a switched-off capability, so a greyed-out tab would
+ * miss the point.
+ */
+export type ResearchCapabilitySet = ReadonlySet<ResearchCapability> | null
+
 /** Immutable view published to the panel. */
 export interface ResearchView {
   /** The host/client protocol handshake (#250); `checking` until it settles. */
   readonly protocol: ResearchProtocolState
+  /**
+   * Capability layers the host enabled (#242); null until `getCapabilities`
+   * answers. A null set means "not known yet" and renders the full rail — the
+   * panel must not hide a view because a request is still in flight.
+   */
+  readonly capabilities: ResearchCapabilitySet
   readonly projects: readonly ResearchProjectView[]
   readonly projectsStatus: ResearchLoadStatus
   readonly projectsFailure: ResearchFailureView | null
@@ -562,6 +576,7 @@ export interface ResearchView {
 }
 
 const INITIAL_VIEW: ResearchView = Object.freeze({
+  capabilities: null,
   protocol: Object.freeze({ status: 'checking' }),
   projects: Object.freeze([]),
   projectsStatus: 'cold',
@@ -842,6 +857,7 @@ export class ResearchController implements HostObservable<ResearchView> {
    * informational reads ride along with it.
    */
   ensure(): void {
+    void this.loadCapabilities()
     this.loadSlice('projects', 'first-open')
     this.backupPromise ??= this.loadBackup().finally(() => { this.backupPromise = null })
     this.taskHealthPromise ??= this.loadTaskHealth().finally(() => { this.taskHealthPromise = null })
@@ -4126,6 +4142,31 @@ export class ResearchController implements HostObservable<ResearchView> {
 
   /** Fetch the project list and publish it. */
   /** Fetch the project list and publish it. A refresh over a ready list keeps the list on screen (no sidebar flash); only the first load shows the loading state. */
+  /**
+   * Ask the host which capability layers it enabled (#242). Cheap and cached:
+   * the answer cannot change while the plugin is applied, so it is requested
+   * once and a failure simply leaves the rail complete (the panel never hides
+   * a view because a request failed).
+   */
+  private capabilitiesPromise: Promise<void> | null = null
+
+  /** Load the capability set once; a failed load leaves every view visible. */
+  private async loadCapabilities(): Promise<void> {
+    if (this.view.capabilities !== null) return
+    this.capabilitiesPromise ??= (async () => {
+      try {
+        const carried = await this.remote.getCapabilities()
+        if (this.disposed) return
+        const result = unwrapRemote(carried)
+        if (!result.ok) return
+        this.publish({ capabilities: new Set(result.value.enabled) })
+      } catch {
+        // A transport failure is not a reason to hide a capability.
+      }
+    })().finally(() => { this.capabilitiesPromise = null })
+    return this.capabilitiesPromise
+  }
+
   private async loadProjects(): Promise<void> {
     const refreshing = this.view.projectsStatus === 'ready'
     if (!refreshing) this.publish({ projectsStatus: 'loading', projectsFailure: null })

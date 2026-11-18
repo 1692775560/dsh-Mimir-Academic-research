@@ -43,15 +43,25 @@ export function trapFocusIndex(current: number, count: number, shift: boolean): 
  * The rail tab one arrow key selects: Left/Up move to the previous tab,
  * Right/Down to the next, cycling past both ends. Returns null for any other
  * key so the caller leaves the keydown alone.
+ * @param current - the active tab.
+ * @param key - the raw `KeyboardEvent.key`.
+ * @param rail - the tabs actually on screen; #242 removes capability-gated
+ *   views from the rail, and stepping through a hidden tab would move the
+ *   user somewhere they cannot see. Defaults to the full rail.
  */
-export function arrowTab(current: ResearchTab, key: string): ResearchTab | null {
+export function arrowTab(
+  current: ResearchTab,
+  key: string,
+  rail: readonly ResearchTab[] = TABS,
+): ResearchTab | null {
   const delta = key === 'ArrowLeft' || key === 'ArrowUp'
     ? -1
     : key === 'ArrowRight' || key === 'ArrowDown'
       ? 1
       : 0
   if (delta === 0) return null
-  const index = TABS.indexOf(current)
+  if (rail.length === 0) return null
+  const index = rail.indexOf(current)
   if (index < 0) return null
-  return TABS[wrapIndex(index, delta, TABS.length)] ?? null
+  return rail[wrapIndex(index, delta, rail.length)] ?? null
 }

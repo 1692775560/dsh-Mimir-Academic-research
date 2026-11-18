@@ -59,6 +59,7 @@ function fullWiring(base: { workspaceDir: string; domain: ResearchServiceConfig[
       taskHealth: undefined as never,
       notifyWikiChange: () => {},
       jobs: { timeoutMs: 1_000, maxBufferBytes: 1_024 },
+      capabilities: { enabled: Object.freeze(['core'] as const), disabled: Object.freeze([]) },
     },
   }
 }
@@ -76,6 +77,7 @@ describe('buildDeps is the only mapping (#231)', () => {
     expect(deps.arxiv).toEqual(wiring.config.arxiv)
     expect(deps.zotero).toEqual(wiring.config.zotero)
     expect(deps.jobs).toEqual(wiring.config.jobs)
+    expect(deps.capabilities).toEqual(wiring.config.capabilities)
     expect(typeof deps.notifyWikiChange).toBe('function')
   })
 
@@ -89,7 +91,7 @@ describe('buildDeps is the only mapping (#231)', () => {
     // `in`-style presence, not truthiness: the service branches on `=== undefined`
     // but a spread of an explicit `undefined` would still be a key it must not
     // see under exactOptionalPropertyTypes.
-    for (const key of ['backup', 'search', 'arxiv', 'svg', 'zotero', 'meetings', 'taskHealth', 'jobs']) {
+    for (const key of ['backup', 'search', 'arxiv', 'svg', 'zotero', 'meetings', 'taskHealth', 'jobs', 'capabilities']) {
       expect(Object.hasOwn(deps, key)).toBe(false)
     }
   })
