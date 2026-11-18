@@ -1016,6 +1016,34 @@ export type ResearchZoteroExportResult = ResearchResult<{
 }>
 
 /**
+ * One entry the push could not create, with the papers-table id it came from so
+ * the panel can point at the row instead of a batch index (#151).
+ */
+export interface ZoteroPushFailure {
+  readonly paperId: string
+  readonly message: string
+}
+
+/**
+ * `pushZoteroCollection` result: what the write-back did, per entry (#151).
+ *
+ * `collectionKey` is null when the project has no linked papers — nothing was
+ * pushed, so no collection was created either. `skipped` counts entries the
+ * library already held: the push never rewrites an item the user may have
+ * curated in Zotero, so "already there" is a success, not a failure.
+ */
+export interface ResearchZoteroPushView {
+  readonly collectionKey: string | null
+  readonly collectionName: string
+  readonly created: number
+  readonly skipped: number
+  readonly failures: readonly ZoteroPushFailure[]
+}
+
+/** `pushZoteroCollection` result. */
+export type ResearchZoteroPushResult = ResearchResult<ResearchZoteroPushView>
+
+/**
  * The research-wiki tables carried by an export snapshot, in domain order
  * (the runtime-only `jobs` table and the per-project `venue_watches` follow
  * list are excluded; `events` — the CBE engine's single source of truth — is
