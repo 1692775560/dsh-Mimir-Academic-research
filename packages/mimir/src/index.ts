@@ -39,6 +39,7 @@ import { meetingDeckPath } from './services/meeting.ts'
 import { ResearchService } from './service.ts'
 import { recoverInterruptedJobs } from './services/server.ts'
 import { recoverPendingWikiImport } from './services/wiki-admin.ts'
+import { buildDeps } from './services/wiring.ts'
 import { registerResearchSkills } from './skills.ts'
 import { registerDigdigSkill } from './digdig-skill.ts'
 import { startWikiBackupLoop } from './backup.ts'
@@ -1333,17 +1334,23 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
   // every pass here; the service exposes the snapshot via `getTaskHealth`.
   const taskHealth = new TaskHealthRegistry()
 
-  const serviceConfig: ResearchServiceConfig = {
+  // One assembly point (#231): the config is built here, never re-mapped by
+  // the service constructor — `buildDeps` is the single description of what a
+  // service config IS, so a knob added to one side cannot go missing on the
+  // other.
+  const serviceConfig: ResearchServiceConfig = buildDeps({
     workspaceDir: deps.workspaceDir,
     domain,
-    latex: resolved.latex,
-    backup: { ...resolved.backup, dir: backupDir },
-    ...(searchConfig === undefined ? {} : { search: searchConfig }),
-    arxiv: { timeoutMs: resolved.arxiv.timeoutMs },
-    zotero: resolved.zotero,
-    taskHealth,
-    notifyWikiChange: event => wikiChangeHub.publish(event),
-  }
+    config: {
+      latex: resolved.latex,
+      backup: { ...resolved.backup, dir: backupDir },
+      ...(searchConfig === undefined ? {} : { search: searchConfig }),
+      arxiv: { timeoutMs: resolved.arxiv.timeoutMs },
+      ...(resolved.zotero === undefined ? {} : { zotero: resolved.zotero }),
+      taskHealth,
+      notifyWikiChange: event => wikiChangeHub.publish(event),
+    },
+  })
 
   registerIdeaCommand(ctx, deps)
   registerPlanCommand(ctx, deps)

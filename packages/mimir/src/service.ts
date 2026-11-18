@@ -3,7 +3,9 @@
  * This file is a thin facade — it keeps the class, the `super(ctx,
  * 'research')` registration, the config type, the Context augmentation, and
  * all 65 `@Remote` signatures intact, and forwards every method body to a
- * pure-function domain module under `./services`. It owns no domain logic:
+ * pure-function domain module under `./services`. The config it receives is
+ * assembled in exactly one place, {@link buildDeps} (#231); the constructor
+ * checks its own invariants and keeps the result. It owns no domain logic:
  * the mutable instance state (`compileStatus` map, the id counters) rides a
  * single {@link ServiceState} object created here, so every
  * `new ResearchService` gets its own copy.
@@ -13,6 +15,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import { TypertRemoteService, Remote } from '@deepseek-ai/dsh-typert-protocol'
 import type { ResearchWikiDomain } from './store.ts'
+import { buildDeps } from './services/wiring.ts'
 import type { SvgConversionDeps } from './svg-convert.ts'
 import type { LatexToolOptions } from './tools/latex.ts'
 import type {
@@ -251,20 +254,25 @@ export class ResearchService extends TypertRemoteService {
     if (config.workspaceDir.trim().length === 0) {
       throw new TypeError('research: workspaceDir must be a non-empty absolute path')
     }
-    this.deps = {
+    // One assembly point (#231): the same `buildDeps` the plugin entry calls.
+    // The constructor only checks its own invariants; it does not re-map the
+    // shape, because a second mapping is a second place to forget a field.
+    this.deps = buildDeps({
       workspaceDir: config.workspaceDir,
       domain: config.domain,
-      latex: config.latex,
-      ...(config.backup === undefined ? {} : { backup: config.backup }),
-      ...(config.search === undefined ? {} : { search: config.search }),
-      ...(config.arxiv === undefined ? {} : { arxiv: config.arxiv }),
-      ...(config.svg === undefined ? {} : { svg: config.svg }),
-      ...(config.zotero === undefined ? {} : { zotero: config.zotero }),
-      ...(config.meetings === undefined ? {} : { meetings: config.meetings }),
-      ...(config.notifyWikiChange === undefined ? {} : { notifyWikiChange: config.notifyWikiChange }),
-      ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
-      ...(config.jobs === undefined ? {} : { jobs: config.jobs }),
-    }
+      config: {
+        latex: config.latex,
+        ...(config.backup === undefined ? {} : { backup: config.backup }),
+        ...(config.search === undefined ? {} : { search: config.search }),
+        ...(config.arxiv === undefined ? {} : { arxiv: config.arxiv }),
+        ...(config.svg === undefined ? {} : { svg: config.svg }),
+        ...(config.zotero === undefined ? {} : { zotero: config.zotero }),
+        ...(config.meetings === undefined ? {} : { meetings: config.meetings }),
+        ...(config.notifyWikiChange === undefined ? {} : { notifyWikiChange: config.notifyWikiChange }),
+        ...(config.taskHealth === undefined ? {} : { taskHealth: config.taskHealth }),
+        ...(config.jobs === undefined ? {} : { jobs: config.jobs }),
+      },
+    })
     this.state = {
       compileStatus: new Map(),
       jobSeq: 0,
