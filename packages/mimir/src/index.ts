@@ -611,94 +611,133 @@ export interface Config {
 }
 
 /** Schemastery configuration for the research suite. */
+/**
+ * One default per knob (#218).
+ *
+ * These constants are the single source: the schema below applies them, and
+ * `resolveConfig` reads the same objects when it normalizes a config the
+ * Loader never touched. A default written twice is a default that can drift.
+ */
+export const DEFAULTS = {
+  workspaceDir: '.research',
+  reviewer: { provider: 'spawn', maxRounds: 3, timeoutMs: 600_000 },
+  latex: { engine: 'auto', timeoutMs: 120_000 },
+  arxiv: { maxResults: 10, timeoutMs: 30_000 },
+  search: { command: 'auto', timeoutMs: 30_000, maxResults: 10 },
+  zotero: { apiKey: '', userId: '' },
+  subscriptions: { enabled: true, intervalMinutes: 1440 },
+  backup: { enabled: true, intervalMinutes: 60, keep: 24, dir: 'backups' },
+  skills: { enabled: true },
+  serverTools: { enabled: true },
+} as const satisfies Record<string, unknown>
+
+/**
+ * Schemastery configuration for the research suite.
+ *
+ * Every `default(...)` below reads {@link DEFAULTS}; none of them restates a
+ * literal, so adding a knob means adding it to `Config`, to `DEFAULTS`, and
+ * to the schema — three edits in one file, and the type of `resolveConfig`'s
+ * result is inferred from the shape rather than declared a fourth time.
+ */
 export const Config: z<Config> = z.object({
-  workspaceDir: z.string().default('.research'),
+  workspaceDir: z.string().default(DEFAULTS.workspaceDir),
   reviewer: z.object({
-    provider: z.string().default('spawn'),
-    maxRounds: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(3),
-    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(600_000),
-  }).default({ provider: 'spawn', maxRounds: 3, timeoutMs: 600_000 }),
+    provider: z.string().default(DEFAULTS.reviewer.provider),
+    maxRounds: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.reviewer.maxRounds),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.reviewer.timeoutMs),
+  }).default(DEFAULTS.reviewer),
   latex: z.object({
-    engine: z.string().default('auto'),
-    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(120_000),
-  }).default({ engine: 'auto', timeoutMs: 120_000 }),
+    engine: z.string().default(DEFAULTS.latex.engine),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.latex.timeoutMs),
+  }).default(DEFAULTS.latex),
   arxiv: z.object({
-    maxResults: z.number().step(1).min(1).max(100).default(10),
-    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
-  }).default({ maxResults: 10, timeoutMs: 30_000 }),
+    maxResults: z.number().step(1).min(1).max(100).default(DEFAULTS.arxiv.maxResults),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.arxiv.timeoutMs),
+  }).default(DEFAULTS.arxiv),
   search: z.object({
-    command: z.string().default('auto'),
-    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(30_000),
-    maxResults: z.number().step(1).min(1).max(50).default(10),
-  }).default({ command: 'auto', timeoutMs: 30_000, maxResults: 10 }),
+    command: z.string().default(DEFAULTS.search.command),
+    timeoutMs: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.search.timeoutMs),
+    maxResults: z.number().step(1).min(1).max(50).default(DEFAULTS.search.maxResults),
+  }).default(DEFAULTS.search),
   zotero: z.object({
-    apiKey: z.string().default(''),
-    userId: z.string().default(''),
-  }).default({ apiKey: '', userId: '' }),
+    apiKey: z.string().default(DEFAULTS.zotero.apiKey),
+    userId: z.string().default(DEFAULTS.zotero.userId),
+  }).default(DEFAULTS.zotero),
   subscriptions: z.object({
-    enabled: z.boolean().default(true),
-    intervalMinutes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(1440),
-  }).default({ enabled: true, intervalMinutes: 1440 }),
+    enabled: z.boolean().default(DEFAULTS.subscriptions.enabled),
+    intervalMinutes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.subscriptions.intervalMinutes),
+  }).default(DEFAULTS.subscriptions),
   backup: z.object({
-    enabled: z.boolean().default(true),
-    intervalMinutes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(60),
-    keep: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(24),
-    dir: z.string().default('backups'),
-  }).default({ enabled: true, intervalMinutes: 60, keep: 24, dir: 'backups' }),
+    enabled: z.boolean().default(DEFAULTS.backup.enabled),
+    intervalMinutes: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.backup.intervalMinutes),
+    keep: z.number().step(1).min(1).max(Number.MAX_SAFE_INTEGER).default(DEFAULTS.backup.keep),
+    dir: z.string().default(DEFAULTS.backup.dir),
+  }).default(DEFAULTS.backup),
   skills: z.object({
-    enabled: z.boolean().default(true),
-  }).default({ enabled: true }),
+    enabled: z.boolean().default(DEFAULTS.skills.enabled),
+  }).default(DEFAULTS.skills),
   serverTools: z.object({
-    enabled: z.boolean().default(true),
-  }).default({ enabled: true }),
+    enabled: z.boolean().default(DEFAULTS.serverTools.enabled),
+  }).default(DEFAULTS.serverTools),
 })
 
-/** Fully defaulted config view used by tools and commands. */
-interface ResolvedConfig {
-  readonly workspaceDir: string
-  readonly reviewer: { readonly provider: string; readonly maxRounds: number; readonly timeoutMs: number }
-  readonly latex: { readonly engine: string; readonly timeoutMs: number }
-  readonly arxiv: { readonly maxResults: number; readonly timeoutMs: number }
-  readonly search: { readonly command: string; readonly timeoutMs: number; readonly maxResults: number }
-  readonly zotero: { readonly apiKey: string; readonly userId: string }
-  readonly subscriptions: {
-    readonly enabled: boolean
-    readonly intervalMinutes: number
-  }
-  readonly backup: {
-    readonly enabled: boolean
-    readonly intervalMinutes: number
-    readonly keep: number
-    readonly dir: string
-  }
-  readonly skills: { readonly enabled: boolean }
-  readonly serverTools: { readonly enabled: boolean }
-}
+/**
+ * Fully defaulted config view used by tools and commands (#218).
+ *
+ * The shape is {@link DEFAULTS} made concrete: the schema applies those same
+ * objects, so a knob added to `DEFAULTS` reaches this type without a second
+ * declaration — which is exactly the drift this issue was about. (`Config`'s
+ * schema parameter only carries the input type, so the output cannot be
+ * recovered from the schema value; `DEFAULTS` is the part that can.)
+ */
+type Widen<T> = T extends string ? string
+  : T extends number ? number
+  : T extends boolean ? boolean
+  : T extends object ? { readonly [K in keyof T]: Widen<T[K]> }
+  : T
+
+type ResolvedConfig = Widen<typeof DEFAULTS>
 
 /** Validate defaults even when a caller invokes apply() without Loader normalization. */
 function resolveConfig(config: Config): ResolvedConfig {
-  const workspaceDir = config.workspaceDir ?? '.research'
-  const reviewer = { provider: config.reviewer?.provider ?? 'spawn', maxRounds: config.reviewer?.maxRounds ?? 3, timeoutMs: config.reviewer?.timeoutMs ?? 600_000 }
-  const latex = { engine: config.latex?.engine ?? 'auto', timeoutMs: config.latex?.timeoutMs ?? 120_000 }
-  const arxiv = { maxResults: config.arxiv?.maxResults ?? 10, timeoutMs: config.arxiv?.timeoutMs ?? 30_000 }
-  const search = {
-    command: config.search?.command ?? 'auto',
-    timeoutMs: config.search?.timeoutMs ?? 30_000,
-    maxResults: config.search?.maxResults ?? 10,
+  // Every fallback reads DEFAULTS — the same objects the schema applies, so a
+  // caller that bypasses Loader normalization and one that does not end up
+  // with one set of numbers (#218).
+  const workspaceDir = config.workspaceDir ?? DEFAULTS.workspaceDir
+  const reviewer = {
+    provider: config.reviewer?.provider ?? DEFAULTS.reviewer.provider,
+    maxRounds: config.reviewer?.maxRounds ?? DEFAULTS.reviewer.maxRounds,
+    timeoutMs: config.reviewer?.timeoutMs ?? DEFAULTS.reviewer.timeoutMs,
   }
-  const zotero = { apiKey: config.zotero?.apiKey ?? '', userId: config.zotero?.userId ?? '' }
+  const latex = {
+    engine: config.latex?.engine ?? DEFAULTS.latex.engine,
+    timeoutMs: config.latex?.timeoutMs ?? DEFAULTS.latex.timeoutMs,
+  }
+  const arxiv = {
+    maxResults: config.arxiv?.maxResults ?? DEFAULTS.arxiv.maxResults,
+    timeoutMs: config.arxiv?.timeoutMs ?? DEFAULTS.arxiv.timeoutMs,
+  }
+  const search = {
+    command: config.search?.command ?? DEFAULTS.search.command,
+    timeoutMs: config.search?.timeoutMs ?? DEFAULTS.search.timeoutMs,
+    maxResults: config.search?.maxResults ?? DEFAULTS.search.maxResults,
+  }
+  const zotero = {
+    apiKey: config.zotero?.apiKey ?? DEFAULTS.zotero.apiKey,
+    userId: config.zotero?.userId ?? DEFAULTS.zotero.userId,
+  }
   const subscriptions = {
-    enabled: config.subscriptions?.enabled ?? true,
-    intervalMinutes: config.subscriptions?.intervalMinutes ?? 1440,
+    enabled: config.subscriptions?.enabled ?? DEFAULTS.subscriptions.enabled,
+    intervalMinutes: config.subscriptions?.intervalMinutes ?? DEFAULTS.subscriptions.intervalMinutes,
   }
   const backup = {
-    enabled: config.backup?.enabled ?? true,
-    intervalMinutes: config.backup?.intervalMinutes ?? 60,
-    keep: config.backup?.keep ?? 24,
-    dir: config.backup?.dir ?? 'backups',
+    enabled: config.backup?.enabled ?? DEFAULTS.backup.enabled,
+    intervalMinutes: config.backup?.intervalMinutes ?? DEFAULTS.backup.intervalMinutes,
+    keep: config.backup?.keep ?? DEFAULTS.backup.keep,
+    dir: config.backup?.dir ?? DEFAULTS.backup.dir,
   }
-  const skills = { enabled: config.skills?.enabled ?? true }
-  const serverTools = { enabled: config.serverTools?.enabled ?? true }
+  const skills = { enabled: config.skills?.enabled ?? DEFAULTS.skills.enabled }
+  const serverTools = { enabled: config.serverTools?.enabled ?? DEFAULTS.serverTools.enabled }
   if (workspaceDir.trim().length === 0) throw new TypeError('workspaceDir must be a non-empty path')
   if (reviewer.provider.trim().length === 0) throw new TypeError('reviewer.provider must be a non-empty provider name')
   if (!Number.isSafeInteger(reviewer.maxRounds) || reviewer.maxRounds < 1) throw new TypeError('reviewer.maxRounds must be a positive safe integer')
