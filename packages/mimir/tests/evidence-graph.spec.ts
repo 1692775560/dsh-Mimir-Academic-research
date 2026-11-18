@@ -216,21 +216,27 @@ describe('conflict pairing (active口径 only)', () => {
 
 describe('alias union-find', () => {
   it('merges two node keys sharing a title fingerprint and discloses the merge', () => {
-    const keys1 = dedupKeyOf('cites', 'lit:arxiv:2401.00001', 'lit:arxiv:2401.00002', '//')
-    const keys2 = dedupKeyOf('cites', 'lit:title:' + 'a'.repeat(16), 'lit:arxiv:2401.00002', '//')
+    // Two edges out of the SAME source, so the pair cannot form a cycle and the
+    // #216 guard leaves both standing. The claim under test is about `src`
+    // aliasing: 2401.00001 carries a title fingerprint that the second edge
+    // names directly.
+    const fp = 'a'.repeat(16)
+    const keys1 = dedupKeyOf('cites', 'lit:arxiv:2401.00001', 'claim:claim-1', '//')
+    const keys2 = dedupKeyOf('cites', 'lit:title:' + fp, 'claim:claim-1', '//')
     const graph = deriveEvidenceGraph([
       ev(at(0), EVIDENCE_EDGE_ADDED_ACTION, {}, {
-        rel: 'cites', src: 'lit:arxiv:2401.00001', dst: 'lit:arxiv:2401.00002', dedupKey: keys1,
-        keys: { titleFp: 'a'.repeat(16) },
+        rel: 'cites', src: 'lit:arxiv:2401.00001', dst: 'claim:claim-1', dedupKey: keys1,
+        keys: { titleFp: fp },
       }),
       ev(at(5), EVIDENCE_EDGE_ADDED_ACTION, {}, {
-        rel: 'cites', src: 'lit:title:' + 'a'.repeat(16), dst: 'lit:arxiv:2401.00002', dedupKey: keys2,
+        rel: 'cites', src: 'lit:title:' + fp, dst: 'claim:claim-1', dedupKey: keys2,
       }),
     ], WIKI)
     expect(graph.stats.aliasMerges).toBeGreaterThanOrEqual(1)
-    // Both edges now land on the same canonical dst node.
     const cites = graph.edges.filter(edge => edge.rel === 'cites')
-    expect(cites[0]?.dst).toBe(cites[1]?.dst)
+    // Both edges now leave from the same canonical src node.
+    expect(cites).toHaveLength(2)
+    expect(cites[0]?.src).toBe(cites[1]?.src)
   })
 
   it('unifies imported-paper titles into a fingerprint alias in-fold', () => {
