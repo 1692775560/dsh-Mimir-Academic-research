@@ -45,6 +45,7 @@ import { startWikiBackupLoop } from './backup.ts'
 import { startArxivSubscriptionLoop } from './arxiv-subscriptions.ts'
 import { TaskHealthRegistry } from './task-health.ts'
 import { createWikiChangeHub, createWikiEventsHandler } from './wiki-events.ts'
+import { guardRoute, streamToResponse } from './http-guard.ts'
 import { startVenueDeadlineLoop } from './services/venue-deadlines.ts'
 import { createVenueSearchTool } from './tools/venue.ts'
 
@@ -798,7 +799,7 @@ function createPdfHandler(
       res.end()
       return
     }
-    createReadStream(pdfPath).pipe(res)
+    streamToResponse(createReadStream(pdfPath), res)
   }
 }
 
@@ -885,7 +886,7 @@ function createPaperPdfHandler(
       res.end()
       return
     }
-    createReadStream(pdfPath).pipe(res)
+    streamToResponse(createReadStream(pdfPath), res)
   }
 }
 /** Content-Type of one servable figure extension. */
@@ -1020,7 +1021,7 @@ function createFigureHandler(
       res.end()
       return
     }
-    createReadStream(figurePath).pipe(res)
+    streamToResponse(createReadStream(figurePath), res)
   }
 }
 
@@ -1244,7 +1245,7 @@ function createMeetingDeckHandler(
       res.end()
       return
     }
-    createReadStream(deckPath).pipe(res)
+    streamToResponse(createReadStream(deckPath), res)
   }
 }
 
@@ -1418,7 +1419,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/events',
-      handler: createWikiEventsHandler(wikiChangeHub),
+      handler: guardRoute(createWikiEventsHandler(wikiChangeHub)),
     }),
     'mimir.wikiEventsRoute',
   )
@@ -1426,7 +1427,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/pdf',
-      handler: createPdfHandler(deps),
+      handler: guardRoute(createPdfHandler(deps)),
     }),
     'mimir.pdfRoute',
   )
@@ -1434,7 +1435,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/paper-pdf',
-      handler: createPaperPdfHandler(deps),
+      handler: guardRoute(createPaperPdfHandler(deps)),
     }),
     'mimir.paperPdfRoute',
   )
@@ -1442,7 +1443,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/figure',
-      handler: createFigureHandler(deps),
+      handler: guardRoute(createFigureHandler(deps)),
     }),
     'mimir.figureRoute',
   )
@@ -1450,7 +1451,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/figure-upload',
-      handler: createFigureUploadHandler(deps),
+      handler: guardRoute(createFigureUploadHandler(deps)),
     }),
     'mimir.figureUploadRoute',
   )
@@ -1458,7 +1459,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/template-upload',
-      handler: createTemplateUploadHandler(deps),
+      handler: guardRoute(createTemplateUploadHandler(deps)),
     }),
     'mimir.templateUploadRoute',
   )
@@ -1466,7 +1467,7 @@ export async function apply(ctx: Context, config: Config): Promise<void> {
     () => ctx.webServer.register({
       kind: 'prefix',
       path: '/research/meeting',
-      handler: createMeetingDeckHandler(deps),
+      handler: guardRoute(createMeetingDeckHandler(deps)),
     }),
     'mimir.meetingDeckRoute',
   )
