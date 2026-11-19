@@ -753,8 +753,16 @@ export interface ResearchPanelInjected {
 export type ResearchPanelIconProps = PropsRuntime<'sidebar.panellist'>
 
 /** Full props of the research workbench page (the `main` panel keyed `research`). */
-export type ResearchPanelProps =
-  PropsRuntime<'main'>
-  & PropsStore<ResearchPanelStore>
+/**
+ * What the workbench BODY renders with: the store face, the injected business
+ * face and the copy. The runtime seat (`PropsRuntime<'main'>`) is layered on top
+ * for the slot registration, but the body never reads it — which is what lets
+ * the right-pane tab mount the same component outside a slot.
+ */
+export type ResearchPanelSurfaceProps =
+  PropsStore<ResearchPanelStore>
   & InjectFace<ResearchPanelInjected>
   & PropsLocale<'research'>
+
+/** The complete props of the `main` slot entry (surface + runtime seat). */
+export type ResearchPanelProps = PropsRuntime<'main'> & ResearchPanelSurfaceProps

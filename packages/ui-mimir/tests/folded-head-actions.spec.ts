@@ -11,9 +11,13 @@ import { describe, expect, it } from 'vitest'
 
 const CSS = readFileSync(fileURLToPath(new URL('../src/client/ResearchPanel.module.css', import.meta.url)), 'utf8')
 
-/** The `@media (min-width: 701px)` block that owns the folded rail. */
+/**
+ * The `(min-width: 701px)` block that owns the folded rail. It is a container
+ * query, not a media query: the right-pane seat mounts the same panel in a
+ * narrow column while the window stays wide.
+ */
 function foldedBlock(): string {
-  const start = CSS.indexOf('@media (min-width: 701px)')
+  const start = CSS.indexOf('@container (min-width: 701px)')
   expect(start).toBeGreaterThan(-1)
   const end = CSS.indexOf('\n}\n', CSS.indexOf('.side[data-folded] .sideFold', start))
   return CSS.slice(start, end)

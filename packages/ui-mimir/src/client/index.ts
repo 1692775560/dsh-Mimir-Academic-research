@@ -13,6 +13,7 @@
  */
 
 import type { Context as ClientContext } from '@deepseek-ai/cordis'
+import type { BakedActions } from '@deepseek-ai/dsh-client-store'
 import type { ISessions, SessionTarget } from '@deepseek-ai/dsh-api-session-controller/client'
 // Type-only: pulls the Client assembly's ctx.remote merge (TypertClientRemote).
 import type {} from '@deepseek-ai/dsh-api-remotes/client'
@@ -39,9 +40,10 @@ import { currentSessionIdOf, sameSessionListView, sessionListView, type Research
 import { ResearchPanel } from './ResearchPanel.tsx'
 import { ResearchIcon } from './ResearchIcon.tsx'
 import { researchSidebarTab, type BetterSidebarTabService } from './sidebar-tab.tsx'
+import { researchWorkbenchTab } from './workbench-tab.tsx'
 import type { ResearchPanelInjected } from './slots.ts'
 import type { WorkbenchChrome } from './shortcuts.ts'
-import { createResearchPanelStore } from './store.ts'
+import { createResearchPanelStore, type ResearchPanelActions, type ResearchPanelState } from './store.ts'
 import { en, zh, type ResearchKey } from './locales.ts'
 
 export type {
@@ -271,25 +273,19 @@ function panelApply(ctx: ClientContext): void {
   // while its row is selected, so "mounted" means "on screen" — the panel keeps
   // no open/closed flag and the host owns navigation (back, another row, the
   // workspace switcher).
-  ctx.slots.inject('main', () => ctx.slots.register({
-    name: 'main',
-    key: PANEL_KEY,
-    store: panel,
-    locale: NS,
-    inject: (actions): ResearchPanelInjected => ({
+  // One injected face, two seats: the main-column page and the optional
+  // right-pane workbench mount the same panel from these closures. Only the
+  // seat's store actions differ, so they are the single parameter.
+  const injectedFor = (actions: BakedActions<ResearchPanelState, ResearchPanelActions>): ResearchPanelInjected => ({
       hooks: { research: controller, chrome, sessionList: sessionHook },
       ensure: () => { controller.ensure() },
-      // The row click is the single selection entry: it writes the shared
-      // store and fetches the outline + compile status in one gesture.
-      selectProject: (projectId) => {
-        actions.select(projectId)
-        controller.select(projectId)
-      },
+      // The row click is the single selection entry: it publishes the shared
+      // selection and fetches the outline + compile status in one gesture.
+      selectProject: (projectId) => { controller.select(projectId) },
       // The project list's import dialog: a successful import lands selected.
       importProject: async (path, title) => {
         const outcome = await controller.importProject(path, title)
         if ('code' in outcome) return outcome
-        actions.select(outcome.projectId)
         controller.select(outcome.projectId)
         return outcome
       },
@@ -299,7 +295,6 @@ function panelApply(ctx: ClientContext): void {
       createProject: async (title) => {
         const outcome = await controller.createProject(title)
         if ('code' in outcome) return outcome
-        actions.select(outcome.id)
         controller.select(outcome.id)
         return outcome
       },
@@ -447,8 +442,15 @@ function panelApply(ctx: ClientContext): void {
       exportWiki: () => controller.exportWiki(),
       importWiki: (snapshot, mode, confirmReplace) => controller.importWiki(snapshot, mode, confirmReplace),
       dismissToast: (id) => { controller.dismissToast(id) },
-      pruneToasts: () => { controller.pruneToasts() },
-    }),
+    pruneToasts: () => { controller.pruneToasts() },
+  })
+
+  ctx.slots.inject('main', () => ctx.slots.register({
+    name: 'main',
+    key: PANEL_KEY,
+    store: panel,
+    locale: NS,
+    inject: injectedFor,
   }, ResearchPanel))
 
   // The optional right-pane seat (dsh-better-sidebar). `ctx.inject` creates a
@@ -461,11 +463,23 @@ function panelApply(ctx: ClientContext): void {
   ctx.inject(['betterSidebar'], (scoped) => {
     const sidebar = (scoped as unknown as { betterSidebar?: BetterSidebarTabService }).betterSidebar
     if (sidebar === undefined) return
+    // Two tabs, both optional: the glance card, and the whole workbench. The
+    // second gets its own store instance from the same handle, so its tab and
+    // paper focus are its own while the selected project follows the view.
+    const rightPane = panel.create('right-pane')
     ctx.effect(() => sidebar.registerTab(researchSidebarTab({
       controller,
       chrome,
       copy: () => (chromeSnapshot.locale === 'en' ? 'en' : 'zh'),
       openPanel: () => { layout?.selectPanel(PANEL_KEY) },
-    })), 'ui-mimir: better-sidebar tab')
+    })), 'ui-mimir: better-sidebar glance tab')
+    ctx.effect(() => sidebar.registerTab(researchWorkbenchTab({
+      panel: rightPane,
+      controller,
+      chrome,
+      sessionList: sessionHook,
+      injected: injectedFor(rightPane.actions),
+      copy: () => (chromeSnapshot.locale === 'en' ? 'en' : 'zh'),
+    })), 'ui-mimir: better-sidebar workbench tab')
   })
 }

@@ -179,6 +179,22 @@ describe('ResearchController', () => {
     expect(view.compile).toMatchObject({ projectId: 'p1', state: 'idle' })
   })
 
+  it('publishes the selection as shared view state, and clears it on deselect', () => {
+    const controller = new ResearchController(stubRemote({
+      getPaperOutline: ({ projectId }) => Promise.resolve(carried<ResearchOutlineResult>({
+        ok: true,
+        value: { projectId, nodes: [] },
+      })),
+      getCompileStatus: () => Promise.resolve(carried(IDLE)),
+    }))
+    expect(controller.getSnapshot().selectedProjectId).toBeNull()
+    controller.select('p1')
+    // Shared, not seat-private: the right-pane tab reads it from here.
+    expect(controller.getSnapshot().selectedProjectId).toBe('p1')
+    controller.select(null)
+    expect(controller.getSnapshot().selectedProjectId).toBeNull()
+  })
+
   it('maps a missing paper to the paper-not-found outline failure', async () => {
     const controller = new ResearchController(stubRemote({
       getPaperOutline: () => Promise.resolve(carried<ResearchOutlineResult>({

@@ -24,6 +24,7 @@ Mimir 是单个 npm 包（`dsh-mimir`），装进 dsh 即可获得：
 
 - **九视图 Web 工作台**（侧栏开关呼出浮层，深色/浅色、中/EN）：
   **总览** 管线进度与统计 · **论文** Overleaf 式 LaTeX 工作室（编辑 → 编译 → PDF 预览，每条报错可一键让 AI 修） · **文献** arXiv + Web 搜索、AI 相关度评分、全屏 PDF 阅读 · **实验** 指标对比图、一键生成论文图 · **图表** 上传/归纳命名/插入论文 · **组会** 一键生成组会 PPT（论文原图 + 可选 AI 配图） · **服务器** GPU 集群探测 + 远程任务 · **记录** 人本化科研日志——想法演化自动收进 worktree、六视角摘要胶囊、一键进展报告 · **会议** CCF 会议截稿倒计时（ccfddl 目录，按项目关注列表）+ CCF-A 期刊目录——全部视图经 SSE 实时推送，agent/同伴写入即刻上屏，无需手动刷新
+- **右侧栏席位**——装有 `dsh-better-sidebar` 时，同一套工作台也能作为宿主右侧栏的一个标签页打开（旁边还有一个速览卡片）：选中项目是共享的（一边选了，另一边跟着选），视图标签各自独立，窄栏布局看的是面板自己的宽度（容器查询），不是窗口宽度
 - **Agent 工具与斜杠命令**：`/research-idea` `/research-plan` `/research-review` `/paper-write` `/paper-compile`，以及 `arxiv_search`、`web_search`、`wiki_note`、`figure_save`、`latex_compile`、`meeting_deck`、`venue_search`，与远程计算四件套 `server_list` / `server_check` / `server_submit_job` / `server_list_jobs`（与服务器页共享同一批已登记服务器与任务）
 - **十一个内置科研技能**（文献综述、novelty 检查、实验规划、引用审计、中英双语去 AI 味润色、rebuttal……），直接教 agent 走流程，零配置
 

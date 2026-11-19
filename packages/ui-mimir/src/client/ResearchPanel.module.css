@@ -11,6 +11,21 @@
    more: the workbench fills the `main` panel it is mounted in, so there is no
    backdrop, no shadow, no radius at the frame, and no exit affordance. */
 
+/* The workbench's size container. The page mounts it in the main column; the
+   right-pane tab mounts the same component in a ~380px column. The narrow
+   layout must follow the space it GOT, not the window — a viewport query reads
+   the window, which stays wide while the right pane is narrow. Every responsive
+   block below is therefore a container query against this element. */
+.workbenchHost {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  container-type: inline-size;
+}
+
 .workbench {
   position: relative;
   box-sizing: border-box;
@@ -578,7 +593,7 @@
 
 /* The folded narrow rail: icons only, tooltip carries the view name. All of
    it is inert in top-bar mode (≤700px), where the fold button hides. */
-@media (min-width: 701px) {
+@container (min-width: 701px) {
   .side[data-folded] {
     flex-basis: 60px;
   }
@@ -3610,7 +3625,7 @@ li.dropIndicator {
   box-shadow: none;
 }
 
-@media (max-width: 900px) {
+@container (max-width: 900px) {
   .statChips {
     grid-template-columns: repeat(2, minmax(110px, 1fr));
   }
@@ -3625,11 +3640,11 @@ li.dropIndicator {
   }
 }
 
-/* Very narrow windows: the side rail becomes a top bar — the nav turns
+/* Very narrow containers: the side rail becomes a top bar — the nav turns
    horizontal (scrollable), the project picker drops to a full-width row, and
-   the shortcut hint hides. The workbench is fixed to 96vw, so a viewport
-   query doubles as a container query. */
-@media (max-width: 700px) {
+   the shortcut hint hides. A container query, because the right-pane tab is
+   narrow while the window is wide. */
+@container (max-width: 700px) {
   .workbench {
     flex-direction: column;
   }
@@ -3718,7 +3733,7 @@ li.dropIndicator {
   }
 }
 
-@media (max-width: 460px) {
+@container (max-width: 460px) {
   .statChips {
     grid-template-columns: 1fr 1fr;
   }

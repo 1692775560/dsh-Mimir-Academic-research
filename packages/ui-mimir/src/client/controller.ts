@@ -509,6 +509,13 @@ export interface ResearchView {
   readonly projects: readonly ResearchProjectView[]
   readonly projectsStatus: ResearchLoadStatus
   readonly projectsFailure: ResearchFailureView | null
+  /**
+   * The project every project-scoped view is looking at; null before the first
+   * pick. Lives on the shared view rather than in a seat's store because two
+   * seats (the main column page and the right-pane workbench) must agree on
+   * which project "the workbench" is showing — the tab itself may differ.
+   */
+  readonly selectedProjectId: string | null
   readonly outline: ResearchOutlineView | null
   readonly compile: ResearchCompileView
   readonly source: ResearchSourceView | null
@@ -581,6 +588,7 @@ const INITIAL_VIEW: ResearchView = Object.freeze({
   projects: Object.freeze([]),
   projectsStatus: 'cold',
   projectsFailure: null,
+  selectedProjectId: null,
   outline: null,
   compile: Object.freeze({ projectId: null, state: 'idle', issues: Object.freeze([]), engine: null, pdfUpdatedAt: null, observed: false }),
   source: null,
@@ -3824,6 +3832,9 @@ export class ResearchController implements HostObservable<ResearchView> {
    * @param projectId - wiki project id, or null to deselect.
    */
   select(projectId: string | null): void {
+    // The selection is shared state, not a seat's private view: publish it on
+    // the view so a second seat (the right-pane workbench) follows the page.
+    this.selectedProjectId = projectId
     // Flush a dirty draft of the project being left BEFORE the sweep below:
     // the generation bump stale-marks any later save reply and clearTimers()
     // kills the debounce, so a draft not flushed now is lost for good.
@@ -3861,6 +3872,7 @@ export class ResearchController implements HostObservable<ResearchView> {
     if (projectId === null) {
       // Deselect: every per-project slice empties; nothing is fetched.
       this.publish({
+        selectedProjectId: null,
         outline: null,
         source: null,
         experiments: null,
@@ -3874,6 +3886,7 @@ export class ResearchController implements HostObservable<ResearchView> {
       return
     }
     this.publish({
+      selectedProjectId: projectId,
       outline: Object.freeze({ projectId, status: 'loading', nodes: Object.freeze([]), failure: null }),
       source: Object.freeze({
         projectId, status: 'loading', content: '', mtimeMs: null, saveState: 'clean', failure: null,

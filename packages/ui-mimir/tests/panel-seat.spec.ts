@@ -68,14 +68,39 @@ describe('the page, not the dialog', () => {
   })
 })
 
+describe('the right-pane workbench seat', () => {
+  const workbench = source('workbench-tab.tsx')
+
+  it('registers a second tab beside the glance card, from the same store handle', () => {
+    expect(index).toContain("panel.create('right-pane')")
+    expect(index).toContain('researchWorkbenchTab({')
+    expect(index).toContain("'ui-mimir: better-sidebar workbench tab'")
+    expect(workbench).toContain("'dsh-mimir:workbench'")
+  })
+
+  it('mounts the same panel body the main column mounts', () => {
+    expect(workbench).toContain('ResearchPanel')
+    expect(slots).toContain('ResearchPanelSurfaceProps')
+    // The body must not depend on the slot runtime seat, or it could not mount here.
+    expect(panel).toContain('}: ResearchPanelSurfaceProps) {')
+  })
+
+  it('sizes the narrow layout by its container, not the window', () => {
+    expect(panel).toContain('css.workbenchHost')
+  })
+})
+
 describe('copy for the new seats', () => {
   it('names the sidebar tab in both locales', () => {
     for (const dictionary of [zh, en]) {
       expect(dictionary['sidebar.glance']).toBeTypeOf('string')
       expect(dictionary['sidebar.running']).toBeTypeOf('string')
       expect(dictionary['sidebar.openWorkbench']).toBeTypeOf('string')
+      expect(dictionary['sidebar.workbench']).toBeTypeOf('string')
     }
     expect(zh['sidebar.glance']).toBe('科研速览')
     expect(en['sidebar.glance']).toBe('Research at a glance')
+    expect(zh['sidebar.workbench']).toBe('科研工作台')
+    expect(en['sidebar.workbench']).toBe('Research workbench')
   })
 })
