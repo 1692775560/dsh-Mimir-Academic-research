@@ -25,11 +25,12 @@ import type { ReactElement } from 'react'
 import { createPortal } from 'react-dom'
 import type { ArxivEntry, PaperRecord, ResearchProjectView, WebSearchEntry } from 'dsh-mimir/types'
 import type {
-  ResearchArxivSearchView, ResearchFailureView, ResearchImportCounts, ResearchPapersView, ResearchWebSearchView,
+  ResearchArxivSearchView, ResearchExportBib, ResearchFailureView, ResearchImportCounts, ResearchPapersView, ResearchWebSearchView,
   ResearchDigdigConfigView,  ResearchSubscriptionsView, ResearchZoteroSearchView, ResearchZoteroView,
 } from './controller.ts'
-import { arxivIdFromUrl, collectTags, failureCopy, filterPapers, paperPdfUrl, type ResearchT } from './view-common.ts'
+import { arxivIdFromUrl, collectTags, downloadTextFile, failureCopy, filterPapers, paperPdfUrl, type ResearchT } from './view-common.ts'
 import { appendReadingNote, parseReadingNotes } from './paper-notes.ts'
+import { libraryBibFilename } from './wiki-transfer.ts'
 import { buildPaperScorePrompt } from './paper-score.ts'
 import { buildRelatedWorkPrompt } from './related-work.ts'
 import { EmptyState } from './EmptyState.tsx'
@@ -594,7 +595,7 @@ export function PapersView({
   papers, arxivSearch, webSearch, digdigConfig, arxivSubscriptions, projects, selectedProjectId, ensurePapers, searchArxiv, searchWeb,
   getDigdigConfig, saveDigdigConfig,
   saveArxivSubscription, deleteArxivSubscription, checkArxivSubscriptions,
-  importPaper, updatePaper, removePaper, importPapersToBib, fetchPaperPdf,
+  importPaper, updatePaper, removePaper, importPapersToBib, exportLibraryBib, fetchPaperPdf,
   zotero, zoteroSearch, recheckZotero, searchZotero, importZoteroItem, exportZoteroCollectionToBib,
   refreshPapers, requestRelatedWork, requestPaperScore, t,
 }: {
@@ -624,6 +625,10 @@ export function PapersView({
     projectId: string,
     arxivIds: string[],
   ) => Promise<ResearchFailureView | ResearchImportCounts>
+  /** Serialize the on-screen papers as `.bib` text; the view saves it. */
+  readonly exportLibraryBib: (
+    arxivIds?: readonly string[],
+  ) => Promise<ResearchFailureView | ResearchExportBib>
   readonly fetchPaperPdf: (arxivId: string) => Promise<ResearchFailureView | null>
   readonly zotero: ResearchZoteroView
   readonly zoteroSearch: ResearchZoteroSearchView | null
@@ -645,6 +650,8 @@ export function PapersView({
   const [query, setQuery] = useState('')
   const [source, setSource] = useState<'arxiv' | 'web'>('arxiv')
   const [importing, setImporting] = useState<string | null>(null)
+  // One bulk `.bib` export in flight (the button disables itself meanwhile).
+  const [exporting, setExporting] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const [activeTag, setActiveTag] = useState<string | null>(null)
   // Tri-state project filter: null follows the default (ON while a project is
@@ -736,6 +743,21 @@ export function PapersView({
       projectTitle: selectedProject.title,
       dir: selectedProject.paperDir,
     }))
+  }
+
+  // The export button covers exactly the papers on screen, like the two
+  // adjacent ones: the tag / current-project filter IS the selection.
+  const exportVisibleBib = async (): Promise<void> => {
+    if (exporting || visible.length === 0) return
+    setExporting(true)
+    setActionError(null)
+    const outcome = await exportLibraryBib(visible.map(paper => paper.arxivId))
+    setExporting(false)
+    if ('code' in outcome) {
+      setActionError(`${t('papers.exportBibFailed')}：${failureCopy(t, outcome)}`)
+      return
+    }
+    downloadTextFile(outcome.bib, libraryBibFilename(new Date()), 'application/x-bibtex;charset=utf-8')
   }
 
   const submitSearch = (): void => {
@@ -961,6 +983,15 @@ export function PapersView({
               onClick={() => { scoreWithAi(visible) }}
             >
               {t('papers.scoreWithAi')} × {visible.length}
+            </button>
+            <button
+              type="button"
+              className={css.btn}
+              disabled={exporting || visible.length === 0}
+              title={t('papers.exportBibScope')}
+              onClick={() => { void exportVisibleBib() }}
+            >
+              {exporting ? t('papers.exportingBib') : `${t('papers.exportBib')} × ${visible.length}`}
             </button>
           </div>
           {(allTags.length > 0 || selectedProjectId !== null) && (

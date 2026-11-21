@@ -142,6 +142,23 @@ export function meetingDeckUrl(projectId: string, file: string): string {
   return `/research/meeting?project=${encodeURIComponent(projectId)}&file=${encodeURIComponent(file)}`
 }
 
+/**
+ * Save one in-memory text as a file through a throwaway object URL. Used
+ * wherever a Remote returns the bytes instead of a download route — the wiki
+ * snapshot export and the `.bib` export both do.
+ * @param text - the file's full content.
+ * @param filename - the name the browser saves it as.
+ * @param type - the MIME type; a text format by default.
+ */
+export function downloadTextFile(text: string, filename: string, type = 'text/plain;charset=utf-8'): void {
+  const url = URL.createObjectURL(new Blob([text], { type }))
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
+}
+
 /** One run's row in one metric's comparison chart. */
 export interface MetricChartRow {
   readonly id: string

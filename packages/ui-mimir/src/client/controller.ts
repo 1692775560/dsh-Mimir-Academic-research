@@ -372,6 +372,12 @@ export interface ResearchImportCounts {
   readonly skipped: readonly string[]
 }
 
+/** One settled `exportLibraryBib` run: the `.bib` text and its entry count. */
+export interface ResearchExportBib {
+  readonly bib: string
+  readonly count: number
+}
+
 /** The ledger (growth record) view: one time window's events, newest first. */
 export interface ResearchLedgerView {
   readonly status: ResearchLoadStatus
@@ -3456,6 +3462,28 @@ export class ResearchController implements HostObservable<ResearchView> {
         this.reloadBibliography()
       }
       return counts
+    } catch (error) {
+      return transportFailure(error)
+    }
+  }
+
+  /**
+   * Serialize the remembered library (or a named subset) as `.bib` text. The
+   * text is returned rather than downloaded here: the controller owns no DOM,
+   * and the view already knows how to turn a string into a file save.
+   * @param arxivIds - the subset, or absent for the whole library.
+   * @returns the text and its entry count, or the failure to surface.
+   */
+  async exportLibraryBib(
+    arxivIds?: readonly string[],
+  ): Promise<ResearchFailureView | ResearchExportBib> {
+    try {
+      const carried = await this.remote.exportLibraryBib(
+        arxivIds === undefined ? {} : { arxivIds: [...arxivIds] },
+      )
+      const result = unwrapRemote(carried)
+      if (!result.ok) return result.failure
+      return Object.freeze({ bib: result.value.bib, count: result.value.count })
     } catch (error) {
       return transportFailure(error)
     }

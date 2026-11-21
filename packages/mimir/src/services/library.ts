@@ -13,11 +13,13 @@ import { fetchWebSearch } from '../tools/web-search.ts'
 import type { WebSearchRunner } from '../tools/web-search.ts'
 import { detectPackageManager, installCommandFor } from '../pm-detect.ts'
 import { emitEvent, PANEL_ACTOR } from '../ledger.ts'
+import { entryFromPaper, serializeBibtex } from '../bibtex.ts'
 import type { ResearchWikiDomain } from '../store.ts'
 import { withPaperMutationLock } from './mutation-locks.ts'
 import type {
   ArxivEntry,
   PaperRecord,
+  ResearchExportLibraryBibResult,
   ResearchFetchPaperPdfResult,
   ResearchImportPaperResult,
   ResearchPapersResult,
@@ -144,6 +146,43 @@ export function listPapers(deps: LibraryDeps): Promise<ResearchPapersResult> {
     .map(([, record]) => record)
     .sort((left, right) => right.addedAt.localeCompare(left.addedAt))
   return Promise.resolve(success({ papers: Object.freeze(papers) }))
+}
+
+/**
+ * Serialize the remembered library (or a named subset of it) as one `.bib`
+ * document, so the whole library can leave the panel in the format the rest
+ * of the world reads — the counterpart of `importPapersToBib`, which only
+ * ever adds to a *project's* `references.bib`. Nothing here touches a file:
+ * the caller gets the text and decides where it goes.
+ *
+ * An `arxivIds` list that names an unknown paper is `paper-not-found` rather
+ * than a silently shorter document — a caller asking for ten entries and
+ * getting nine would never notice. An empty library, or an empty selection,
+ * serializes to the empty string: that is the honest answer, not an error.
+ * @param deps - open wiki domain.
+ * @param request - optional id subset; absent exports everything.
+ * @returns the `.bib` text plus the count it covers.
+ */
+export async function exportLibraryBib(
+  deps: LibraryDeps,
+  request: { arxivIds?: readonly string[] | undefined } = {},
+): Promise<ResearchExportLibraryBibResult> {
+  const table = deps.domain.table('papers')
+  const requested = request.arxivIds
+  const records: PaperRecord[] = []
+  if (requested === undefined) {
+    for (const [, record] of table.entries()) records.push(record)
+  } else {
+    for (const arxivId of requested) {
+      const record = table.get(arxivId)
+      if (record === undefined) return rejected({ code: 'paper-not-found' })
+      records.push(record)
+    }
+  }
+  // Library order (newest first) reads like the panel; `serializeBibtex`
+  // preserves it, so the exported file matches what the user is looking at.
+  records.sort((left, right) => right.addedAt.localeCompare(left.addedAt))
+  return success({ bib: serializeBibtex(records.map(entryFromPaper)), count: records.length })
 }
 
 /**

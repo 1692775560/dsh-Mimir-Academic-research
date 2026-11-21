@@ -72,6 +72,7 @@ function view(overrides: Partial<Parameters<typeof PapersView>[0]> = {}): string
       updatePaper={() => Promise.resolve(null)}
       removePaper={() => Promise.resolve(null)}
       importPapersToBib={() => Promise.resolve(null as never)}
+      exportLibraryBib={() => Promise.resolve(null as never)}
       fetchPaperPdf={() => Promise.resolve(null)}
       refreshPapers={() => {}}
       requestRelatedWork={() => Promise.resolve()}

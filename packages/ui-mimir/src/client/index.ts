@@ -388,6 +388,7 @@ function panelApply(ctx: ClientContext): void {
       deleteBibEntry: key => controller.deleteBibEntry(key),
       updateBibEntry: (originalKey, entry) => controller.updateBibEntry(originalKey, entry),
       importPapersToBib: (projectId, arxivIds) => controller.importPapersToBib(projectId, arxivIds),
+      exportLibraryBib: arxivIds => controller.exportLibraryBib(arxivIds),
       loadSnapshots: (projectId, force) => { controller.loadSnapshots(projectId, force) },
       loadSnapshotDetail: (projectId, id) => { controller.loadSnapshotDetail(projectId, id) },
       closeSnapshotDetail: () => { controller.closeSnapshotDetail() },

@@ -102,6 +102,7 @@ export type {
   ResearchGetHabitsResult,
   ResearchGetLibraryThemesResult,
   ResearchImportPaperResult,
+  ResearchExportLibraryBibResult,
   ResearchJournalDraftKind,
   ResearchImportProjectRequest,
   ResearchImportProjectResult,
