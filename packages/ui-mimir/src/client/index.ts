@@ -1,10 +1,14 @@
 /**
- * Research panel plugin, browser half: a sidebar-footer toggle and the
- * frame-level overlay it opens. One ResearchController per client runtime
- * backs the panel; one store handle is shared by both registrations so the
- * toggle and the panel read the same open/selection state. Both target seats
- * are declared by other packages (ui-sidebar, ui-layout), so both
- * registrations go through `slots.inject` and wait on the declaration.
+ * Research panel plugin, browser half. The workbench is a PAGE, not a dialog:
+ * a row in the sidebar's global panel list (`sidebar.panellist`) addresses a
+ * `main` panel keyed `research`, and the shell's own click does the routing, so
+ * there is no footer toggle to press and no overlay to close. Both seats are
+ * declared by other packages (ui-sidebar, ui-layout), so both registrations go
+ * through `slots.inject` and wait on the declaration.
+ *
+ * An optional third seat: when dsh-better-sidebar is installed, the same
+ * controller is exposed as a right-pane tab (see sidebar-tab.tsx for why that
+ * seat shows a glance card rather than a second copy of the workbench).
  * @module dsh-client-ui-mimir/client
  */
 
@@ -26,12 +30,17 @@ import type {} from '@deepseek-ai/dsh-client-locale/client'
 import type {} from '@deepseek-ai/dsh-client-ui-theme/client'
 // Type-only: pulls the renderer-owned SlotRegistry service merge (ctx.slots).
 import type {} from '@deepseek-ai/dsh-client-ui-renderer/client'
+// Type-only: pulls the layout service merge (ctx.layout) and MainPanelId — the
+// branded panel key the shell routes on; 'research' must be asserted, not
+// widened to string.
+import type { MainPanelId } from '@deepseek-ai/dsh-client-ui-layout/client'
 import { ResearchController } from './controller.ts'
 import { currentSessionIdOf, sameSessionListView, sessionListView, type ResearchSessionListView } from './project-form.ts'
 import { ResearchPanel } from './ResearchPanel.tsx'
-import { ResearchToggle } from './ResearchToggle.tsx'
+import { ResearchIcon } from './ResearchIcon.tsx'
+import { researchSidebarTab, type BetterSidebarTabService } from './sidebar-tab.tsx'
 import type { ResearchPanelInjected } from './slots.ts'
-import { nextColorScheme, nextLocale, type WorkbenchChrome } from './shortcuts.ts'
+import type { WorkbenchChrome } from './shortcuts.ts'
 import { createResearchPanelStore } from './store.ts'
 import { en, zh, type ResearchKey } from './locales.ts'
 
@@ -43,7 +52,7 @@ export type {
   ResearchSubscriptionsView, ResearchView, ResearchZoteroSearchView, ResearchZoteroView,
 } from './controller.ts'
 export type {
-  ResearchPanelInjected, ResearchPanelProps, ResearchPanelStore, ResearchToggleProps,
+  ResearchPanelIconProps, ResearchPanelInjected, ResearchPanelProps, ResearchPanelStore,
 } from './slots.ts'
 export type { ResearchPanelState, ResearchTab } from './store.ts'
 export { createResearchPanelStore } from './store.ts'
@@ -58,6 +67,13 @@ export {
 
 /** Dictionary namespace owned by this plugin. */
 const NS = 'research'
+
+/**
+ * The `main` panel key and the sidebar row id in one constant: the shell routes
+ * a panel row to the main panel of the SAME id, so the two strings drifting
+ * apart would leave a row that opens nothing.
+ */
+const PANEL_KEY = 'research' as MainPanelId
 
 /** Required services: the slot registry, the Remote carrier, the sessions domain, the copy, and the theme preference. `remote.research` is NOT listed: this module mounts that namespace itself, and an inject entry would make the loader wait for a service that only this module can create. */
 export const inject = ['slots', 'remote', 'sessions', 'locale', 'theme']
@@ -215,13 +231,17 @@ function panelApply(ctx: ClientContext): void {
     )
   }
 
-  ctx.slots.inject('sidebar.footer.action', () => ctx.slots.register({
-    name: 'sidebar.footer.action',
-    id: 'research',
-    order: 10,
-    store: panel,
-    locale: NS,
-  }, ResearchToggle))
+  // The sidebar seat: one row in the global panel list, beside Plugins and
+  // Automation tasks. The row id IS the `main` panel key, so the shell's own
+  // click selects our page — the entry needs no toggle, no store and no copy,
+  // only a glyph (ResearchIcon). The label is resolved from this row's
+  // metadata, which is why it is a function over the live locale.
+  ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
+    name: 'sidebar.panellist',
+    id: PANEL_KEY,
+    order: 20,
+    label: () => (chromeSnapshot.locale === 'en' ? en : zh)['panel.title'],
+  }, ResearchIcon))
 
   // Queue one assembled prompt as one user message in the current session.
   // Shared by the "fix with AI", "draft related work", "score relevance", and
@@ -247,16 +267,17 @@ function panelApply(ctx: ClientContext): void {
     }
   }
 
-  ctx.slots.inject('shell.overlay', () => ctx.slots.register({
-    name: 'shell.overlay',
-    id: 'research',
-    order: 10,
+  // The page seat: the `main` panel keyed `research`. The shell mounts it only
+  // while its row is selected, so "mounted" means "on screen" — the panel keeps
+  // no open/closed flag and the host owns navigation (back, another row, the
+  // workspace switcher).
+  ctx.slots.inject('main', () => ctx.slots.register({
+    name: 'main',
+    key: PANEL_KEY,
     store: panel,
     locale: NS,
     inject: (actions): ResearchPanelInjected => ({
       hooks: { research: controller, chrome, sessionList: sessionHook },
-      toggleTheme: () => { ctx.theme.setTheme(nextColorScheme(chromeSnapshot.dark)) },
-      toggleLocale: () => { ctx.locale.setLocale(nextLocale(chromeSnapshot.locale)) },
       ensure: () => { controller.ensure() },
       // The row click is the single selection entry: it writes the shared
       // store and fetches the outline + compile status in one gesture.
@@ -429,4 +450,22 @@ function panelApply(ctx: ClientContext): void {
       pruneToasts: () => { controller.pruneToasts() },
     }),
   }, ResearchPanel))
+
+  // The optional right-pane seat (dsh-better-sidebar). `ctx.inject` creates a
+  // nested fiber that waits for the service without blocking this plugin: with
+  // the package absent the callback never runs and nothing is registered.
+  let layout: { selectPanel(panelId: MainPanelId | null): void } | null = null
+  ctx.inject(['layout'], (scoped) => {
+    layout = scoped.layout
+  })
+  ctx.inject(['betterSidebar'], (scoped) => {
+    const sidebar = (scoped as unknown as { betterSidebar?: BetterSidebarTabService }).betterSidebar
+    if (sidebar === undefined) return
+    ctx.effect(() => sidebar.registerTab(researchSidebarTab({
+      controller,
+      chrome,
+      copy: () => (chromeSnapshot.locale === 'en' ? 'en' : 'zh'),
+      openPanel: () => { layout?.selectPanel(PANEL_KEY) },
+    })), 'ui-mimir: better-sidebar tab')
+  })
 }
