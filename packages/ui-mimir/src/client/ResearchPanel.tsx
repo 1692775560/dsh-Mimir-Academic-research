@@ -286,7 +286,7 @@ export function ResearchPanel({
   insertFigure, consumePaperJump, generateMetricFigure,
   deleteExperiment, updateExperiment, saveExperiment, ensureServers, saveServer, deleteServer, checkServer, checkAllServers,
   ensureJobs, refreshJobs, submitJob, deleteJob,
-  ensureBibliography, reloadBibliography, deleteBibEntry, updateBibEntry, importPapersToBib, reorderPaperSections, reorderPaperSubsections,
+  ensureBibliography, reloadBibliography, deleteBibEntry, updateBibEntry, importPapersToBib, exportLibraryBib, reorderPaperSections, reorderPaperSubsections,
   loadSnapshots, loadSnapshotDetail, closeSnapshotDetail, revertSnapshot,
   ensureVenueTemplates, applyVenueTemplate, clearVenueTemplate, uploadTemplateFiles, requestVenueFormat,
   refreshVenues, refreshVenueCatalog, toggleVenueWatch,
@@ -922,6 +922,7 @@ export function ResearchPanel({
             updatePaper={updatePaper}
             removePaper={removePaper}
             importPapersToBib={importPapersToBib}
+            exportLibraryBib={exportLibraryBib}
             fetchPaperPdf={fetchPaperPdf}
             zotero={zotero}
             zoteroSearch={zoteroSearch}

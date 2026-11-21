@@ -990,6 +990,12 @@ export type ResearchImportBibResult = ResearchResult<{
   readonly skipped: readonly string[]
 }>
 
+/** `exportLibraryBib` result: the `.bib` text and how many papers it covers. */
+export type ResearchExportLibraryBibResult = ResearchResult<{
+  readonly bib: string
+  readonly count: number
+}>
+
 /** One Zotero collection as the panel lists it. */
 export interface ZoteroCollectionView {
   readonly key: string

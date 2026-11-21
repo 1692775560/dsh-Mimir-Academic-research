@@ -62,6 +62,7 @@ import type {
   ResearchFiguresResult,
   ResearchGenerateBriefResult,
   ResearchImportBibResult,
+  ResearchExportLibraryBibResult,
   ResearchImportPaperResult,
   ResearchImportProjectRequest,
   ResearchImportProjectResult,
@@ -591,6 +592,18 @@ export class ResearchService extends TypertRemoteService {
     const result = await paper.importPapersToBib(this.deps, request)
     if (result.ok) this.wikiFileChanged('bibliography', request.projectId)
     return result
+  }
+
+  /**
+   * Serialize the remembered library — or the named subset — as `.bib` text.
+   * Read-only and project-agnostic: unlike `importPapersToBib` it neither
+   * needs nor touches a paper directory.
+   */
+  @Remote('exportLibraryBib')
+  exportLibraryBib(request: {
+    arxivIds?: string[] | undefined
+  }): Promise<ResearchExportLibraryBibResult> {
+    return library.exportLibraryBib(this.deps, request)
   }
 
   // paper domain: compile status flows through this.state

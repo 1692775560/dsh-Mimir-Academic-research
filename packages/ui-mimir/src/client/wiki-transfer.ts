@@ -32,6 +32,12 @@ export function wikiExportFilename(date: Date): string {
   return `mimir-wiki-${stamp}.json`
 }
 
+/** The library's `.bib` export filename: `mimir-library-YYYYMMDD.bib` (UTC date). */
+export function libraryBibFilename(date: Date): string {
+  const stamp = date.toISOString().slice(0, 10).replaceAll('-', '')
+  return `mimir-library-${stamp}.bib`
+}
+
 /** One table's row in the import summary. */
 export interface WikiSnapshotTableCount {
   readonly name: ResearchWikiTableName
