@@ -2,7 +2,7 @@
 
 English | [中文](architecture.zh.md)
 
-Current as of v0.18.0. Numbers in this document are verified against the
+Current as of v0.23.0. Numbers in this document are verified against the
 code — if you change one, update it here.
 
 ## Overview
