@@ -83,11 +83,20 @@ session/interaction 破坏性变更）。策略：
 
 ### 已知技术债（good first issue 池）
 
-- `packages/ui-mimir` 的测试不过 `tsc`——补一个 typecheck 门禁。
-- `setup-web-search.sh` 重跑会覆盖已有 digdig 配置（如 ollamaApiKey）——改成合并而非替换。
-- 记录页瞬间时间线（#127）遗留：`getMomentIndex` lookback 截断不进 silences；
-  `resolveWindow` 不防 `since > until`。
-- dsh 树内 ui-mimir 有 36 个预存 `tsc` 错误。
+2026-09 那批债务已随 0.23.0 清空：ui-mimir 的测试树进了受门禁的 `typecheck`
+（`packages/ui-mimir/tsconfig.test.json`），`setup-web-search.sh` 改成合并而非重写
+digdig 配置，记录页那两条（lookback 截断吞掉 silences、`since > until` 直通成空窗口）
+都已修复并各有测试。
+
+真正还开着的：
+
+- `pnpm test` 里的 `lint-gate.spec.ts` 会七次拉起 ESLint（负载高的机器上每次约 30 秒），
+  对每例 60 秒上限——整轮跑挂的可能只是调度而非真的违规。要么让一个 ESLint 进程服务
+  全部用例，要么让上限按机器算。
+- `downloadTextFile` 已在 `view-common.ts`，但四处视图（`DataSection`、
+  `CognitiveBriefView`、`DigestView`、`LedgerView`）仍各自内联同一段 Blob/anchor。
+- LaTeX 编辑器是透明 `<textarea>` 叠在高亮层上，因此无法折叠源码。折叠需要换编辑面。
+- `ledger.ts` 里 append-only 仍只是**约定**：记录与事件在同一文件锁下硬提交是计划中的加固。
 
 ### 官网
 
@@ -96,31 +105,33 @@ session/interaction 破坏性变更）。策略：
 
 ## 4. 功能路线
 
-### 近期（0.18.x）
+### 近期（至 0.23.0 已交付）
 
-- **文献管理器核心**：合集/文件夹、单篇阅读笔记、导入去重、一键导出 BibTeX——
-  文献视图从"搜索结果列表"升级成真正的文献库。
-- **文献阅读器**：全屏 PDF 阅读、高亮/批注层、AI 相关性评分和一段话摘要显示到卡片上，
-  评分结合项目自己声明的研究方向。
-- **LaTeX 编辑器深化**：命令/环境补全、按 section 折叠、公式悬停预览——加上已有的
-  编译/错误跳转闭环。
-- 图表智能化：上传时 agent 自动命名/归纳，支持用户改名——消灭"多出来的神秘图片"。
-- 会议模板：内置常见会议模板库（CVPR/NeurIPS/ICLR/ACL…）+ 自定义上传，
-  agent 按目标会议格式排版。
-- **会议/期刊信息与 DDL 追踪**：会议期刊信息查询（CCF 分级、领域分类、
-  截稿日期倒计时、临近 DDL 提醒）、按项目关注的 watchlist，配 agent 工具——
-  「这个会什么时候截稿」应该是一等公民问题。
-- 组会 PPT：原图 + 用户配置的文生图 API 生成图混排；迭代之间不反复重渲染。
-- 文献视图 UX：订阅可折叠、项目可折叠、卡片布局统一。
+原清单上的条目除注明外均已落地：
 
-### 中期（0.19–0.20）
+- **文献管理器核心**——单篇阅读笔记、标签、项目关联、Zotero 双向导入，以及一键 BibTeX：
+  既进某个项目的 `references.bib`，也能把整库导出（`exportLibraryBib`，#322）。
+  **仍缺**：合集/文件夹；导入去重目前只有 Zotero 侧查重。
+- **文献阅读器**——全屏 PDF、AI 相关性评分、卡片上的一段话摘要。**仍缺**：高亮/批注层——
+  阅读器还是 `<iframe>`，批注无处安放。
+- **LaTeX 编辑器深化**——命令/环境补全、从项目文献库补全 `\cite` key（#154），加上已有的
+  编译/错误跳转闭环。**仍缺**：按 section 折叠、公式悬停预览，两者都需要真正的编辑面，
+  而不是现在的 textarea 叠层。
+- 图表智能化——上传时 agent 命名，支持用户改名。
+- 会议模板——会议模板库（CVPR/ICCV/ECCV/NeurIPS/ICML/ICLR/ACL/AAAI…），
+  支持自定义上传与按目标会议重排。
+- **会议/期刊信息与 DDL 追踪**——CCF 分级目录、倒计时、按项目 watchlist、`venue_search` 工具。
+- 组会 PPT——项目原图与文生图 API 生成图混排。
+- 文献视图 UX——订阅与项目可折叠、卡片布局统一。
 
-- Zotero 双向同步（导入文献库、把 Mimir 里整理的合集推回去）——互通，
-  但管理器本身就在 Mimir 这里。
-- 阅读 → 写作管线：批注和 AI 摘要沉淀成引用卡片，再从这里长成引用真实的
-  related work 草稿。
-- LaTeX：排版预览与光标联动、参考文献从项目文献库自动补全。
-- 实验自动收录：盯托管服务器上的远程训练任务，把指标解析进实验记录和对比图。
+### 中期
+
+- Zotero 双向同步——**已交付**（`pushZoteroCollection`，#151）；剩下的是两侧都改过时的冲突语义。
+- 阅读 → 写作管线——**部分交付**：从文献库起草 related work（#153）与 `\cite` 补全（#154）
+  都已落地。批注仍没有存储，所以"批注→引用"这一跳没有源头。
+- LaTeX——从项目文献库补全参考文献：**已交付**（#154）。光标联动的排版预览：仍缺。
+- 实验自动 ingest——从一次运行的 `metrics.jsonl` 抓取指标**已交付**（#152）；
+  监控远程训练任务仍缺。
 - 内置 skills 可靠性专项（`/research-plan`、`/write` 等）。
 - 成长记录加固：一条记录与其事件在同一文件锁下提交（把 append-only
   保证做硬），出处见 `packages/mimir/src/ledger.ts` 的自注。
