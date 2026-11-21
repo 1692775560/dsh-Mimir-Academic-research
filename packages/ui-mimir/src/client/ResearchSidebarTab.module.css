@@ -1,0 +1,173 @@
+/**
+ * The dsh-better-sidebar tab's styles. A narrow pane, so the layout is one
+ * column of stacked blocks: heading, a two-up counter grid, the compile line,
+ * and the primary action pinned to the bottom.
+ *
+ * The tokens are the panel's DESIGN.md palette (cold-grey canvas, white card,
+ * 1px borders, warm yellow for the single action, cobalt for information) and
+ * are declared here rather than inherited: the host right pane owns its own
+ * background, and the tab must read the same whether it is docked, floating or
+ * in a split view. There is no shadow anywhere — content layers carry borders.
+ */
+
+.tab {
+  --mimir-canvas: #f5f6f8;
+  --mimir-card: #ffffff;
+  --mimir-line: #e6e8eb;
+  --mimir-line-soft: #eff1f3;
+  --mimir-ink: #1f2329;
+  --mimir-ink-2: #5f6672;
+  --mimir-ink-3: #8f959e;
+  --mimir-action: #ffe14d;
+  --mimir-action-hover: #ffd633;
+  --mimir-action-active: #f7cc24;
+  --mimir-info: #1044cc;
+  --mimir-success: #2f7d4f;
+  --mimir-danger: #b42318;
+  --mimir-radius: 6px;
+
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  box-sizing: border-box;
+  height: 100%;
+  padding: 12px;
+  overflow-y: auto;
+  background: var(--mimir-canvas);
+  color: var(--mimir-ink);
+  font-family: var(--dsw-alias-sans-font, 'Inter', system-ui, 'Noto Sans SC', sans-serif);
+}
+
+@media (prefers-color-scheme: dark) {
+  .tab {
+    --mimir-canvas: #16181c;
+    --mimir-card: #1e2126;
+    --mimir-line: #2c3037;
+    --mimir-line-soft: #23262c;
+    --mimir-ink: #f2f4f7;
+    --mimir-ink-2: #a7aeb9;
+    --mimir-ink-3: #7c848f;
+    --mimir-info: #7aa0ff;
+    --mimir-success: #6bbf8a;
+    --mimir-danger: #f08a80;
+  }
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.heading {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stage {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--mimir-line);
+  border-radius: var(--mimir-radius);
+  color: var(--mimir-ink-2);
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
+}
+
+.empty {
+  margin: 0;
+  color: var(--mimir-ink-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cell {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--mimir-line);
+  border-radius: var(--mimir-radius);
+  background: var(--mimir-card);
+}
+
+.cellValue {
+  font-size: 20px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.cellLabel {
+  color: var(--mimir-ink-3);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.status {
+  margin: 0;
+  color: var(--mimir-ink-2);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.status[data-state='ok'] {
+  color: var(--mimir-success);
+}
+
+.status[data-state='error'] {
+  color: var(--mimir-danger);
+}
+
+.status[data-state='running'] {
+  color: var(--mimir-info);
+}
+
+.open {
+  margin-top: auto;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--mimir-line);
+  border-radius: var(--mimir-radius);
+  background: var(--mimir-action);
+  color: #1f2329;
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background-color 150ms ease-out;
+}
+
+.open:hover {
+  background: var(--mimir-action-hover);
+}
+
+.open:active {
+  background: var(--mimir-action-active);
+}
+
+.open:focus-visible {
+  outline: 2px solid var(--mimir-info);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .open {
+    transition: none;
+  }
+}

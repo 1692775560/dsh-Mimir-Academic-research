@@ -1,14 +1,15 @@
 /**
- * The research workbench: a wide fixed overlay with a left rail (the nine
- * view tabs plus the project picker at the bottom) and a content area that
+ * The research workbench, now a full page rather than a dialog: a left rail
+ * (the nine view tabs plus the project picker at the bottom) and a content
+ * area that
  * renders the active view — the project overview card, the Overleaf-style
  * paper editor, the literature library, the experiment records with the
  * experiment log, the paper-figure grid, the group-meeting deck builder,
  * the compute-server board, the ledger (the transparent growth record:
  * timeline + progress report), and the venues view (the ccfddl conference
  * catalog with its per-project watch list plus the CCF-A journal directory). All
- * data arrives through the four props shares — the shared store carries
- * open/selection/active-tab, the `useResearch` hook carries the remote view,
+ * data arrives through the four props shares — the shared store carries the
+ * selection and active tab, the `useResearch` hook carries the remote view,
  * and the inject face carries the verbs. The component owns no subscription
  * machinery.
  * @module dsh-client-ui-mimir/client/ResearchPanel
@@ -17,16 +18,15 @@
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react'
 import type { ResearchTab } from './store.ts'
 import type { ResearchKey } from './locales.ts'
-import { arrowTab, trapFocusIndex } from './focus.ts'
+import { arrowTab } from './focus.ts'
 import { cleanProjectTitle, nextSelectionAfterDelete } from './project-form.ts'
 import { failureCopy } from './view-common.ts'
 import type { ResearchCapabilitySet, ResearchFailureView } from './controller.ts'
 import { readSidebarFolded, SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue } from './sidebar-fold.ts'
 import { readStorageFlag, readStorageValue, storageFlagValue, writeStorageValue } from './storage.ts'
-import { shortcutFor } from './shortcuts.ts'
 import { countUpcomingDeadlines } from './venues-view.ts'
 import { LOAD_MATRIX, SLICES_BY_TAB } from './slice-policy.ts'
-import type { ResearchPanelProps } from './slots.ts'
+import type { ResearchPanelSurfaceProps } from './slots.ts'
 import type { ResearchCapability } from 'dsh-mimir/types'
 import { OverviewView } from './OverviewView.tsx'
 import { PaperView } from './PaperView.tsx'
@@ -242,37 +242,12 @@ const FOLD_ICON = (
   </svg>
 )
 
-/** 14×14 header glyphs for the theme and language switches. */
-const MOON_ICON = (
-  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-    <path d="M13.5 10A6 6 0 0 1 6 2.5a5 5 0 1 0 7.5 7.5z" />
-  </svg>
-)
-const SUN_ICON = (
-  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round">
-    <circle cx="8" cy="8" r="3" />
-    <path d="M8 1.5v1.6M8 12.9v1.6M1.5 8h1.6M12.9 8h1.6M3.4 3.4l1.1 1.1M11.5 11.5l1.1 1.1M12.6 3.4l-1.1 1.1M4.5 11.5l-1.1 1.1" />
-  </svg>
-)
-
 /**
- * Whether one keydown target is a text-entry surface; such keydowns are never
- * workbench shortcuts.
- */
-function isEditableTarget(target: EventTarget | null): boolean {
-  if (!(target instanceof HTMLElement)) return false
-  if (target.isContentEditable) return true
-  const tag = target.tagName
-  return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT'
-}
-
-/** The focusable elements the dialog's Tab trap cycles through. */
-const FOCUSABLE_SELECTOR = 'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
-
-/**
- * The frame-level research workbench entry.
+ * The research workbench page. The host mounts it only while its sidebar row is
+ * selected, so it renders whenever it is mounted: no open/close flag, no
+ * backdrop, no focus trap, and no keydown of its own.
  * @param props - the shared panel store, the injected research face, and copy.
- * @returns the workbench while open, or null while closed.
+ * @returns the workbench.
  */
 export function ResearchPanel({
   useStore, actions, useResearch, useChrome, useSessionList,
@@ -299,17 +274,20 @@ export function ResearchPanel({
   ensureEureka, ensureDigest, refreshDigest, generateDigest, setEureka, pinMoment,
   getDigdigConfig, saveDigdigConfig,
   exportWiki, importWiki, dismissToast, pruneToasts,
-  toggleTheme, toggleLocale, t,
-}: ResearchPanelProps) {
-  const open = useStore(state => state.open)
-  const selectedProjectId = useStore(state => state.selectedProjectId)
+  t,
+}: ResearchPanelSurfaceProps) {
+  // The selection is shared intent (both seats must agree), so it rides the
+  // controller view; only the tab and the paper focus are per-seat.
+  const selectedProjectId = useResearch(view => view.selectedProjectId)
   const activeTab = useStore(state => state.activeTab)
-  const paperFullscreen = useStore(state => state.paperFullscreen)
-  const dark = useChrome(chrome => chrome.dark)
+  // The host's language still reaches the ledger's digest link (#142 replaced
+  // the in-panel language button with the host one, but the digest it opens
+  // must match the UI language).
   const locale = useChrome(chrome => chrome.locale)
   const capabilities = useResearch(view => view.capabilities)
   const rail = visibleTabs(capabilities)
   const tiers = railTiers(capabilities)
+  const paperFullscreen = useStore(state => state.paperFullscreen)
   const projects = useResearch(view => view.projects)
   const projectsStatus = useResearch(view => view.projectsStatus)
   const outline = useResearch(view => view.outline)
@@ -351,7 +329,6 @@ export function ResearchPanel({
   const paperJump = useResearch(view => view.paperJump)
   const sessionList = useSessionList(view => view.list)
   const currentSessionId = useSessionList(view => view.current)
-  const rootRef = useRef<HTMLDivElement>(null)
 
   // Sidebar project list fold; persists across panel opens like the paper
   // pane layout does. Collapsed still shows the selected project's name.
@@ -386,18 +363,18 @@ export function ResearchPanel({
     writeStorageValue(SIDEBAR_FOLD_STORAGE_KEY, sidebarFoldStorageValue(sidebarFolded))
   }, [sidebarFolded])
 
-  // Every read is deferred to the first open rather than fired on mount: the
-  // toggle mounts with the sidebar whether or not the panel is ever used.
+  // Every read is fired on mount: the page is only mounted while it is the
+  // selected panel, so mounting IS the user opening it.
   useEffect(() => {
-    if (open) ensure()
-  }, [open, ensure])
+    ensure()
+  }, [ensure])
   // Never leave the workbench blank: once the list settles, select the first
   // project so the overview has content on first open.
   useEffect(() => {
-    if (open && projectsStatus === 'ready' && selectedProjectId === null && projects.length > 0) {
+    if (projectsStatus === 'ready' && selectedProjectId === null && projects.length > 0) {
       selectProject(projects[0]?.id ?? '')
     }
-  }, [open, projectsStatus, selectedProjectId, projects, selectProject])
+  }, [projectsStatus, selectedProjectId, projects, selectProject])
   // Mirror the selection onto the controller so a slice loader that needs the
   // project id (venues, figures, the experiment artifact) can be driven by
   // loadSlice alone. Runs before the trigger effect below so the id is current
@@ -409,85 +386,20 @@ export function ResearchPanel({
   // freshness policy (fresh / failed / in flight) lives in loadSlice's matrix,
   // not here — these effects only declare intent, so a failed slice retries on
   // the next visit instead of waiting for its own button, and the reconnect
-  // and project-switch paths reach the same table.
+  // and project-switch paths reach the same table. The panel is a page now, not
+  // a dialog, so there is no `open` gate to consult (#142 shell redesign).
   useEffect(() => {
-    if (!open) return
     for (const slice of SLICES_BY_TAB[activeTab] ?? []) loadSlice(slice, 'first-open')
-  }, [open, activeTab, loadSlice])
+  }, [activeTab, loadSlice])
   // A project switch re-reads the project-scoped slices: their content is a
   // different project's, so the settled view is stale rather than fresh.
   const previousProjectId = useRef(selectedProjectId)
   useEffect(() => {
     const previous = previousProjectId.current
     previousProjectId.current = selectedProjectId
-    if (!open || previous === selectedProjectId) return
+    if (previous === selectedProjectId) return
     for (const slice of LOAD_MATRIX['project-switch']) loadSlice(slice, 'project-switch')
-  }, [open, selectedProjectId, loadSlice])
-
-  // Dialog focus management: opening the panel moves focus into the rail (to
-  // the active tab), and closing returns it to the element that held it
-  // before (the sidebar toggle), so keyboard users never lose their place.
-  // Runs only on open/close — a tab switch must not yank focus out of the
-  // view the user is working in.
-  useEffect(() => {
-    if (!open) return
-    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null
-    const root = rootRef.current
-    const tabs = root?.querySelectorAll<HTMLElement>('[role="tab"]')
-    const visible = visibleTabs(capabilities)
-    const active = tabs?.[visible.indexOf(activeTab)]
-    ;(active ?? root?.querySelector<HTMLElement>(FOCUSABLE_SELECTOR))?.focus()
-    return () => { previous?.focus() }
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment above
-  }, [open])
-
-  // Workbench keyboard shortcuts, live only while the panel is open: digits
-  // pick the rail tab, Escape exits a fullscreened pane first and closes the
-  // panel only when nothing is fullscreened, ⌘/Ctrl+Enter compiles in the
-  // paper view. Text-entry surfaces keep their keystrokes (shortcutFor's
-  // guard). Tab is trapped inside the dialog: past the last focusable it
-  // wraps to the first (and Shift+Tab the reverse), and focus stranded
-  // outside the panel is pulled back in.
-  useEffect(() => {
-    if (!open) return
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === 'Tab') {
-        const root = rootRef.current
-        if (root === null) return
-        const focusables = [...root.querySelectorAll<HTMLElement>(FOCUSABLE_SELECTOR)]
-          .filter(element => element.getClientRects().length > 0)
-        const target = trapFocusIndex(
-          focusables.indexOf(document.activeElement as HTMLElement),
-          focusables.length,
-          event.shiftKey,
-        )
-        if (target !== null) {
-          event.preventDefault()
-          focusables[target]?.focus()
-        }
-        return
-      }
-      const action = shortcutFor({
-        key: event.key,
-        metaKey: event.metaKey,
-        ctrlKey: event.ctrlKey,
-        altKey: event.altKey,
-        editable: isEditableTarget(event.target),
-        fullscreen: paperFullscreen !== null,
-        rail: visibleTabs(capabilities),
-      })
-      if (action === null) return
-      event.preventDefault()
-      if (action.type === 'tab') actions.setTab(action.tab)
-      else if (action.type === 'exit-fullscreen') actions.setPaperFullscreen(null)
-      else if (action.type === 'close') actions.setOpen(false)
-      else if (activeTab === 'paper' && selectedProjectId !== null) compile(selectedProjectId)
-    }
-    window.addEventListener('keydown', onKeyDown)
-    return () => { window.removeEventListener('keydown', onKeyDown) }
-  }, [open, activeTab, selectedProjectId, paperFullscreen, actions, compile])
-
-  if (!open) return null
+  }, [selectedProjectId, loadSlice])
 
   // The sidebar's create form: an invalid title is rejected client-side (the
   // host re-checks); a success closes the form (the inject mapping has
@@ -571,497 +483,473 @@ export function ResearchPanel({
   }
 
   return (
-    <div ref={rootRef} className={css.workbench} role="dialog" aria-modal="true" aria-label={t('panel.title')}>
-      {/* Fixed full-viewport dimmer; painted behind the window's own content
-          (negative z-index inside the workbench stacking context). */}
-      <div className={css.backdrop} aria-hidden />
-      {protocol.status === 'incompatible' && (
-        <p className={css.protocolBanner} role="alert">
-          {t('protocol.banner', {
-            detail: protocol.hostVersion === null
-              ? t('protocol.hostUnknown')
-              : t('protocol.versions', { client: protocol.clientVersion, host: protocol.hostVersion }),
-            action: t(protocol.verdict === 'host-ahead' ? 'protocol.upgradeClient' : 'protocol.upgradeHost'),
-          })}
-        </p>
-      )}
-      <aside className={css.side} data-folded={sidebarFolded || undefined}>
-        <div className={css.sideHead}>
-          <div className={css.brand}>
-            <span className={css.brandMark} aria-hidden>M</span>
-            <span className={css.brandCopy}>
-              <span className={css.title}>{t('panel.title')}</span>
-              <span className={css.brandSubtitle}>{t('panel.subtitle')}</span>
-            </span>
+    <div className={css.workbenchHost}>
+        <section className={css.workbench} role="region" aria-label={t('panel.title')}>
+        {/* Fixed full-viewport dimmer; painted behind the window's own content
+            (negative z-index inside the workbench stacking context). */}
+        {protocol.status === 'incompatible' && (
+          <p className={css.protocolBanner} role="alert">
+            {t('protocol.banner', {
+              detail: protocol.hostVersion === null
+                ? t('protocol.hostUnknown')
+                : t('protocol.versions', { client: protocol.clientVersion, host: protocol.hostVersion }),
+              action: t(protocol.verdict === 'host-ahead' ? 'protocol.upgradeClient' : 'protocol.upgradeHost'),
+            })}
+          </p>
+        )}
+        <aside className={css.side} data-folded={sidebarFolded || undefined}>
+          <div className={css.sideHead}>
+            <div className={css.brand}>
+              <span className={css.brandMark} aria-hidden>M</span>
+              <span className={css.brandCopy}>
+                <span className={css.title}>{t('panel.title')}</span>
+                <span className={css.brandSubtitle}>{t('panel.subtitle')}</span>
+              </span>
+            </div>
           </div>
-          <div className={css.headActions}>
-            <button
-              type="button"
-              className={css.iconButton}
-              title={t('panel.theme')}
-              aria-label={t('panel.theme')}
-              aria-pressed={dark}
-              onClick={toggleTheme}
-            >
-              {dark ? SUN_ICON : MOON_ICON}
-            </button>
-            <button
-              type="button"
-              className={css.iconButton}
-              title={t('panel.language')}
-              aria-label={t('panel.language')}
-              onClick={toggleLocale}
-            >
-              {locale === 'zh' ? '中' : 'EN'}
-            </button>
-            <button type="button" className={css.close} title={t('panel.close')} aria-label={t('panel.close')} onClick={() => { actions.setOpen(false) }}>
-              ×
-            </button>
-          </div>
-        </div>
-        {/* Two tiers, one tablist (#243): the research main path on the first
-            level, the low-frequency instruments behind "More". The rail order
-            is still the shortcut order, so `n` stays one number per view; a
-            view behind More still lights its own More button, so the rail
-            never claims nothing is selected. Arrow keys walk the whole rail
-            across both tiers. */}
-        <nav
-          className={css.nav}
-          role="tablist"
-          aria-label={t('panel.views')}
-          onKeyDown={(event) => {
-            const next = arrowTab(activeTab, event.key, rail)
-            if (next === null) return
-            event.preventDefault()
-            actions.setTab(next)
-            const tabs = event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
-            tabs[rail.indexOf(next)]?.focus()
-          }}
-        >
-          {tiers.primary.map(tab => (
-            <NavTab key={tab} tab={tab} activeTab={activeTab} count={navCounts[tab]} setTab={actions.setTab} t={t} />
-          ))}
-          {tiers.secondary.length > 0 && (
-            <details className={css.navMore} data-lit={tiers.secondary.includes(activeTab) || undefined}>
-              <summary
-                className={css.navItem}
-                role="tab"
-                aria-selected={tiers.secondary.includes(activeTab)}
-                aria-label={t('nav.more')}
-                title={t('nav.more')}
-              >
-                <span className={css.navIcon} aria-hidden>⋯</span>
-                <span className={css.navLabel}>{t('nav.more')}</span>
-              </summary>
-              <div className={css.navMoreList}>
-                {tiers.secondary.map(tab => (
-                  <NavTab key={tab} tab={tab} activeTab={activeTab} count={navCounts[tab]} setTab={actions.setTab} t={t} />
-                ))}
-              </div>
-            </details>
-          )}
-        </nav>
-        {/* The rail fold toggle (narrow icons-only rail); hides in top-bar
-            mode via CSS. The 1–9 shortcuts work in both states. */}
-        <button
-          type="button"
-          className={css.sideFold}
-          aria-expanded={!sidebarFolded}
-          aria-label={t(sidebarFolded ? 'sidebar.expand' : 'sidebar.fold')}
-          title={t(sidebarFolded ? 'sidebar.expand' : 'sidebar.fold')}
-          onClick={() => { setSidebarFolded(prev => !prev) }}
-        >
-          {FOLD_ICON}
-        </button>
-        <div className={css.sideProjects} data-collapsed={projectsCollapsed || undefined}>
+          {/* Two tiers, one tablist (#243): the research main path on the first
+              level, the low-frequency instruments behind "More". The rail order
+              is still the shortcut order, so `n` stays one number per view; a
+              view behind More still lights its own More button, so the rail
+              never claims nothing is selected. Arrow keys walk the whole rail
+              across both tiers. */}
+          <nav
+            className={css.nav}
+            role="tablist"
+            aria-label={t('panel.views')}
+            onKeyDown={(event) => {
+              const next = arrowTab(activeTab, event.key, rail)
+              if (next === null) return
+              event.preventDefault()
+              actions.setTab(next)
+              const tabs = event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')
+              tabs[rail.indexOf(next)]?.focus()
+            }}
+          >
+            {tiers.primary.map(tab => (
+              <NavTab key={tab} tab={tab} activeTab={activeTab} count={navCounts[tab]} setTab={actions.setTab} t={t} />
+            ))}
+            {tiers.secondary.length > 0 && (
+              <details className={css.navMore} data-lit={tiers.secondary.includes(activeTab) || undefined}>
+                <summary
+                  className={css.navItem}
+                  role="tab"
+                  aria-selected={tiers.secondary.includes(activeTab)}
+                  aria-label={t('nav.more')}
+                  title={t('nav.more')}
+                >
+                  <span className={css.navIcon} aria-hidden>⋯</span>
+                  <span className={css.navLabel}>{t('nav.more')}</span>
+                </summary>
+                <div className={css.navMoreList}>
+                  {tiers.secondary.map(tab => (
+                    <NavTab key={tab} tab={tab} activeTab={activeTab} count={navCounts[tab]} setTab={actions.setTab} t={t} />
+                  ))}
+                </div>
+              </details>
+            )}
+          </nav>
+          {/* The rail fold toggle (narrow icons-only rail); hides in top-bar
+              mode via CSS. */}
           <button
             type="button"
-            className={css.sideProjectsToggle}
-            aria-expanded={!projectsCollapsed}
-            aria-label={t(projectsCollapsed ? 'projects.expand' : 'projects.collapse')}
-            onClick={() => { setProjectsCollapsed(prev => !prev) }}
+            className={css.sideFold}
+            aria-expanded={!sidebarFolded}
+            aria-label={t(sidebarFolded ? 'sidebar.expand' : 'sidebar.fold')}
+            title={t(sidebarFolded ? 'sidebar.expand' : 'sidebar.fold')}
+            onClick={() => { setSidebarFolded(prev => !prev) }}
           >
-            <span className={css.collapseChevron} data-up={projectsCollapsed || undefined} aria-hidden>{CHEVRON_ICON}</span>
-            <span className={css.sectionTitle}>{t('projects.title')}</span>
-            {projectsCollapsed && selectedProject !== undefined && (
-              <span className={css.sideProjectsCurrent} title={selectedProject.title}>
-                {selectedProject.title}
-              </span>
-            )}
+            {FOLD_ICON}
           </button>
-          {!projectsCollapsed && (projectsStatus === 'cold' || projectsStatus === 'loading') && (
-            <p className={css.hint}>{t('projects.loading')}</p>
-          )}
-          {!projectsCollapsed && projectsStatus === 'error' && (
-            <p className={css.failure} role="status">
-              {t('error.projects')}
-              <button type="button" className={css.retry} onClick={ensure}>
-                {t('projects.retry')}
-              </button>
-            </p>
-          )}
-          {!projectsCollapsed && projectsStatus === 'ready' && projects.length === 0 && (
-            <p className={css.hint}>{t('projects.empty')}</p>
-          )}
-          {!projectsCollapsed && projectsStatus === 'ready' && projects.length > 0 && (
-            <div className={css.projectList}>
-              {projects.map(project => (
-                renameId === project.id ? (
-                  <div key={project.id} className={css.projectEditRow}>
-                    <input
-                      className={css.projectInput}
-                      value={renameTitle}
-                      aria-label={t('projects.rename')}
-                      disabled={projectBusy}
-                      onChange={(event) => { setRenameTitle(event.target.value) }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter') void submitRenameProject(project.id)
-                        if (event.key === 'Escape') setRenameId(null)
-                      }}
-                      ref={(element) => { element?.focus() }}
-                    />
-                    <button
-                      type="button"
-                      className={css.projectAction}
-                      title={t('projects.renameSave')}
-                      aria-label={t('projects.renameSave')}
-                      disabled={projectBusy || cleanProjectTitle(renameTitle) === null}
-                      onClick={() => { void submitRenameProject(project.id) }}
-                    >
-                      ✓
-                    </button>
-                    <button
-                      type="button"
-                      className={css.projectAction}
-                      title={t('projects.cancel')}
-                      aria-label={t('projects.cancel')}
-                      disabled={projectBusy}
-                      onClick={() => { setRenameId(null) }}
-                    >
-                      ×
-                    </button>
-                  </div>
-                ) : (
-                  <div
-                    key={project.id}
-                    className={css.projectRow}
-                    data-selected={project.id === selectedProjectId || undefined}
-                  >
-                    <button
-                      type="button"
-                      className={css.projectSelect}
-                      title={project.title}
-                      disabled={projectBusy}
-                      onClick={() => { selectProject(project.id) }}
-                    >
-                      <span className={css.projectTitle}>{project.title}</span>
-                    </button>
-                    <span className={css.projectActions}>
+          <div className={css.sideProjects} data-collapsed={projectsCollapsed || undefined}>
+            <button
+              type="button"
+              className={css.sideProjectsToggle}
+              aria-expanded={!projectsCollapsed}
+              aria-label={t(projectsCollapsed ? 'projects.expand' : 'projects.collapse')}
+              onClick={() => { setProjectsCollapsed(prev => !prev) }}
+            >
+              <span className={css.collapseChevron} data-up={projectsCollapsed || undefined} aria-hidden>{CHEVRON_ICON}</span>
+              <span className={css.sectionTitle}>{t('projects.title')}</span>
+              {projectsCollapsed && selectedProject !== undefined && (
+                <span className={css.sideProjectsCurrent} title={selectedProject.title}>
+                  {selectedProject.title}
+                </span>
+              )}
+            </button>
+            {!projectsCollapsed && (projectsStatus === 'cold' || projectsStatus === 'loading') && (
+              <p className={css.hint}>{t('projects.loading')}</p>
+            )}
+            {!projectsCollapsed && projectsStatus === 'error' && (
+              <p className={css.failure} role="status">
+                {t('error.projects')}
+                <button type="button" className={css.retry} onClick={ensure}>
+                  {t('projects.retry')}
+                </button>
+              </p>
+            )}
+            {!projectsCollapsed && projectsStatus === 'ready' && projects.length === 0 && (
+              <p className={css.hint}>{t('projects.empty')}</p>
+            )}
+            {!projectsCollapsed && projectsStatus === 'ready' && projects.length > 0 && (
+              <div className={css.projectList}>
+                {projects.map(project => (
+                  renameId === project.id ? (
+                    <div key={project.id} className={css.projectEditRow}>
+                      <input
+                        className={css.projectInput}
+                        value={renameTitle}
+                        aria-label={t('projects.rename')}
+                        disabled={projectBusy}
+                        onChange={(event) => { setRenameTitle(event.target.value) }}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter') void submitRenameProject(project.id)
+                          if (event.key === 'Escape') setRenameId(null)
+                        }}
+                        ref={(element) => { element?.focus() }}
+                      />
                       <button
                         type="button"
                         className={css.projectAction}
-                        title={t('projects.rename')}
-                        aria-label={t('projects.rename')}
-                        onClick={() => { setRenameId(project.id); setRenameTitle(project.title); setProjectError(null) }}
+                        title={t('projects.renameSave')}
+                        aria-label={t('projects.renameSave')}
+                        disabled={projectBusy || cleanProjectTitle(renameTitle) === null}
+                        onClick={() => { void submitRenameProject(project.id) }}
                       >
-                        ✎
+                        ✓
                       </button>
                       <button
                         type="button"
                         className={css.projectAction}
-                        data-danger
-                        title={t('projects.delete')}
-                        aria-label={t('projects.delete')}
+                        title={t('projects.cancel')}
+                        aria-label={t('projects.cancel')}
                         disabled={projectBusy}
-                        onClick={() => { void confirmDeleteProject(project) }}
+                        onClick={() => { setRenameId(null) }}
                       >
                         ×
                       </button>
-                    </span>
-                  </div>
-                )
+                    </div>
+                  ) : (
+                    <div
+                      key={project.id}
+                      className={css.projectRow}
+                      data-selected={project.id === selectedProjectId || undefined}
+                    >
+                      <button
+                        type="button"
+                        className={css.projectSelect}
+                        title={project.title}
+                        disabled={projectBusy}
+                        onClick={() => { selectProject(project.id) }}
+                      >
+                        <span className={css.projectTitle}>{project.title}</span>
+                      </button>
+                      <span className={css.projectActions}>
+                        <button
+                          type="button"
+                          className={css.projectAction}
+                          title={t('projects.rename')}
+                          aria-label={t('projects.rename')}
+                          onClick={() => { setRenameId(project.id); setRenameTitle(project.title); setProjectError(null) }}
+                        >
+                          ✎
+                        </button>
+                        <button
+                          type="button"
+                          className={css.projectAction}
+                          data-danger
+                          title={t('projects.delete')}
+                          aria-label={t('projects.delete')}
+                          disabled={projectBusy}
+                          onClick={() => { void confirmDeleteProject(project) }}
+                        >
+                          ×
+                        </button>
+                      </span>
+                    </div>
+                  )
+                ))}
+              </div>
+            )}
+            {!projectsCollapsed && projectError !== null && (
+              <p className={css.failure} role="status">{failureCopy(t, projectError)}</p>
+            )}
+            {!projectsCollapsed && projectsStatus === 'ready' && createOpen && (
+              <div className={css.projectEditRow}>
+                <input
+                  className={css.projectInput}
+                  value={createTitle}
+                  placeholder={t('projects.newPlaceholder')}
+                  aria-label={t('projects.new')}
+                  disabled={projectBusy}
+                  onChange={(event) => { setCreateTitle(event.target.value) }}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Enter') void submitCreateProject()
+                    if (event.key === 'Escape') setCreateOpen(false)
+                  }}
+                  ref={(element) => { element?.focus() }}
+                />
+                <button
+                  type="button"
+                  className={css.projectAction}
+                  title={t('projects.create')}
+                  aria-label={t('projects.create')}
+                  disabled={projectBusy || cleanProjectTitle(createTitle) === null}
+                  onClick={() => { void submitCreateProject() }}
+                >
+                  ✓
+                </button>
+                <button
+                  type="button"
+                  className={css.projectAction}
+                  title={t('projects.cancel')}
+                  aria-label={t('projects.cancel')}
+                  disabled={projectBusy}
+                  onClick={() => { setCreateOpen(false) }}
+                >
+                  ×
+                </button>
+              </div>
+            )}
+            {!projectsCollapsed && projectsStatus === 'ready' && !createOpen && (
+              <div className={css.projectButtons}>
+                <button type="button" className={css.btn} onClick={() => { setCreateOpen(true); setCreateTitle(''); setProjectError(null) }}>
+                  {t('projects.new')}
+                </button>
+                <button type="button" className={css.btn} onClick={() => { setImportOpen(true) }}>
+                  {t('projects.import')}
+                </button>
+              </div>
+            )}
+          </div>
+          {/* The session switcher: picks the host-GLOBAL current session — the
+              whole client follows it, and the panel's "… with AI" verbs deliver
+              there. The wiki itself is shared across sessions. */}
+          <div className={css.sessionBar}>
+            <span className={css.sessionLabel}>{t('session.label')}</span>
+            <select
+              className={css.sessionSelect}
+              aria-label={t('session.label')}
+              value={currentSessionId ?? ''}
+              disabled={sessionList.length === 0}
+              onChange={(event) => { if (event.target.value !== '') selectSession(event.target.value) }}
+            >
+              {currentSessionId === null && <option value="">{t('session.none')}</option>}
+              {sessionList.map(session => (
+                <option key={session.id} value={session.id}>{session.title}</option>
               ))}
-            </div>
+            </select>
+          </div>
+        </aside>
+        <main className={css.content} role="tabpanel" aria-label={t(TAB_KEYS[activeTab])}>
+          {activeTab === 'overview' && (
+            <OverviewView project={selectedProject} stats={overviewStats} backup={backup} taskHealth={taskHealth} jobs={jobs} experiments={experiments} openLedger={() => { actions.setTab('ledger') }} exportWiki={exportWiki} importWiki={importWiki} t={t} />
           )}
-          {!projectsCollapsed && projectError !== null && (
-            <p className={css.failure} role="status">{failureCopy(t, projectError)}</p>
+          {activeTab === 'paper' && (
+            <PaperView
+              outline={outline}
+              compileView={compileView}
+              source={source}
+              projectId={selectedProjectId}
+              projectTitle={selectedProject?.title}
+              dir={selectedProject?.paperDir}
+              entryFile={selectedProject?.entryFile}
+              editSource={editSource}
+              reloadSource={reloadSource}
+              compile={compile}
+              requestCompileFix={requestCompileFix}
+              bib={bib}
+              papers={papers}
+              ensureBibliography={ensureBibliography}
+              reloadBibliography={reloadBibliography}
+              deleteBibEntry={deleteBibEntry}
+              updateBibEntry={updateBibEntry}
+              importPapersToBib={importPapersToBib}
+              ensurePapers={ensurePapers}
+              reorderPaperSections={reorderPaperSections}
+              reorderPaperSubsections={reorderPaperSubsections}
+              paperJump={paperJump}
+              consumePaperJump={consumePaperJump}
+              fullscreen={paperFullscreen}
+              setFullscreen={actions.setPaperFullscreen}
+              snapshots={snapshots}
+              snapshotDetail={snapshotDetail}
+              loadSnapshots={loadSnapshots}
+              loadSnapshotDetail={loadSnapshotDetail}
+              closeSnapshotDetail={closeSnapshotDetail}
+              revertSnapshot={revertSnapshot}
+              venue={selectedProject?.venue}
+              venueTemplates={venueTemplates}
+              ensureVenueTemplates={ensureVenueTemplates}
+              applyVenueTemplate={applyVenueTemplate}
+              clearVenueTemplate={clearVenueTemplate}
+              uploadTemplateFiles={uploadTemplateFiles}
+              requestVenueFormat={requestVenueFormat}
+              t={t}
+            />
           )}
-          {!projectsCollapsed && projectsStatus === 'ready' && createOpen && (
-            <div className={css.projectEditRow}>
-              <input
-                className={css.projectInput}
-                value={createTitle}
-                placeholder={t('projects.newPlaceholder')}
-                aria-label={t('projects.new')}
-                disabled={projectBusy}
-                onChange={(event) => { setCreateTitle(event.target.value) }}
-                onKeyDown={(event) => {
-                  if (event.key === 'Enter') void submitCreateProject()
-                  if (event.key === 'Escape') setCreateOpen(false)
-                }}
-                ref={(element) => { element?.focus() }}
-              />
-              <button
-                type="button"
-                className={css.projectAction}
-                title={t('projects.create')}
-                aria-label={t('projects.create')}
-                disabled={projectBusy || cleanProjectTitle(createTitle) === null}
-                onClick={() => { void submitCreateProject() }}
-              >
-                ✓
-              </button>
-              <button
-                type="button"
-                className={css.projectAction}
-                title={t('projects.cancel')}
-                aria-label={t('projects.cancel')}
-                disabled={projectBusy}
-                onClick={() => { setCreateOpen(false) }}
-              >
-                ×
-              </button>
-            </div>
+          {activeTab === 'papers' && (
+            <PapersView
+              papers={papers}
+              arxivSearch={arxivSearch}
+              webSearch={webSearch}
+              digdigConfig={digdigConfig}
+              arxivSubscriptions={arxivSubscriptions}
+              projects={projects}
+              selectedProjectId={selectedProjectId}
+              ensurePapers={ensurePapers}
+              saveArxivSubscription={saveArxivSubscription}
+              deleteArxivSubscription={deleteArxivSubscription}
+              checkArxivSubscriptions={checkArxivSubscriptions}
+              searchArxiv={searchArxiv}
+              searchWeb={searchWeb}
+              getDigdigConfig={getDigdigConfig}
+              saveDigdigConfig={saveDigdigConfig}
+              importPaper={importPaper}
+              updatePaper={updatePaper}
+              removePaper={removePaper}
+              importPapersToBib={importPapersToBib}
+              fetchPaperPdf={fetchPaperPdf}
+              zotero={zotero}
+              zoteroSearch={zoteroSearch}
+              recheckZotero={recheckZotero}
+              searchZotero={searchZotero}
+              importZoteroItem={importZoteroItem}
+              exportZoteroCollectionToBib={exportZoteroCollectionToBib}
+              refreshPapers={refreshPapers}
+              requestRelatedWork={requestRelatedWork}
+              requestPaperScore={requestPaperScore}
+              t={t}
+            />
           )}
-          {!projectsCollapsed && projectsStatus === 'ready' && !createOpen && (
-            <div className={css.projectButtons}>
-              <button type="button" className={css.btn} onClick={() => { setCreateOpen(true); setCreateTitle(''); setProjectError(null) }}>
-                {t('projects.new')}
-              </button>
-              <button type="button" className={css.btn} onClick={() => { setImportOpen(true) }}>
-                {t('projects.import')}
-              </button>
-            </div>
+          {activeTab === 'experiments' && (
+            <ExperimentsView
+              experiments={experiments}
+              artifact={artifact}
+              servers={servers}
+              projectId={selectedProjectId}
+              ensureServers={ensureServers}
+              deleteExperiment={deleteExperiment}
+              updateExperiment={updateExperiment}
+              saveExperiment={saveExperiment}
+              generateMetricFigure={(metricKey, rows, direction) =>
+                selectedProjectId === null
+                  ? Promise.resolve()
+                  : generateMetricFigure(selectedProjectId, metricKey, rows, direction)
+              }
+              retry={() => { if (selectedProjectId !== null) selectProject(selectedProjectId) }}
+              t={t}
+            />
           )}
-        </div>
-        {/* The session switcher: picks the host-GLOBAL current session — the
-            whole client follows it, and the panel's "… with AI" verbs deliver
-            there. The wiki itself is shared across sessions. */}
-        <div className={css.sessionBar}>
-          <span className={css.sessionLabel}>{t('session.label')}</span>
-          <select
-            className={css.sessionSelect}
-            aria-label={t('session.label')}
-            value={currentSessionId ?? ''}
-            disabled={sessionList.length === 0}
-            onChange={(event) => { if (event.target.value !== '') selectSession(event.target.value) }}
-          >
-            {currentSessionId === null && <option value="">{t('session.none')}</option>}
-            {sessionList.map(session => (
-              <option key={session.id} value={session.id}>{session.title}</option>
-            ))}
-          </select>
-        </div>
-        <p className={css.sideFoot}>{t('shortcuts.hint')}</p>
-      </aside>
-      <main className={css.content} role="tabpanel" aria-label={t(TAB_KEYS[activeTab])}>
-        {activeTab === 'overview' && (
-          <OverviewView project={selectedProject} stats={overviewStats} backup={backup} taskHealth={taskHealth} jobs={jobs} experiments={experiments} openLedger={() => { actions.setTab('ledger') }} exportWiki={exportWiki} importWiki={importWiki} t={t} />
+          {activeTab === 'figures' && (
+            <FiguresView
+              figures={figures}
+              experiments={experiments}
+              projectId={selectedProjectId}
+              projectTitle={selectedProject?.title ?? ''}
+              dir={selectedProject?.paperDir}
+              loadFigures={loadFigures}
+              uploadFigures={uploadFigures}
+              deleteFigure={deleteFigure}
+              renameFigure={renameFigure}
+              updateFigure={updateFigure}
+              requestFigureOrganize={requestFigureOrganize}
+              insertFigure={(entry) => selectedProjectId === null ? Promise.resolve() : insertFigure(selectedProjectId, entry)}
+              t={t}
+            />
+          )}
+          {activeTab === 'meetings' && (
+            <MeetingsView
+              meetings={meetings}
+              papers={papers}
+              figures={figures}
+              imageGen={imageGen}
+              projectId={selectedProjectId}
+              dir={selectedProject?.paperDir}
+              ensurePapers={ensurePapers}
+              loadFigures={loadFigures}
+              loadMeetings={loadMeetings}
+              generateMeetingDeck={generateMeetingDeck}
+              deleteMeetingDeck={deleteMeetingDeck}
+              getImageGenConfig={getImageGenConfig}
+              saveImageGenConfig={saveImageGenConfig}
+              t={t}
+            />
+          )}
+          {activeTab === 'servers' && (
+            <ServersView
+              servers={servers}
+              checks={serverChecks}
+              ensureServers={ensureServers}
+              saveServer={saveServer}
+              deleteServer={deleteServer}
+              checkServer={checkServer}
+              checkAllServers={checkAllServers}
+              jobs={jobs}
+              experiments={experiments}
+              ensureJobs={ensureJobs}
+              refreshJobs={refreshJobs}
+              submitJob={submitJob}
+              deleteJob={deleteJob}
+              t={t}
+            />
+          )}
+          {activeTab === 'venues' && (
+            <VenuesView
+              venues={venues}
+              hasProject={selectedProjectId !== null}
+              refreshVenues={() => { refreshVenues(selectedProjectId) }}
+              refreshVenueCatalog={() => refreshVenueCatalog(selectedProjectId)}
+              toggleVenueWatch={toggleVenueWatch}
+              t={t}
+            />
+          )}
+          {activeTab === 'ledger' && (
+            <LedgerView
+              ledger={ledger}
+              report={report}
+              brief={brief}
+              worktree={worktree}
+              selectedProjectId={selectedProjectId}
+              loadLedger={loadLedger}
+              generateReport={generateReport}
+              generateBrief={generateBrief}
+              addJournal={addJournal}
+              ensureWorktree={ensureWorktree}
+              refreshWorktree={refreshWorktree}
+              setMainline={setMainline}
+              setIdeaParent={setIdeaParent}
+              adoptIdea={adoptIdea}
+              closeIdea={closeIdea}
+              ensureForaging={ensureForaging}
+              refreshForaging={refreshForaging}
+              foraging={foraging}
+              moments={moments}
+              ensureMoments={ensureMoments}
+              refreshMoments={refreshMoments}
+              declineMoment={declineMoment}
+              evidence={evidence}
+              loadEvidenceGraph={loadEvidenceGraph}
+              refreshEvidenceGraph={refreshEvidenceGraph}
+              retractEvidence={retractEvidence}
+              eureka={eureka}
+              ensureEureka={ensureEureka}
+              digest={digest}
+              locale={locale}
+              ensureDigest={ensureDigest}
+              refreshDigest={refreshDigest}
+              generateDigest={generateDigest}
+              setEureka={setEureka}
+              pinMoment={pinMoment}
+              t={t}
+            />
+          )}
+        </main>
+        <ToastHost toasts={toasts} dismissToast={dismissToast} pruneToasts={pruneToasts} t={t} />
+        {importOpen && (
+          <ImportProjectDialog importProject={importProject} onClose={() => { setImportOpen(false) }} t={t} />
         )}
-        {activeTab === 'paper' && (
-          <PaperView
-            outline={outline}
-            compileView={compileView}
-            source={source}
-            projectId={selectedProjectId}
-            projectTitle={selectedProject?.title}
-            dir={selectedProject?.paperDir}
-            entryFile={selectedProject?.entryFile}
-            editSource={editSource}
-            reloadSource={reloadSource}
-            compile={compile}
-            requestCompileFix={requestCompileFix}
-            bib={bib}
-            papers={papers}
-            ensureBibliography={ensureBibliography}
-            reloadBibliography={reloadBibliography}
-            deleteBibEntry={deleteBibEntry}
-            updateBibEntry={updateBibEntry}
-            importPapersToBib={importPapersToBib}
-            ensurePapers={ensurePapers}
-            reorderPaperSections={reorderPaperSections}
-            reorderPaperSubsections={reorderPaperSubsections}
-            paperJump={paperJump}
-            consumePaperJump={consumePaperJump}
-            fullscreen={paperFullscreen}
-            setFullscreen={actions.setPaperFullscreen}
-            snapshots={snapshots}
-            snapshotDetail={snapshotDetail}
-            loadSnapshots={loadSnapshots}
-            loadSnapshotDetail={loadSnapshotDetail}
-            closeSnapshotDetail={closeSnapshotDetail}
-            revertSnapshot={revertSnapshot}
-            venue={selectedProject?.venue}
-            venueTemplates={venueTemplates}
-            ensureVenueTemplates={ensureVenueTemplates}
-            applyVenueTemplate={applyVenueTemplate}
-            clearVenueTemplate={clearVenueTemplate}
-            uploadTemplateFiles={uploadTemplateFiles}
-            requestVenueFormat={requestVenueFormat}
-            t={t}
-          />
-        )}
-        {activeTab === 'papers' && (
-          <PapersView
-            papers={papers}
-            arxivSearch={arxivSearch}
-            webSearch={webSearch}
-            digdigConfig={digdigConfig}
-            arxivSubscriptions={arxivSubscriptions}
-            projects={projects}
-            selectedProjectId={selectedProjectId}
-            ensurePapers={ensurePapers}
-            saveArxivSubscription={saveArxivSubscription}
-            deleteArxivSubscription={deleteArxivSubscription}
-            checkArxivSubscriptions={checkArxivSubscriptions}
-            searchArxiv={searchArxiv}
-            searchWeb={searchWeb}
-            getDigdigConfig={getDigdigConfig}
-            saveDigdigConfig={saveDigdigConfig}
-            importPaper={importPaper}
-            updatePaper={updatePaper}
-            removePaper={removePaper}
-            importPapersToBib={importPapersToBib}
-            fetchPaperPdf={fetchPaperPdf}
-            zotero={zotero}
-            zoteroSearch={zoteroSearch}
-            recheckZotero={recheckZotero}
-            searchZotero={searchZotero}
-            importZoteroItem={importZoteroItem}
-            exportZoteroCollectionToBib={exportZoteroCollectionToBib}
-            refreshPapers={refreshPapers}
-            requestRelatedWork={requestRelatedWork}
-            requestPaperScore={requestPaperScore}
-            t={t}
-          />
-        )}
-        {activeTab === 'experiments' && (
-          <ExperimentsView
-            experiments={experiments}
-            artifact={artifact}
-            servers={servers}
-            projectId={selectedProjectId}
-            ensureServers={ensureServers}
-            deleteExperiment={deleteExperiment}
-            updateExperiment={updateExperiment}
-            saveExperiment={saveExperiment}
-            generateMetricFigure={(metricKey, rows, direction) =>
-              selectedProjectId === null
-                ? Promise.resolve()
-                : generateMetricFigure(selectedProjectId, metricKey, rows, direction)
-            }
-            retry={() => { if (selectedProjectId !== null) selectProject(selectedProjectId) }}
-            t={t}
-          />
-        )}
-        {activeTab === 'figures' && (
-          <FiguresView
-            figures={figures}
-            experiments={experiments}
-            projectId={selectedProjectId}
-            projectTitle={selectedProject?.title ?? ''}
-            dir={selectedProject?.paperDir}
-            loadFigures={loadFigures}
-            uploadFigures={uploadFigures}
-            deleteFigure={deleteFigure}
-            renameFigure={renameFigure}
-            updateFigure={updateFigure}
-            requestFigureOrganize={requestFigureOrganize}
-            insertFigure={(entry) => selectedProjectId === null ? Promise.resolve() : insertFigure(selectedProjectId, entry)}
-            t={t}
-          />
-        )}
-        {activeTab === 'meetings' && (
-          <MeetingsView
-            meetings={meetings}
-            papers={papers}
-            figures={figures}
-            imageGen={imageGen}
-            projectId={selectedProjectId}
-            dir={selectedProject?.paperDir}
-            ensurePapers={ensurePapers}
-            loadFigures={loadFigures}
-            loadMeetings={loadMeetings}
-            generateMeetingDeck={generateMeetingDeck}
-            deleteMeetingDeck={deleteMeetingDeck}
-            getImageGenConfig={getImageGenConfig}
-            saveImageGenConfig={saveImageGenConfig}
-            t={t}
-          />
-        )}
-        {activeTab === 'servers' && (
-          <ServersView
-            servers={servers}
-            checks={serverChecks}
-            ensureServers={ensureServers}
-            saveServer={saveServer}
-            deleteServer={deleteServer}
-            checkServer={checkServer}
-            checkAllServers={checkAllServers}
-            jobs={jobs}
-            experiments={experiments}
-            ensureJobs={ensureJobs}
-            refreshJobs={refreshJobs}
-            submitJob={submitJob}
-            deleteJob={deleteJob}
-            t={t}
-          />
-        )}
-        {activeTab === 'venues' && (
-          <VenuesView
-            venues={venues}
-            hasProject={selectedProjectId !== null}
-            refreshVenues={() => { refreshVenues(selectedProjectId) }}
-            refreshVenueCatalog={() => refreshVenueCatalog(selectedProjectId)}
-            toggleVenueWatch={toggleVenueWatch}
-            t={t}
-          />
-        )}
-        {activeTab === 'ledger' && (
-          <LedgerView
-            ledger={ledger}
-            report={report}
-            brief={brief}
-            worktree={worktree}
-            selectedProjectId={selectedProjectId}
-            loadLedger={loadLedger}
-            generateReport={generateReport}
-            generateBrief={generateBrief}
-            addJournal={addJournal}
-            ensureWorktree={ensureWorktree}
-            refreshWorktree={refreshWorktree}
-            setMainline={setMainline}
-            setIdeaParent={setIdeaParent}
-            adoptIdea={adoptIdea}
-            closeIdea={closeIdea}
-            ensureForaging={ensureForaging}
-            refreshForaging={refreshForaging}
-            foraging={foraging}
-            moments={moments}
-            ensureMoments={ensureMoments}
-            refreshMoments={refreshMoments}
-            declineMoment={declineMoment}
-            evidence={evidence}
-            loadEvidenceGraph={loadEvidenceGraph}
-            refreshEvidenceGraph={refreshEvidenceGraph}
-            retractEvidence={retractEvidence}
-            eureka={eureka}
-            ensureEureka={ensureEureka}
-            digest={digest}
-            locale={locale}
-            ensureDigest={ensureDigest}
-            refreshDigest={refreshDigest}
-            generateDigest={generateDigest}
-            setEureka={setEureka}
-            pinMoment={pinMoment}
-            t={t}
-          />
-        )}
-      </main>
-      <ToastHost toasts={toasts} dismissToast={dismissToast} pruneToasts={pruneToasts} t={t} />
-      {importOpen && (
-        <ImportProjectDialog importProject={importProject} onClose={() => { setImportOpen(false) }} t={t} />
-      )}
+        </section>
     </div>
   )
 }

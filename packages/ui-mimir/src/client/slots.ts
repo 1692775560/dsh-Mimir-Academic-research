@@ -50,10 +50,6 @@ export interface ResearchPanelInjected {
      */
     sessionList: HostObservable<ResearchSessionListView>
   }
-  /** Toggle the host theme between light and dark (durable via Host settings). */
-  toggleTheme: () => void
-  /** Toggle the host locale between Chinese and English (durable via Host settings). */
-  toggleLocale: () => void
   /** Load the project list once, on first open. */
   ensure: () => void
   /**
@@ -753,15 +749,20 @@ export interface ResearchPanelInjected {
   pruneToasts: () => void
 }
 
-/** Full props of the sidebar-footer research toggle. */
-export type ResearchToggleProps =
-  PropsRuntime<'sidebar.footer.action'>
-  & PropsStore<ResearchPanelStore>
-  & PropsLocale<'research'>
+/** Owner props of the sidebar panel-rail icon that opens the research page. */
+export type ResearchPanelIconProps = PropsRuntime<'sidebar.panellist'>
 
-/** Full props of the research panel overlay entry. */
-export type ResearchPanelProps =
-  PropsRuntime<'shell.overlay'>
-  & PropsStore<ResearchPanelStore>
+/** Full props of the research workbench page (the `main` panel keyed `research`). */
+/**
+ * What the workbench BODY renders with: the store face, the injected business
+ * face and the copy. The runtime seat (`PropsRuntime<'main'>`) is layered on top
+ * for the slot registration, but the body never reads it — which is what lets
+ * the right-pane tab mount the same component outside a slot.
+ */
+export type ResearchPanelSurfaceProps =
+  PropsStore<ResearchPanelStore>
   & InjectFace<ResearchPanelInjected>
   & PropsLocale<'research'>
+
+/** The complete props of the `main` slot entry (surface + runtime seat). */
+export type ResearchPanelProps = PropsRuntime<'main'> & ResearchPanelSurfaceProps
