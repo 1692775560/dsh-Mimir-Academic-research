@@ -106,12 +106,25 @@ Mimir's biggest external risk is dsh drift (the 0.1.2-alpha.4 adaptation:
 
 ### Known tech debt (good first issues)
 
-- `packages/ui-mimir` tests don't run under `tsc` — add a typecheck gate.
-- `setup-web-search.sh` overwrites existing digdig config (e.g. ollamaApiKey)
-  on re-run — merge instead of replace.
-- Ledger moment candidates (#127): `getMomentIndex` lookback truncation skips
-  silences; `resolveWindow` doesn't guard `since > until`.
-- The in-tree dsh checkout carries 36 pre-existing ui-mimir `tsc` errors.
+The 2026-09 debt batch is cleared as of 0.23.0 — the ui-mimir spec tree is
+type-checked in the gated `typecheck` (`packages/ui-mimir/tsconfig.test.json`),
+`setup-web-search.sh` merges the digdig config instead of rewriting it, and both
+ledger moment defects (the lookback truncation dropping silences, `since > until`
+passing through as an empty window) are fixed with a test each.
+
+What is actually open:
+
+- `pnpm test`'s `lint-gate.spec.ts` shells out to ESLint seven times (~30 s
+  each on a loaded machine) against a 60 s per-case cap, so a full run can fail
+  on scheduling rather than on a real violation. Either one ESLint process
+  serves every case, or the cap derives from the machine.
+- `downloadTextFile` exists in `view-common.ts` but four views
+  (`DataSection`, `CognitiveBriefView`, `DigestView`, `LedgerView`) still
+  inline the same Blob/anchor dance.
+- The LaTeX editor is a transparent `<textarea>` over a highlight overlay, so
+  it cannot fold source. Folding needs a different editing surface.
+- `ledger.ts` still documents append-only as a *convention*: a hard
+  record+event commit under one file lock is the planned hardening.
 
 ### Website
 
@@ -120,40 +133,41 @@ test counts, and screenshots go stale fast — refresh them on every release.
 
 ## 4. Feature roadmap
 
-### Now (0.18.x)
+### Now (shipped through 0.23.0)
 
-- **Reference manager core**: collections/folders, reading notes per paper,
-  dedup on import, one-click BibTeX export — the literature view graduates
-  from "search results list" to a real library.
-- **Literature reader**: fullscreen PDF reader, highlight/annotation layer,
-  AI relevance scoring and one-paragraph summaries surfaced on cards,
-  grounded in the project's stated direction.
-- **LaTeX editor depth**: command/environment completion, section-aware
-  folding, math preview on hover — plus the existing compile/error
-  click-through loop.
-- Figure intelligence: agent auto-naming/grouping on upload, user rename —
-  kill the "mystery duplicate figures" confusion.
-- Conference templates: built-in gallery (CVPR/NeurIPS/ICLR/ACL…) plus
-  upload-your-own, agent re-formats to the target venue.
-- **Venue & deadline tracker**: conference/journal info query (CCF rank,
-  category, deadlines with countdown, reminders for upcoming DDLs),
-  per-project watchlist, and an agent tool so "这个会什么时候截稿" is a
-  first-class question.
-- Group meeting PPT: mix original project figures with images from a
-  user-configured image-gen API; no re-render churn between iterations.
-- Literature view UX: collapsible subscriptions, collapsible projects,
-  consistent card layout.
+Everything this section originally listed, except where noted:
 
-### Next (0.19–0.20)
+- **Reference manager core** — reading notes per paper, tags, project links,
+  Zotero import in both directions, and one-click BibTeX both into a project's
+  `references.bib` and out of the whole library (`exportLibraryBib`, #322).
+  **Still open**: collections/folders, and dedup on import beyond the Zotero
+  lookup.
+- **Literature reader** — fullscreen PDF, AI relevance scoring and one-paragraph
+  summaries on cards. **Still open**: the highlight/annotation layer; the reader
+  is still an `<iframe>`, so there is nowhere for an annotation to live.
+- **LaTeX editor depth** — command/environment completion and `\cite` keys from
+  the project bibliography (#154), plus the compile/error click-through loop.
+  **Still open**: source folding and math preview on hover, both of which need a
+  real editing surface rather than the textarea overlay.
+- Figure intelligence — agent naming on upload, user rename.
+- Conference templates — the venue template gallery (CVPR/ICCV/ECCV/NeurIPS/
+  ICML/ICLR/ACL/AAAI…) with upload-your-own and venue re-formatting.
+- **Venue & deadline tracker** — CCF-ranked catalog, countdown, per-project
+  watchlist, `venue_search` agent tool.
+- Group meeting PPT — project figures mixed with the image-gen API.
+- Literature view UX — collapsible subscriptions and projects, consistent cards.
 
-- Zotero two-way sync (import libraries, push Mimir-curated collections
-  back) — interop, even though the manager itself lives here.
-- Reader → writer pipeline: annotations and AI summaries flow into citation
-  cards, and from there into related-work drafts with real citations.
-- LaTeX: live typeset preview synced to cursor, bibliography autocomplete
-  from the project library.
-- Experiment auto-ingest: watch remote training jobs on managed servers,
-  parse metrics into experiment records and comparison charts.
+### Next
+
+- Zotero two-way sync — **shipped** (`pushZoteroCollection`, #151); remaining
+  work is conflict semantics when both sides changed.
+- Reader → writer pipeline — **partly shipped**: related work drafts from the
+  library (#153) and `\cite` completion (#154) both land. Annotations still
+  have no storage, so the annotation→citation hop has no source.
+- LaTeX — bibliography autocomplete from the project library: **shipped**
+  (#154). Live typeset preview synced to cursor: still open.
+- Experiment auto-ingest — metrics capture from a run's `metrics.jsonl`
+  **shipped** (#152); watching remote training jobs is still open.
 - Reliability pass on the bundled skills (`/research-plan`, `/write`, …).
 - Ledger hardening: commit a record and its event under one file lock
   (the append-only guarantee made hard), as self-noted in

@@ -72,6 +72,7 @@ function view(overrides: Partial<Parameters<typeof PapersView>[0]> = {}): string
       updatePaper={() => Promise.resolve(null)}
       removePaper={() => Promise.resolve(null)}
       importPapersToBib={() => Promise.resolve(null as never)}
+      exportLibraryBib={() => Promise.resolve(null as never)}
       fetchPaperPdf={() => Promise.resolve(null)}
       refreshPapers={() => {}}
       requestRelatedWork={() => Promise.resolve()}
@@ -143,3 +144,54 @@ describe('papers view keeps stale rows while a search is in flight (#208)', () =
 
 // Keep the unused-import checker honest about the backup type above.
 export type _Unused = ResearchBackupStatusView | ResearchZoteroSearchView
+
+/**
+ * The other half of #208: only an explicit filter clear empties the library
+ * list. A running search must never be the thing that empties it.
+ */
+describe('only an explicit filter change empties the papers list (#208)', () => {
+  const PAPER_LIBRARY: ResearchPapersView = {
+    status: 'ready',
+    list: [
+      { arxivId: '2103.00020', title: 'EgoSync: A Study', authors: ['Doe, Jane'], summary: 'body',
+        published: '2021-03-01T00:00:00Z', url: 'https://arxiv.org/abs/2103.00020', addedAt: '2026-01-02T00:00:00Z',
+        tags: ['vision'], projectIds: ['proj-1'], notes: '' },
+      { arxivId: '2103.00021', title: 'Other Work', authors: ['Roe, Rick'], summary: 'body',
+        published: '2021-03-02T00:00:00Z', url: 'https://arxiv.org/abs/2103.00021', addedAt: '2026-01-01T00:00:00Z',
+        tags: ['nlp'], projectIds: [], notes: '' },
+    ],
+    failure: null,
+  }
+
+  it('keeps the library rows on screen while a search is in flight', () => {
+    const html = view({
+      papers: PAPER_LIBRARY,
+      arxivSearch: arxivSearch({ query: 'next', status: 'loading', list: [], previous: { query: 'egosync', list: [ENTRY] } }),
+    })
+    expect(html).toContain('EgoSync: A Study')
+    expect(html).toContain('Other Work')
+    expect(html).not.toContain(zh['papers.noMatch'])
+  })
+
+  it('never renders the empty-library or no-match line for a merely running search', () => {
+    const html = view({
+      papers: PAPER_LIBRARY,
+      arxivSearch: arxivSearch({ query: 'next', status: 'loading', list: [], previous: null }),
+    })
+    expect(html).not.toContain(zh['papers.empty'])
+    expect(html).not.toContain(zh['papers.noMatch'])
+  })
+
+  it('says no-match only when the filter itself excludes everything', () => {
+    // No project selected and no tag active: `filterPapers` keeps both rows.
+    const html = view({ papers: PAPER_LIBRARY, arxivSearch: null })
+    expect(html).not.toContain(zh['papers.noMatch'])
+    expect(html).toContain('EgoSync: A Study')
+  })
+
+  it('says the library is empty only when it truly holds nothing', () => {
+    const html = view({ papers: { status: 'ready', list: [], failure: null }, arxivSearch: null })
+    expect(html).toContain(zh['papers.empty'])
+    expect(html).not.toContain(zh['papers.noMatch'])
+  })
+})

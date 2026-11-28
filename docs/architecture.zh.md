@@ -2,7 +2,7 @@
 
 [English](architecture.md) | 中文
 
-对应 v0.18.0。本文档里的数字都与代码核实过——改了代码请同步改这里。
+对应 v0.24.0。本文档里的数字都与代码核实过——改了代码请同步改这里。
 
 ## 总览
 
@@ -14,7 +14,7 @@ flowchart TB
 
     subgraph Pkg["dsh-mimir 插件包"]
         ENTRY["插件入口<br/>index.ts"]
-        FACADE["ResearchService 门面<br/>service.ts · 84 个 @Remote"]
+        FACADE["ResearchService 门面<br/>service.ts · 95 个 @Remote"]
         SVC["领域服务层<br/>services/ · 纯逻辑模块"]
         WIKI[("research_wiki 域<br/>10 张表 + 事件账本<br/>defineDomain v2")]
         SKILLS["内置研究技能<br/>skills.ts · 11 个技能"]
@@ -49,7 +49,7 @@ flowchart TB
 暴露 HTTP 路由（`/research/*`，含 `/research/events`），持有插件生命周期
 （启动清洗、定时器、dispose）。
 
-**门面（`service.ts`）**——84 个 `@Remote` 方法，仅此而已。所有逻辑都在它身后的
+**门面（`service.ts`）**——95 个 `@Remote` 方法，仅此而已。所有逻辑都在它身后的
 领域服务里；门面只做入参校验、委派、结果转译。浏览器客户端通过生成的 Typert
 remote face 调用它。
 

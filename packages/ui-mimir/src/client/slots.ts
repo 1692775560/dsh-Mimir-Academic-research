@@ -23,7 +23,7 @@ import type {
   ResearchGenerateBriefOptions, ResearchImportWikiMode, ResearchImportedProject, ResearchJournalQuestionRef, ResearchProgressReportOptions,
   ResearchProjectView, ResearchWikiSnapshot, SectionMove, SectionOutlineTitles, ServerInput, SubsectionMove,
 } from 'dsh-mimir/types'
-import type { ResearchFailureView, ResearchImportCounts, ResearchView } from './controller.ts'
+import type { ResearchExportBib, ResearchFailureView, ResearchImportCounts, ResearchView } from './controller.ts'
 import type { EvidenceGraphRequest } from './evidence-graph-view.ts'
 import type { ResearchSessionListView } from './project-form.ts'
 import type { MetricChartRow } from './view-common.ts'
@@ -546,6 +546,14 @@ export interface ResearchPanelInjected {
     projectId: string,
     arxivIds: string[],
   ) => Promise<ResearchFailureView | ResearchImportCounts>
+  /**
+   * Serialize the library (or a subset) as `.bib` text for download.
+   * @param arxivIds - the subset, or absent for the whole library.
+   * @returns the text and its entry count, the failure view otherwise.
+   */
+  exportLibraryBib: (
+    arxivIds?: readonly string[],
+  ) => Promise<ResearchFailureView | ResearchExportBib>
   /**
    * List one project's paper snapshots (the snapshots panel's open).
    * @param projectId - wiki project id.

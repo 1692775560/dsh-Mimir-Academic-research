@@ -2,7 +2,7 @@
 
 English | [中文](architecture.zh.md)
 
-Current as of v0.18.0. Numbers in this document are verified against the
+Current as of v0.24.0. Numbers in this document are verified against the
 code — if you change one, update it here.
 
 ## Overview
@@ -15,7 +15,7 @@ flowchart TB
 
     subgraph Pkg["dsh-mimir plugin package"]
         ENTRY["Plugin entry<br/>index.ts"]
-        FACADE["ResearchService facade<br/>service.ts · 84 @Remote"]
+        FACADE["ResearchService facade<br/>service.ts · 95 @Remote"]
         SVC["Domain services<br/>services/ · pure-logic modules"]
         WIKI[("research_wiki domain<br/>10 tables + event ledger<br/>defineDomain v2")]
         SKILLS["Bundled research skills<br/>skills.ts · 11 skills"]
@@ -51,7 +51,7 @@ registers the skills, wires the domain, exposes the HTTP routes
 (`/research/*`, including `/research/events`), and owns the plugin lifecycle
 (startup quarantine, timers, dispose).
 
-**Facade (`service.ts`)** — 84 `@Remote` methods and nothing else. All
+**Facade (`service.ts`)** — 95 `@Remote` methods and nothing else. All
 logic lives behind it in the domain services; the facade validates inputs,
 delegates, and translates results. The browser client reaches it through
 the generated Typert remote face.
