@@ -50,10 +50,6 @@ export interface ResearchPanelInjected {
      */
     sessionList: HostObservable<ResearchSessionListView>
   }
-  /** Toggle the host theme between light and dark (durable via Host settings). */
-  toggleTheme: () => void
-  /** Toggle the host locale between Chinese and English (durable via Host settings). */
-  toggleLocale: () => void
   /** Load the project list once, on first open. */
   ensure: () => void
   /**
@@ -761,15 +757,12 @@ export interface ResearchPanelInjected {
   pruneToasts: () => void
 }
 
-/** Full props of the sidebar-footer research toggle. */
-export type ResearchToggleProps =
-  PropsRuntime<'sidebar.footer.action'>
-  & PropsStore<ResearchPanelStore>
-  & PropsLocale<'research'>
+/** Owner props of the sidebar panel-rail icon that opens the research page. */
+export type ResearchPanelIconProps = PropsRuntime<'sidebar.panellist'>
 
-/** Full props of the research panel overlay entry. */
+/** Full props of the research workbench page (the `main` panel keyed `research`). */
 export type ResearchPanelProps =
-  PropsRuntime<'shell.overlay'>
+  PropsRuntime<'main'>
   & PropsStore<ResearchPanelStore>
   & InjectFace<ResearchPanelInjected>
   & PropsLocale<'research'>
